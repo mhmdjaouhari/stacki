@@ -332,6 +332,11 @@
   color: #89bfa0;
   font-size: 0.75rem;
 }
+/* Undo/redo sits under the outcome, without the proposal card's border. */
+.chat-proposal-actions.chat-revert {
+  padding: 0.25rem 0 0;
+  border-top: 0;
+}
 .chat-working {
   display: flex;
   align-items: center;

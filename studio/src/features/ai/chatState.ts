@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { record, string } from '../../shared/validation';
 import { parseImages, type ChatImage } from './chatContracts';
 import type { ProposedChange } from './agent';
+import { parseReversibleChanges, type ReversibleChange } from './reversible';
 
 export interface ChatProposal {
   readonly id: string;
@@ -15,6 +16,12 @@ export interface ChatMessage {
   readonly images: readonly ChatImage[];
   readonly proposal?: ChatProposal | undefined;
   readonly outcome?: string;
+  /** An applied proposal that the chat can undo, or redo once undone. */
+  readonly applied?: AppliedChange;
+}
+export interface AppliedChange {
+  readonly changes: readonly ReversibleChange[];
+  readonly state: 'applied' | 'undone';
 }
 export interface ChatThread {
   readonly id: string;
@@ -196,7 +203,16 @@ function parseMessage(value: unknown): ChatMessage {
     images: parseImages(message['images']),
     ...(message['proposal'] ? { proposal: parseProposal(message['proposal']) } : {}),
     ...(message['outcome'] ? { outcome: string(message['outcome'], 300) } : {}),
+    ...(message['applied'] ? { applied: parseApplied(message['applied']) } : {}),
   };
+}
+export function parseApplied(value: unknown): AppliedChange {
+  const input = record(value);
+  const state = input['state'];
+  if (state !== 'applied' && state !== 'undone') {
+    throw new Error('Invalid applied change');
+  }
+  return { changes: parseReversibleChanges(input['changes']), state };
 }
 export function parseProposal(value: unknown): ChatProposal {
   const input = record(value);

@@ -1,7 +1,9 @@
 import { availableModels } from './configuration';
 import { effortLevels, parseChatInput } from './chatContracts';
 import { randomUUID } from 'node:crypto';
-import { aiConfiguration, propose, proposedSource, type Proposal } from './agent';
+import { aiConfiguration, creatable, optionalSource, propose, proposedSource, validatedSource, type Proposal } from './agent';
+import { parseDirection, parseReversibleChanges, reversibleChange, reversibleChanges, revertStep } from './reversible';
+import type { FileChange } from '../project/changeFiles';
 import type { createRooms } from '../collaboration/rooms';
 import { changeFiles } from '../project/changeFiles';
 import { record, sourcePath, string } from '../../shared/validation';
@@ -73,10 +75,11 @@ export class ProposalStore {
     if (!entry || entry.expires < Date.now()) {
       throw new Error('Proposal expired. Generate it again.');
     }
-    await this.rooms.coordinator.run(async () => {
+    const changes = await this.rooms.coordinator.run(async () => {
       const files = await Promise.all(
         entry.proposal.changes.map(async (change) => ({
           file: change.file,
+          previous: await optionalSource(this.root, change.file),
           source: await proposedSource(this.root, change),
         })),
       );
@@ -84,8 +87,42 @@ export class ProposalStore {
         throw new Error('AI must return one change per file');
       }
       await changeFiles(this.root, this.rooms, files);
+      return reversibleChanges(files.map((file) => reversibleChange(file.file, file.previous, file.source)));
     });
     this.proposals.delete(id);
-    return { applied: true };
+    // Without a record (too large to send back), the change is applied but can't be undone from the chat.
+    return changes ? { applied: true, changes } : { applied: true };
+  }
+  /** Undo or redo an applied change: every file, or none when any file conflicts. */
+  async revert(value: unknown) {
+    const input = record(value);
+    const direction = parseDirection(input['direction']);
+    const changes = parseReversibleChanges(input['changes']);
+    return this.rooms.coordinator.run(async () => {
+      const planned: FileChange[] = [];
+      const conflicts: string[] = [];
+      for (const change of changes) {
+        const step = revertStep(await optionalSource(this.root, change.file), change, direction);
+        if (step.kind === 'conflict' || (step.source === undefined ? !creatable(change.file) : !(await isValid(change.file, step.source)))) {
+          conflicts.push(change.file);
+        } else {
+          planned.push(step.source === undefined ? { file: change.file, remove: true } : { file: change.file, source: step.source });
+        }
+      }
+      if (conflicts.length) {
+        return { reverted: false, conflicts };
+      }
+      await changeFiles(this.root, this.rooms, planned);
+      return { reverted: true };
+    });
+  }
+}
+
+async function isValid(file: string, source: string): Promise<boolean> {
+  try {
+    await validatedSource(file, source);
+    return true;
+  } catch {
+    return false;
   }
 }

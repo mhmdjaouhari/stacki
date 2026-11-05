@@ -170,21 +170,23 @@ function parseProposal(proposal: Record<string, unknown>, files: readonly string
   }
   return { summary: string(proposal['summary'], 4000), changes: validated };
 }
-export async function proposedSource(root: string, change: ProposedChange): Promise<string> {
-  let before = '';
+/** The file's source, or undefined when it doesn't exist. */
+export async function optionalSource(root: string, file: string): Promise<string | undefined> {
   try {
-    before = await readSource(root, change.file);
+    return await readSource(root, file);
   } catch (error) {
-    if (!(
-      error instanceof Error &&
-      'code' in error &&
-      error.code === 'ENOENT' &&
-      change.before === '' &&
-      (change.file.startsWith('src/') || ['.stacki/components.json', '.stacki/guide.json'].includes(change.file))
-    )) {
-      throw error;
+    if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+      return undefined;
     }
+    throw error;
   }
+}
+export async function proposedSource(root: string, change: ProposedChange): Promise<string> {
+  const current = await optionalSource(root, change.file);
+  if (current === undefined && !(change.before === '' && creatable(change.file))) {
+    throw new Error('File does not exist');
+  }
+  const before = current ?? '';
   if (!change.before && before) {
     throw new Error('An existing file cannot be overwritten as a new file');
   }
@@ -192,17 +194,24 @@ export async function proposedSource(root: string, change: ProposedChange): Prom
     throw new Error('AI change is stale or ambiguous. Ask it to regenerate.');
   }
   const after = change.before ? before.replace(change.before, () => change.after) : change.after;
-  string(after, MAX_SOURCE);
-  if (change.file.endsWith('.astro')) {
-    const result = await parse(after);
+  await validatedSource(change.file, after);
+  return after;
+}
+export function creatable(file: string): boolean {
+  return file.startsWith('src/') || ['.stacki/components.json', '.stacki/guide.json'].includes(file);
+}
+/** Throws when `source` is too large or isn't valid Astro or JSON for its file. */
+export async function validatedSource(file: string, source: string): Promise<void> {
+  string(source, MAX_SOURCE);
+  if (file.endsWith('.astro')) {
+    const result = await parse(source);
     if (result.diagnostics.some((diagnostic) => diagnostic.severity === 1)) {
       throw new Error('AI generated invalid Astro markup');
     }
   }
-  if (change.file.endsWith('.json')) {
-    JSON.parse(after);
+  if (file.endsWith('.json')) {
+    JSON.parse(source);
   }
-  return after;
 }
 
 function userContent(text: string, input: ChatInput): Message['content'] {
