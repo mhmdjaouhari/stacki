@@ -65,7 +65,7 @@ export function ChatPanel({ file, refresh }: { readonly file: string; readonly r
   );
 }
 function useModels() {
-  const [config, setConfig] = useState<ModelConfiguration>({ models: [], defaultModel: '' });
+  const [config, setConfig] = useState<ModelConfiguration>({ models: [], defaultModel: '', efforts: {} });
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {

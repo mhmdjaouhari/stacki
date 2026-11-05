@@ -471,6 +471,11 @@
     color: var(--text);
   }
 }
+/* The effort sits beside the model and only takes the room its label needs. */
+.chat-model.chat-effort {
+  flex: 0 1 auto;
+  max-width: 7.5rem;
+}
 .chat-panel .chat-send {
   border: 0;
   width: 1.875rem;

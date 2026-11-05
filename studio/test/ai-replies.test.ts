@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { completionReply, MAX_REPLY, OUT_OF_TOKENS, parseAnswer, providerFailure } from '../src/features/ai/replies';
-import { outputTokens } from '../src/features/ai/agent';
+import { outputTokens } from '../src/features/ai/chatContracts';
 
 const choice = (message: unknown, finish: unknown = 'stop') => ({ choices: [{ message, finish_reason: finish }] });
 

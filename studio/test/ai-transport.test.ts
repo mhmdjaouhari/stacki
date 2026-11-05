@@ -158,3 +158,18 @@ test('a cut-off reply and a provider error message reach the user', async () => 
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('the chosen effort reaches the provider as reasoning_effort, and no choice sends none', async () => {
+  const root = await project();
+  const { server, bodies } = await scripted([answer(proposal)]);
+  try {
+    const options = { endpoint: server.endpoint, apiKey: '', model: 'local' };
+    await propose(root, 'src/pages/index.astro', 'Check', { ...options, effort: 'max' });
+    await propose(root, 'src/pages/index.astro', 'Check', options);
+    assert.equal(bodies[0]?.['reasoning_effort'], 'max');
+    assert.equal('reasoning_effort' in (bodies[1] ?? {}), false);
+  } finally {
+    await server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});

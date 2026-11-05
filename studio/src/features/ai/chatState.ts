@@ -22,6 +22,8 @@ export interface ChatThread {
   readonly draft: string;
   readonly images: readonly ChatImage[];
   readonly model: string;
+  /** Reasoning effort for this chat's model; empty leaves the provider's default. */
+  readonly effort: string;
   readonly messages: readonly ChatMessage[];
   readonly status: 'idle' | 'working' | 'applying';
   readonly error: string;
@@ -39,6 +41,7 @@ export function newThread(model = ''): ChatThread {
     draft: '',
     images: [],
     model,
+    effort: '',
     messages: [],
     status: 'idle',
     error: '',
@@ -173,6 +176,8 @@ function parseThread(value: unknown): ChatThread {
     draft: string(chat['draft'], 12_000),
     images: parseImages(chat['images']),
     model: string(chat['model'], 160),
+    // Chats saved before efforts existed have none.
+    effort: chat['effort'] === undefined ? '' : string(chat['effort'], 16),
     messages: messages.map(parseMessage),
     status: 'idle',
     error: chat['status'] === 'idle' ? '' : 'This request was interrupted by a reload. Check the draft before retrying.',

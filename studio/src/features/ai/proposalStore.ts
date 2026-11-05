@@ -1,5 +1,5 @@
 import { availableModels } from './configuration';
-import { parseChatInput } from './chatContracts';
+import { effortLevels, parseChatInput } from './chatContracts';
 import { randomUUID } from 'node:crypto';
 import { aiConfiguration, propose, proposedSource, type Proposal } from './agent';
 import type { createRooms } from '../collaboration/rooms';
@@ -35,6 +35,10 @@ export class ProposalStore {
     if (!models.models.includes(model)) {
       throw new Error('Choose a configured AI model');
     }
+    const effort = input['effort'] === undefined ? '' : string(input['effort'], 16);
+    if (effort && !effortLevels(models, model).includes(effort)) {
+      throw new Error('Choose an effort level this model supports');
+    }
     for (const [id, entry] of this.proposals) {
       if (entry.expires < Date.now()) {
         this.proposals.delete(id);
@@ -43,7 +47,14 @@ export class ProposalStore {
     if (this.proposals.size + this.active > 30) {
       throw new Error('Too many pending AI proposals');
     }
-    const proposal = await propose(this.root, sourcePath(input['file']), string(input['prompt'], 12_000), { ...config, model }, parseChatInput(input), signal);
+    const proposal = await propose(
+      this.root,
+      sourcePath(input['file']),
+      string(input['prompt'], 12_000),
+      { ...config, model, ...(effort ? { effort } : {}) },
+      parseChatInput(input),
+      signal,
+    );
     signal?.throwIfAborted();
     const id = randomUUID();
     if (proposal.changes.length) {

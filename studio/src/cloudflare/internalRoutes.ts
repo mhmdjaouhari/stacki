@@ -1,5 +1,5 @@
 import { draftKey, readCloudGitWorkspace, gitWorkspaceRoute, gitBundleRoute } from './gitWorkspaceRoutes';
-import { modelConfiguration } from '../features/ai/chatContracts';
+import { effortLevels, modelConfiguration, outputTokens } from '../features/ai/chatContracts';
 import { parseAssetState, emptyAssetState } from '../features/assets/assetStateTypes';
 import { authorizeConnection } from '../features/auth/connectionAuthorization';
 import { storageInventory, storageBaseline, removeStoredAsset } from './storageRoutes';
@@ -17,7 +17,7 @@ export async function internal(request: Request, environment: Environment): Prom
 }
 const routes: Readonly<Record<string, (request: Request, environment: Environment, url: URL) => Promise<Response>>> = {
   '/studio/internal/ai/models': async (_request, environment) =>
-    Response.json(modelConfiguration(environment.AI_BASE_URL ? environment.AI_MODEL : undefined, environment.AI_BASE_URL ? environment.AI_MODELS : undefined)),
+    Response.json(environment.AI_BASE_URL ? modelConfiguration(environment.AI_MODEL, environment.AI_MODELS, environment.AI_EFFORTS) : modelConfiguration()),
   '/studio/internal/authorize': authorizeConnection,
   '/studio/internal/storage': storageInventory,
   '/studio/internal/storage-baseline': storageBaseline,
@@ -79,10 +79,14 @@ async function internalCompletions(request: Request, environment: Environment, u
       throw new Error('Hosted AI requires HTTPS');
     }
     const input = record(await request.json());
-    const models = modelConfiguration(environment.AI_MODEL, environment.AI_MODELS);
+    const models = modelConfiguration(environment.AI_MODEL, environment.AI_MODELS, environment.AI_EFFORTS);
     const model = string(input['model'], 160);
     if (!models.models.includes(model)) {
       throw new Error('Model is not configured');
+    }
+    const effort = input['reasoning_effort'] === undefined ? '' : string(input['reasoning_effort'], 16);
+    if (effort && !effortLevels(models, model).includes(effort)) {
+      throw new Error('Effort is not configured for this model');
     }
     const messages = input['messages'];
     if (!Array.isArray(messages) || messages.length > 26 || JSON.stringify(messages).length > 1_500_000) {
@@ -94,8 +98,10 @@ async function internalCompletions(request: Request, environment: Environment, u
         'Content-Type': 'application/json',
         ...(environment.AI_API_KEY ? { Authorization: 'Bearer ' + environment.AI_API_KEY } : {}),
       },
-      body: JSON.stringify({ model, max_tokens: 6000, messages }),
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(60_000)]),
+      // The budget is the server's, never the caller's; see outputTokens.
+      body: JSON.stringify({ model, max_tokens: outputTokens(environment.AI_MAX_TOKENS), ...(effort ? { reasoning_effort: effort } : {}), messages }),
+      // Matches the container's per-completion limit: thinking at high effort takes minutes.
+      signal: AbortSignal.any([request.signal, AbortSignal.timeout(180_000)]),
     });
   }
   return new Response('Not found', { status: 404 });

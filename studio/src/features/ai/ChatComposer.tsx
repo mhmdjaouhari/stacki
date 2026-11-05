@@ -5,7 +5,7 @@ import { useChatAttachments } from './useChatAttachments';
 import { updateChat, type ChatThread } from './chatState';
 import { useDictation } from './useDictation';
 import { sendChat, stopChat } from './chatActions';
-import type { ModelConfiguration } from './chatContracts';
+import { effortLevels, type ModelConfiguration } from './chatContracts';
 
 interface ComposerProps {
   readonly chat: ChatThread;
@@ -33,7 +33,7 @@ export function ChatComposer({ chat, file, config }: ComposerProps) {
         onSubmit={(event) => {
           event.preventDefault();
           if (!loading && !voice.listening && config.models.includes(chat.model)) {
-            void sendChat(chat.id, file);
+            void sendChat(chat.id, file, supportedEffort(config, chat));
           }
         }}
         onDragOver={(event) => {
@@ -148,6 +148,7 @@ function ComposerTools({ chat, config, voice, loading, attach }: ToolsProps) {
         <ChatIcon name="plus" />
       </button>
       <ModelPicker chat={chat} config={config} />
+      <EffortPicker chat={chat} config={config} />
       <button
         type="button"
         className={`chat-icon-button ${voice.listening ? 'is-listening' : ''}`}
@@ -170,12 +171,46 @@ function ModelPicker({ chat, config }: Pick<ToolsProps, 'chat' | 'config'>) {
         aria-label="Choose model"
         value={chat.model}
         disabled={chat.status !== 'idle' || !config.models.length}
-        onChange={(event) => updateChat(chat.id, (thread) => ({ ...thread, model: event.target.value }))}
+        onChange={(event) => {
+          const model = event.target.value;
+          // An effort the new model doesn't list would be rejected, so it falls back to the default.
+          updateChat(chat.id, (thread) => ({ ...thread, model, effort: effortLevels(config, model).includes(thread.effort) ? thread.effort : '' }));
+        }}
       >
         {!config.models.includes(chat.model) && <option value={chat.model}>{chat.model || 'No model connected'}</option>}
         {config.models.map((model) => (
           <option key={model} value={model}>
             {model}
+          </option>
+        ))}
+      </select>
+      <ChatIcon name="chevron" />
+    </label>
+  );
+}
+
+function supportedEffort(config: ModelConfiguration, chat: ChatThread): string {
+  return effortLevels(config, chat.model).includes(chat.effort) ? chat.effort : '';
+}
+
+// Shown only for models with configured levels; "Default" sends no effort, so the provider decides.
+function EffortPicker({ chat, config }: Pick<ToolsProps, 'chat' | 'config'>) {
+  const levels = effortLevels(config, chat.model);
+  if (!levels.length) {
+    return null;
+  }
+  return (
+    <label className="chat-model chat-effort" title="Reasoning effort">
+      <select
+        aria-label="Choose effort"
+        value={supportedEffort(config, chat)}
+        disabled={chat.status !== 'idle'}
+        onChange={(event) => updateChat(chat.id, (thread) => ({ ...thread, effort: event.target.value }))}
+      >
+        <option value="">Default effort</option>
+        {levels.map((level) => (
+          <option key={level} value={level}>
+            {level} effort
           </option>
         ))}
       </select>

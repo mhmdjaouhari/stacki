@@ -13,7 +13,8 @@ function context(chat: ChatThread): readonly ChatContext[] {
   }
   return history;
 }
-export async function sendChat(id: string, file: string) {
+/** `effort` is the chat's effort when its model supports it, otherwise empty. */
+export async function sendChat(id: string, file: string, effort: string) {
   const chat = chatState().threads.find((thread) => thread.id === id);
   if (!chat || chat.status !== 'idle' || (!chat.draft.trim() && !chat.images.length) || !chat.model) {
     return;
@@ -43,7 +44,7 @@ export async function sendChat(id: string, file: string) {
     messages: [...thread.messages, message].slice(-39),
   }));
   try {
-    const proposal = await generateReply(chat, file, controller.signal);
+    const proposal = await generateReply(chat, file, effort, controller.signal);
     if (controller.signal.aborted) {
       return;
     }
@@ -115,15 +116,17 @@ export async function applyProposal(id: string, messageId: string, refresh: () =
   }
 }
 
-async function generateReply(chat: ChatThread, file: string, signal: AbortSignal) {
+async function generateReply(chat: ChatThread, file: string, effort: string, signal: AbortSignal) {
   return parseProposal(
     await request('/studio/api/ai/propose', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      signal: AbortSignal.any([signal, AbortSignal.timeout(360_000)]),
+      // Up to six completions of up to three minutes each (agent.ts), plus file reads.
+      signal: AbortSignal.any([signal, AbortSignal.timeout(1_200_000)]),
       body: JSON.stringify({
         file,
         model: chat.model,
+        ...(effort ? { effort } : {}),
         prompt: chat.draft.trim() || 'Describe these images and how they relate to this page.',
         images: chat.images.length
           ? chat.images

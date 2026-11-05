@@ -11,6 +11,8 @@ export interface Environment extends AuthConfig {
   readonly AI_BASE_URL?: string;
   readonly AI_MODEL?: string;
   readonly AI_MODELS?: string;
+  readonly AI_EFFORTS?: string;
+  readonly AI_MAX_TOKENS?: string;
   readonly AI_API_KEY?: string;
   readonly PREVIEW: DurableObjectNamespace<PreviewContainer>;
   readonly DRAFTS: R2Bucket;
