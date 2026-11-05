@@ -94,3 +94,67 @@ test('stopping one request aborts its provider fetch while another request can c
     await rm(root, { recursive: true, force: true });
   }
 });
+
+// Replies are played back in order; each request body is kept for assertions.
+async function scripted(replies: readonly (readonly [number, unknown])[]) {
+  const bodies: Record<string, unknown>[] = [];
+  const server = await provider((request, response) => {
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', (chunk: string) => {
+      body += chunk;
+    });
+    request.on('end', () => {
+      bodies.push(record(JSON.parse(body)));
+      const [status, payload] = replies[Math.min(bodies.length, replies.length) - 1] ?? [500, {}];
+      response.writeHead(status, { 'Content-Type': 'application/json' }).end(JSON.stringify(payload));
+    });
+  });
+  return { server, bodies };
+}
+const answer = (content: string, finish = 'stop') => [200, { choices: [{ message: { content }, finish_reason: finish }] }] as const;
+const proposal = JSON.stringify({ summary: 'No changes needed', changes: [] });
+
+test('a reply wrapped in prose is accepted, and an unparsable one gets exactly one repair round', async () => {
+  const root = await project();
+  const { server, bodies } = await scripted([answer('I looked at the page.'), answer(`Sure!\n${proposal}\nAnything else?`)]);
+  try {
+    const options = { endpoint: server.endpoint, apiKey: '', model: 'local', maxTokens: 32_000 };
+    assert.deepEqual(await propose(root, 'src/pages/index.astro', 'Check the title', options), { summary: 'No changes needed', changes: [] });
+    assert.equal(bodies.length, 2);
+    assert.equal(bodies[0]?.['max_tokens'], 32_000);
+    const messages = bodies[1]?.['messages'];
+    assert.ok(Array.isArray(messages));
+    assert.match(JSON.stringify(messages.at(-1)), /not valid JSON/);
+  } finally {
+    await server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a second unparsable reply fails with a clear message instead of a parse error', async () => {
+  const root = await project();
+  const { server, bodies } = await scripted([answer('Plain prose.'), answer('Still prose.'), answer(proposal)]);
+  try {
+    const options = { endpoint: server.endpoint, apiKey: '', model: 'local' };
+    await assert.rejects(propose(root, 'src/pages/index.astro', 'Check the title', options), /did not reply with valid JSON/);
+    assert.equal(bodies.length, 2);
+    assert.equal(bodies[0]?.['max_tokens'], 16_384);
+  } finally {
+    await server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('a cut-off reply and a provider error message reach the user', async () => {
+  const root = await project();
+  const { server } = await scripted([answer('{"summ', 'length'), [400, { error: { message: 'reasoning_effort is not supported' } }]]);
+  try {
+    const options = { endpoint: server.endpoint, apiKey: '', model: 'local' };
+    await assert.rejects(propose(root, 'src/pages/index.astro', 'First', options), /ran out of output tokens/);
+    await assert.rejects(propose(root, 'src/pages/index.astro', 'Second', options), /AI provider error \(400\): reasoning_effort is not supported/);
+  } finally {
+    await server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
