@@ -16,5 +16,6 @@ export async function availableModels() {
   return modelConfiguration(
     process.env['AI_BASE_URL'] ? process.env['AI_MODEL'] : undefined,
     process.env['AI_BASE_URL'] ? process.env['AI_MODELS'] : undefined,
+    process.env['AI_BASE_URL'] ? process.env['AI_EFFORTS'] : undefined,
   );
 }

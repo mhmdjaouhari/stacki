@@ -1,7 +1,7 @@
 import { ErrorToast } from '../../../vendor/stacki/src/ui/ErrorToast';
 import { ChatText } from './ChatText';
 import { useEffect, useRef, useState } from 'react';
-import { applyProposal, discardProposal } from './chatActions';
+import { applyProposal, discardProposal, revertChange } from './chatActions';
 import { type ChatThread, type ChatMessage } from './chatState';
 import { ChatIcon } from './ChatIcon';
 
@@ -102,6 +102,25 @@ function MessageItem({ chat, message, refresh }: { readonly chat: ChatThread; re
       {message.content && (message.role === 'assistant' ? <ChatText text={message.content} /> : <div className="chat-message-text">{message.content}</div>)}
       {message.proposal && <ProposalCard chat={chat} message={message} refresh={refresh} />}
       {message.outcome && <p className="chat-outcome">{message.outcome}</p>}
+      {message.applied && <RevertAction chat={chat} message={message} applied={message.applied} refresh={refresh} />}
     </article>
+  );
+}
+
+interface RevertProps {
+  readonly chat: ChatThread;
+  readonly message: ChatMessage;
+  readonly applied: NonNullable<ChatMessage['applied']>;
+  readonly refresh: () => void;
+}
+// One button that flips between undo and redo; conflicts leave the files and this state unchanged.
+function RevertAction({ chat, message, applied, refresh }: RevertProps) {
+  const direction = applied.state === 'applied' ? 'undo' : 'redo';
+  return (
+    <div className="chat-proposal-actions chat-revert">
+      <button disabled={chat.status !== 'idle'} onClick={() => void revertChange(chat.id, message.id, direction, refresh)}>
+        {direction === 'undo' ? 'Undo change' : 'Redo change'}
+      </button>
+    </div>
   );
 }

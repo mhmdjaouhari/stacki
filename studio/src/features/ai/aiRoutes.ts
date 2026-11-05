@@ -22,6 +22,10 @@ export async function aiRoute(proposals: ProposalStore, request: IncomingMessage
     }
     return true;
   }
+  if (pathname === '/studio/api/ai/revert' && request.method === 'POST') {
+    response.end(JSON.stringify(await proposals.revert(JSON.parse(await readBody()))));
+    return true;
+  }
   if (pathname === '/studio/api/ai/apply' && request.method === 'POST') {
     response.end(JSON.stringify(await proposals.apply(JSON.parse(await readBody()))));
     return true;
