@@ -17,7 +17,8 @@ import { record, string } from '../../shared/validation';
 import type { Direction } from './reversible';
 import type { ChatContext } from './chatContracts';
 import type { ChatRequestContext } from './chatRequestContext';
-import { captureAfterChange, captureCanvas } from './canvasCapture';
+import { captureAfterChange, captureCanvas, captureCanvasForModel } from './canvasCapture';
+import type { ChatImage } from './chatContracts';
 
 const running = new Map<string, AbortController>();
 function context(chat: ChatThread): readonly ChatContext[] {
@@ -31,11 +32,15 @@ function context(chat: ChatThread): readonly ChatContext[] {
   return history;
 }
 /** `effort` is the chat's effort when its model supports it, otherwise empty; `context` is the editor's page and selection. */
-export async function sendChat(id: string, file: string, effort: string, context: ChatRequestContext) {
-  const chat = chatState().threads.find((thread) => thread.id === id);
-  if (!chat || chat.status !== 'idle' || (!chat.draft.trim() && !chat.images.length) || !chat.model) {
+export async function sendChat(id: string, file: string, effort: string, context: ChatRequestContext, options: { readonly canvasPicture?: boolean } = {}) {
+  const current = chatState().threads.find((thread) => thread.id === id);
+  if (!current || current.status !== 'idle' || (!current.draft.trim() && !current.images.length) || !current.model) {
     return;
   }
+  // A vision model gets the canvas as the person sees it, when they share the tab (canvasCapture.ts).
+  // It travels as an attached image, so it shows in the transcript like one.
+  const picture = options.canvasPicture && current.images.length < 4 ? canvasPictureFor(current) : undefined;
+  const chat = picture ? { ...current, images: [...current.images, picture] } : current;
   if (running.size >= 3) {
     updateChat(id, (thread) => ({
       ...thread,
@@ -86,12 +91,18 @@ export async function sendChat(id: string, file: string, effort: string, context
       ...thread,
       error: controller.signal.aborted ? 'Response stopped.' : error instanceof Error ? error.message : 'Could not send message.',
       draft: thread.draft || chat.draft,
-      images: thread.images.length ? thread.images : chat.images,
+      images: thread.images.length ? thread.images : current.images,
     }));
   } finally {
     running.delete(id);
     updateChat(id, ({ progress: _progress, ...thread }) => ({ ...thread, status: 'idle' }));
   }
+}
+// The name tells the model what the picture is (agent.ts says so in its instructions).
+export const CANVAS_PICTURE_NAME = 'canvas.jpg';
+function canvasPictureFor(chat: ChatThread): ChatImage | undefined {
+  const url = captureCanvasForModel();
+  return url && !chat.images.some((image) => image.url === url) ? { id: crypto.randomUUID(), name: CANVAS_PICTURE_NAME, url } : undefined;
 }
 export function stopChat(id: string) {
   running.get(id)?.abort();
