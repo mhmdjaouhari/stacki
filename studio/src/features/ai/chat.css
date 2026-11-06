@@ -589,6 +589,10 @@ details[open] > .chat-diff-summary::before,
   place-items: center;
   flex-shrink: 0;
 }
+.chat-panel .is-capturing {
+  color: #89bfa0;
+  background: #89bfa022;
+}
 .chat-panel .is-listening {
   color: #ff9e9e;
   background: #6e3030;

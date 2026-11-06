@@ -8,6 +8,7 @@ const paths = {
   chevron: 'm8 10 4 4 4-4',
   file: 'M14 2H5v20h14V7l-5-5Zm0 0v6h5M8 13h8m-8 4h5',
   trash: 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7',
+  camera: 'M3 8h3.5L8 5.5h8L17.5 8H21v11H3ZM12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z',
 } as const;
 export function ChatIcon({ name }: { readonly name: keyof typeof paths }) {
   return (

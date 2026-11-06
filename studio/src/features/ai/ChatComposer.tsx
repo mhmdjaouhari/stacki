@@ -8,6 +8,7 @@ import { sendChat, stopChat } from './chatActions';
 import { effortLevels, type ModelConfiguration } from './chatContracts';
 import type { ChatRequestContext } from './chatRequestContext';
 import { insertMention, mentionOptions, mentionQuery } from './mentions';
+import { startCanvasCapture, stopCanvasCapture, useCanvasCapture } from './canvasCapture';
 
 interface ComposerProps {
   readonly chat: ChatThread;
@@ -265,8 +266,42 @@ function ComposerTools({ chat, config, voice, loading, attach }: ToolsProps) {
       >
         <ChatIcon name="mic" />
       </button>
+      <CaptureToggle chat={chat} />
       <SendButton chat={chat} disabled={loading || voice.listening || !config.models.includes(chat.model)} />
     </div>
+  );
+}
+
+// Before/after pictures on Apply, from this tab shared with itself (canvasCapture.ts). Turning it on
+// asks the browser for permission; its own "Stop sharing" turns it off too.
+function CaptureToggle({ chat }: { readonly chat: ChatThread }) {
+  const active = useCanvasCapture();
+  return (
+    <button
+      type="button"
+      className={`chat-icon-button ${active ? 'is-capturing' : ''}`}
+      aria-label={active ? 'Stop before and after pictures' : 'Take before and after pictures'}
+      aria-pressed={active}
+      title={
+        active
+          ? 'Pictures of the canvas are taken on Apply. Click to stop sharing this tab.'
+          : 'Show the canvas before and after each applied change (shares this tab)'
+      }
+      onClick={() => {
+        if (active) {
+          stopCanvasCapture();
+          return;
+        }
+        startCanvasCapture().catch((error: unknown) => {
+          // Dismissing the browser's prompt is a choice, not an error.
+          if (!(error instanceof DOMException && error.name === 'NotAllowedError')) {
+            updateChat(chat.id, (thread) => ({ ...thread, error: error instanceof Error ? error.message : 'Could not share this tab.' }));
+          }
+        });
+      }}
+    >
+      <ChatIcon name="camera" />
+    </button>
   );
 }
 
