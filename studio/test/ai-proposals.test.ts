@@ -276,6 +276,44 @@ test('an applied change undoes and redoes on disk, and a stale record changes no
   }
 });
 
+test('editing from a message undoes every later change, newest first, or nothing', async () => {
+  const first = proposal({ file: PAGE, before: '<h1>Welcome</h1>', after: '<h1>Hello</h1>' });
+  const second = proposal({ file: PAGE, before: '<h1>Hello</h1>', after: '<h1>Hello there</h1>' }, { file: HERO, before: '', after: '<section />\n' });
+  const setup = await fixture([first, second]);
+  try {
+    const firstChanges = await setup.apply();
+    const secondChanges = await setup.apply();
+    assert.equal(await setup.read(PAGE), '<h1>Hello there</h1>\n<p>Intro</p>\n');
+    // Oldest first can't apply: the first record's region no longer exists until the second is undone.
+    assert.deepEqual(await setup.store.undoSeries({ sets: [firstChanges, secondChanges] }), { reverted: false, conflicts: [PAGE] });
+    assert.equal(await setup.read(HERO), '<section />\n', 'a conflict writes nothing');
+    assert.deepEqual(await setup.store.undoSeries({ sets: [secondChanges, firstChanges] }), { reverted: true, files: 2 });
+    assert.equal(await setup.read(PAGE), '<h1>Welcome</h1>\n<p>Intro</p>\n');
+    assert.equal(await setup.read(HERO), undefined, 'the created file is removed again');
+    for (const sets of [[], 'x', Array.from({ length: 21 }, () => firstChanges)]) {
+      await assert.rejects(setup.store.undoSeries({ sets }), /Invalid change record/);
+    }
+  } finally {
+    await setup.close();
+  }
+});
+
+test('files mentioned with @ are read up front, and may be edited without reading them again', async () => {
+  const setup = await fixture([proposal({ file: ABOUT, before: '<h1>About</h1>', after: '<h1>About us</h1>' })]);
+  try {
+    const reply = record(
+      await setup.store.create(request({ model: 'deepseek-v4-flash', prompt: 'Make @src/pages/about.astro, and @src/missing.astro, warmer' })),
+    );
+    assert.equal((reply['changes'] as unknown[]).length, 1);
+    const messages = setup.bodies[0]?.['messages'];
+    assert.ok(Array.isArray(messages));
+    const user = record(JSON.parse(String(record(messages.at(-1))['content'])));
+    assert.deepEqual(user['mentioned'], [{ file: ABOUT, source: '<h1>About</h1>\n' }]);
+  } finally {
+    await setup.close();
+  }
+});
+
 test('a conflict in one file leaves every file untouched', async () => {
   const setup = await fixture([
     { read: [ABOUT] },

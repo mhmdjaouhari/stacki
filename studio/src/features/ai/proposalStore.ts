@@ -11,6 +11,9 @@ import type { createRooms } from '../collaboration/rooms';
 import { changeFiles } from '../project/changeFiles';
 import { record, sourcePath, string } from '../../shared/validation';
 
+// A chat keeps 40 messages, so at most 20 replies follow any message.
+const MAX_UNDO_SERIES = 20;
+
 /** A file's whole source before and after a change; `previous` is null when the change creates it. */
 export interface ReviewSources {
   readonly file: string;
@@ -160,6 +163,40 @@ export class ProposalStore {
       throw new Error('Invalid change record');
     }
     return { file: change.file, previous: previous ?? null, next };
+  }
+  /**
+   * Undo several applied changes, newest first, as one step: "edit from here" in the chat undoes every
+   * change after a message. Each record is undone on the sources the previous ones left, in memory, so
+   * a file changed by two replies goes back through both; a conflict anywhere writes nothing.
+   */
+  async undoSeries(value: unknown) {
+    const input = record(value)['sets'];
+    if (!Array.isArray(input) || !input.length || input.length > MAX_UNDO_SERIES) {
+      throw new Error('Invalid change records');
+    }
+    const sets = input.map(parseReversibleChanges);
+    return this.rooms.coordinator.run(async () => {
+      const sources = new Map<string, string | undefined>();
+      for (const set of sets) {
+        for (const change of set) {
+          const current = sources.has(change.file) ? sources.get(change.file) : await optionalSource(this.root, change.file);
+          const step = revertStep(current, change, 'undo');
+          if (step.kind === 'conflict') {
+            return { reverted: false, conflicts: [change.file] };
+          }
+          sources.set(change.file, step.source);
+        }
+      }
+      const planned: FileChange[] = [];
+      for (const [file, source] of sources) {
+        if (source === undefined ? !creatable(file) : !(await isValid(file, source))) {
+          return { reverted: false, conflicts: [file] };
+        }
+        planned.push(source === undefined ? { file, remove: true } : { file, source });
+      }
+      await changeFiles(this.root, this.rooms, planned);
+      return { reverted: true, files: planned.length };
+    });
   }
   /** Undo or redo an applied change: every file, or none when any file conflicts. */
   async revert(value: unknown) {

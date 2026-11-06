@@ -44,6 +44,10 @@ export async function aiRoute(
     response.end(JSON.stringify(await proposals.changeFile(JSON.parse(await readBody()))));
     return true;
   }
+  if (pathname === '/studio/api/ai/undo-series' && request.method === 'POST') {
+    response.end(JSON.stringify(await proposals.undoSeries(JSON.parse(await readBody()))));
+    return true;
+  }
   if (pathname === '/studio/api/ai/revert' && request.method === 'POST') {
     response.end(JSON.stringify(await proposals.revert(JSON.parse(await readBody()))));
     return true;

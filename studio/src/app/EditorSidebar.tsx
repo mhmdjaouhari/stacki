@@ -61,9 +61,21 @@ export function EditorSidebar({ panel, close, props, model, openCode, showNaviga
       {panel === 'properties' && document && !file.startsWith('src/pages/') && <ComponentProperties key={file} document={document} refresh={refresh} />}
       {panel === 'variables' && <VariableNavigation view={props.view} />}
       {panel === 'history' && <HistorySidebar props={props} model={model} />}
-      {panel === 'ai' && <ChatPanel file={file} refresh={refresh} error={report} context={chatRequestContext(model.node, model.preview.url)} />}
+      {panel === 'ai' && (
+        <ChatPanel
+          file={file}
+          refresh={refresh}
+          error={report}
+          context={chatRequestContext(model.node, model.preview.url)}
+          mentionable={mentionableFiles(project)}
+        />
+      )}
     </aside>
   );
+}
+// What `@` offers in the chat: the pages, components and collection files Studio knows, bounded.
+function mentionableFiles(project: EditorProps['project']): readonly string[] {
+  return [...new Set([...project.pages, ...project.components.map((component) => component.file), ...project.collections])].slice(0, 2000);
 }
 function ComponentsSidebar({ props, model, showNavigator }: Pick<SidebarProps, 'props' | 'model' | 'showNavigator'>) {
   return (
