@@ -15,6 +15,8 @@ export const CAPTURE_LIMITS = {
   widthMax: 640,
   /** A JPEG data URL; larger pictures are dropped rather than stored with the chat. */
   urlCharsMax: 270_000,
+  /** An attached image's bound (parseImages in chatContracts.ts). */
+  modelUrlCharsMax: 180_000,
   settleMsMax: 5000,
   pollMs: 250,
 } as const satisfies Record<string, number>;
@@ -80,6 +82,28 @@ export function captureCanvas(): string | undefined {
   }
   const url = drawCrop(capture.video, frame, CAPTURE_LIMITS.widthMax).toDataURL('image/jpeg', 0.8);
   return url.length <= CAPTURE_LIMITS.urlCharsMax ? url : undefined;
+}
+
+/**
+ * A picture of the canvas for a vision model: as wide as 960, within the chat's limit for an attached
+ * image (chatContracts.ts), smaller if it doesn't fit.
+ */
+export function captureCanvasForModel(): string | undefined {
+  const frame = canvasFrame();
+  if (!capture || !frame) {
+    return undefined;
+  }
+  for (const [width, quality] of [
+    [960, 0.75],
+    [720, 0.7],
+    [560, 0.6],
+  ] as const) {
+    const url = drawCrop(capture.video, frame, width).toDataURL('image/jpeg', quality);
+    if (url.length <= CAPTURE_LIMITS.modelUrlCharsMax) {
+      return url;
+    }
+  }
+  return undefined;
 }
 
 /**

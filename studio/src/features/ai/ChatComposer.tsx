@@ -18,6 +18,7 @@ interface ComposerProps {
   readonly mentionable: readonly string[];
 }
 export function ChatComposer({ chat, file, context, config, mentionable }: ComposerProps) {
+  const sharing = useCanvasCapture();
   const { loading, attach } = useChatAttachments(chat.id);
   const [dragging, setDragging] = useState(false);
   const voice = useDictation((text) =>
@@ -43,7 +44,7 @@ export function ChatComposer({ chat, file, context, config, mentionable }: Compo
         onSubmit={(event) => {
           event.preventDefault();
           if (!loading && !voice.listening && config.models.includes(chat.model)) {
-            void sendChat(chat.id, file, supportedEffort(config, chat), context);
+            void sendChat(chat.id, file, supportedEffort(config, chat), context, { canvasPicture: sharing && config.vision.includes(chat.model) });
           }
         }}
         onDragOver={(event) => {
@@ -266,7 +267,7 @@ function ComposerTools({ chat, config, voice, loading, attach }: ToolsProps) {
       >
         <ChatIcon name="mic" />
       </button>
-      <CaptureToggle chat={chat} />
+      <CaptureToggle chat={chat} vision={config.vision.includes(chat.model)} />
       <SendButton chat={chat} disabled={loading || voice.listening || !config.models.includes(chat.model)} />
     </div>
   );
@@ -274,19 +275,17 @@ function ComposerTools({ chat, config, voice, loading, attach }: ToolsProps) {
 
 // Before/after pictures on Apply, from this tab shared with itself (canvasCapture.ts). Turning it on
 // asks the browser for permission; its own "Stop sharing" turns it off too.
-function CaptureToggle({ chat }: { readonly chat: ChatThread }) {
+// With a vision model, the same stream also sends the canvas to the model with each message.
+function CaptureToggle({ chat, vision }: { readonly chat: ChatThread; readonly vision: boolean }) {
   const active = useCanvasCapture();
+  const purpose = vision ? 'the model sees the canvas with each message, and Apply shows it before and after' : 'Apply shows the canvas before and after';
   return (
     <button
       type="button"
       className={`chat-icon-button ${active ? 'is-capturing' : ''}`}
       aria-label={active ? 'Stop before and after pictures' : 'Take before and after pictures'}
       aria-pressed={active}
-      title={
-        active
-          ? 'Pictures of the canvas are taken on Apply. Click to stop sharing this tab.'
-          : 'Show the canvas before and after each applied change (shares this tab)'
-      }
+      title={active ? `Sharing this tab: ${purpose}. Click to stop.` : `Share this tab with Studio: ${purpose}.`}
       onClick={() => {
         if (active) {
           stopCanvasCapture();
