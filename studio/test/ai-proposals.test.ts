@@ -110,6 +110,35 @@ test('only an effort the chosen model lists reaches the provider', async () => {
   }
 });
 
+test('a proposal carries a line diff per file, and a change that cannot apply shows why', async () => {
+  const setup = await fixture([
+    { read: [ABOUT] },
+    proposal(
+      { file: PAGE, before: '<p>Intro</p>', after: '<p>Intro</p>\n<p>More</p>' },
+      { file: ABOUT, before: '<h1>Missing</h1>', after: '<h1>About us</h1>' },
+    ),
+  ]);
+  try {
+    const reply = record(await setup.store.create(request({ model: 'deepseek-v4-flash' })));
+    assert.deepEqual(reply['diffs'], [
+      {
+        kind: 'changed',
+        file: PAGE,
+        created: false,
+        added: 1,
+        removed: 0,
+        omitted: 0,
+        hunks: [{ oldStart: 1, newStart: 1, lines: [' <h1>Welcome</h1>', ' <p>Intro</p>', '+<p>More</p>'] }],
+      },
+      { kind: 'failed', file: ABOUT, message: 'AI change is stale or ambiguous. Ask it to regenerate.' },
+    ]);
+    // Diffing reads the files and leaves them as they were.
+    assert.equal(await setup.read(PAGE), '<h1>Welcome</h1>\n<p>Intro</p>\n');
+  } finally {
+    await setup.close();
+  }
+});
+
 test('an applied change undoes and redoes on disk, and a stale record changes nothing', async () => {
   const setup = await fixture([proposal({ file: PAGE, before: '<h1>Welcome</h1>', after: '<h1>Hello there</h1>' })]);
   try {

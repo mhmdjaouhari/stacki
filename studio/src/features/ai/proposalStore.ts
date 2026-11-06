@@ -1,7 +1,8 @@
 import { availableModels } from './configuration';
 import { effortLevels, parseChatInput } from './chatContracts';
 import { randomUUID } from 'node:crypto';
-import { aiConfiguration, creatable, optionalSource, propose, proposedSource, validatedSource, type Proposal } from './agent';
+import { aiConfiguration, creatable, optionalSource, propose, proposedSource, validatedSource, type Proposal, type ProposedChange } from './agent';
+import { proposalDiffs, type DiffSource } from './lineDiff';
 import { parseDirection, parseReversibleChanges, reversibleChange, reversibleChanges, revertStep } from './reversible';
 import type { FileChange } from '../project/changeFiles';
 import type { createRooms } from '../collaboration/rooms';
@@ -67,6 +68,7 @@ export class ProposalStore {
       summary: proposal.summary,
       files: proposal.changes.map((change) => change.file),
       changes: proposal.changes,
+      diffs: proposalDiffs(await Promise.all(proposal.changes.map((change) => diffSource(this.root, change)))),
     };
   }
   async apply(value: unknown) {
@@ -115,6 +117,17 @@ export class ProposalStore {
       await changeFiles(this.root, this.rooms, planned);
       return { reverted: true };
     });
+  }
+}
+
+// The file's source now and with the change applied, for the diff the chat shows. A change that
+// can't apply (its `before` is gone or ambiguous, or the result doesn't parse) is shown with its
+// reason, rather than failing the whole reply: the summary and the other files are still useful.
+async function diffSource(root: string, change: ProposedChange): Promise<DiffSource | { readonly file: string; readonly failure: string }> {
+  try {
+    return { file: change.file, previous: await optionalSource(root, change.file), next: await proposedSource(root, change) };
+  } catch (error) {
+    return { file: change.file, failure: error instanceof Error ? error.message : 'This change cannot be applied.' };
   }
 }
 

@@ -79,17 +79,19 @@ export function stopChat(id: string) {
   running.get(id)?.abort();
 }
 export function discardProposal(id: string, messageId: string) {
-  finishProposal(id, messageId, 'Discarded. No changes were applied.');
+  finishProposal(id, messageId, 'Discarded. No changes were applied.', 'nothing');
 }
-function finishProposal(id: string, messageId: string, outcome: string, applied?: AppliedChange) {
+// A discarded proposal leaves only its outcome; an applied one keeps its diffs, so the change can still be read.
+function finishProposal(id: string, messageId: string, outcome: string, kept: 'nothing' | 'diffs', applied?: AppliedChange) {
   updateChat(id, (thread) => ({
     ...thread,
     messages: thread.messages.map((message) => {
       if (message.id !== messageId) {
         return message;
       }
-      const { proposal: _proposal, ...rest } = message;
-      return { ...rest, outcome, ...(applied ? { applied } : {}) };
+      const { proposal, ...rest } = message;
+      const diffs = kept === 'diffs' ? proposal?.diffs : undefined;
+      return { ...rest, outcome, ...(applied ? { applied } : {}), ...(diffs ? { diffs } : {}) };
     }),
   }));
 }
@@ -116,9 +118,9 @@ export async function applyProposal(id: string, messageId: string, refresh: () =
     // A change too large to send back is applied without an undo record.
     const changes = result['changes'];
     if (changes === undefined) {
-      finishProposal(id, messageId, `${APPLIED} It is too large to undo from the chat.`);
+      finishProposal(id, messageId, `${APPLIED} It is too large to undo from the chat.`, 'diffs');
     } else {
-      finishProposal(id, messageId, APPLIED, parseApplied({ changes, state: 'applied' }));
+      finishProposal(id, messageId, APPLIED, 'diffs', parseApplied({ changes, state: 'applied' }));
     }
     refresh();
   } catch (error) {

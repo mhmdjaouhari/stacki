@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { applyProposal, discardProposal, revertChange } from './chatActions';
 import { type ChatThread, type ChatMessage } from './chatState';
 import { ChatIcon } from './ChatIcon';
+import { ChatDiff, DiffCounts, diffTotals, substringDiffs } from './ChatDiff';
+import type { FileDiff } from './lineDiff';
 
 export function ChatMessages({ chat, refresh }: { readonly chat: ChatThread; readonly refresh: () => void }) {
   const scroll = useRef<HTMLDivElement>(null);
@@ -61,21 +63,23 @@ function ProposalCard({ chat, message, refresh }: { readonly chat: ChatThread; r
   if (!proposal) {
     return null;
   }
+  const diffs = proposal.diffs ?? substringDiffs(proposal.changes);
+  const blocked = diffs.some((diff) => diff.kind === 'failed');
   return (
     <div className="chat-proposal">
       <div className="chat-proposal-title">
         <ChatIcon name="file" />
         {proposal.changes.length} file{proposal.changes.length === 1 ? '' : 's'} changed
+        <DiffCounts {...diffTotals(diffs)} />
       </div>
-      {proposal.changes.map((change) => (
-        <details key={change.file}>
-          <summary>{change.file.replace(/^src\//, '')}</summary>
-          <pre className="diff-before">{change.before || '(new file)'}</pre>
-          <pre className="diff-after">{change.after}</pre>
-        </details>
-      ))}
+      <ChatDiff diffs={diffs} numbers={proposal.diffs ? 'file' : 'none'} />
       <div className="chat-proposal-actions">
-        <button disabled={chat.status !== 'idle'} onClick={() => void applyProposal(chat.id, message.id, refresh)}>
+        {/* Applying is all or nothing, so a file that can't apply blocks the rest. */}
+        <button
+          disabled={chat.status !== 'idle' || blocked}
+          title={blocked ? 'A file in this proposal can no longer be applied. Ask for it again.' : undefined}
+          onClick={() => void applyProposal(chat.id, message.id, refresh)}
+        >
           Apply to draft
         </button>
         <button disabled={chat.status !== 'idle'} onClick={() => discardProposal(chat.id, message.id)}>
@@ -102,8 +106,22 @@ function MessageItem({ chat, message, refresh }: { readonly chat: ChatThread; re
       {message.content && (message.role === 'assistant' ? <ChatText text={message.content} /> : <div className="chat-message-text">{message.content}</div>)}
       {message.proposal && <ProposalCard chat={chat} message={message} refresh={refresh} />}
       {message.outcome && <p className="chat-outcome">{message.outcome}</p>}
+      {message.diffs && <AppliedDiff diffs={message.diffs} />}
       {message.applied && <RevertAction chat={chat} message={message} applied={message.applied} refresh={refresh} />}
     </article>
+  );
+}
+
+// What an applied change did, collapsed to one line until opened.
+function AppliedDiff({ diffs }: { readonly diffs: readonly FileDiff[] }) {
+  const files = diffs.filter((diff) => diff.kind === 'changed').length;
+  return (
+    <details className="chat-applied-diff">
+      <summary>
+        {files} file{files === 1 ? '' : 's'} <DiffCounts {...diffTotals(diffs)} />
+      </summary>
+      <ChatDiff diffs={diffs} numbers="file" />
+    </details>
   );
 }
 
