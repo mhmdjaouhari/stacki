@@ -16,11 +16,24 @@ Besides the prompt and the current file, each request carries an outline of the 
 
 Set `AI_BASE_URL`, `AI_MODEL`, and optionally `AI_API_KEY` on the local server or hosted Worker. Add a comma-separated `AI_MODELS` value for additional choices on that same provider. The default model is always included. The server and hosted gateway both enforce this allowlist. Keys stay on the server. A model must support the OpenAI-compatible `/chat/completions` interface; image requests require a vision-capable model. Nothing is enabled or billed by default.
 
+`AI_EFFORTS` sets reasoning-effort levels per model (`deepseek-v4-flash=low,high,max; gpt-6-luna=low,medium,high`), offered next to the model and sent as `reasoning_effort`. `AI_TOOL_MODELS` lists the models that use the provider's native tool calling (`deepseek-v4-flash, glm-5.2`). Those models read files, search the source, render any page and sample a page's data through read-only tools, and can be given more tools by the host (below). Other models use a JSON protocol that can only read files. Tool calling is opt-in because a provider or proxy without support for the `tools` field rejects the request.
+
+Every proposal is checked before it is shown. `.astro` files go through the Astro compiler and their frontmatter and expressions through TypeScript's syntax check; scripts, JSON and CSS go through their parsers; and each change must apply exactly once. Problems go back to the model for up to two rounds of fixes, and whatever remains is shown above the proposal. The check reads syntax only, not types or imports.
+
 For example, with your own local model server:
 
 ```sh
 AI_BASE_URL=http://127.0.0.1:11434/v1 AI_MODEL=your-default-model AI_MODELS=your-other-model npm run dev
 ```
+
+## Extending the chat from a host integration
+
+A host that runs Studio's integration itself can pass `studio({ ..., ai: { context, tools } })` (`src/features/ai/aiExtensions.ts`). This is how a CMS adds what Studio can't know, such as its content model or entries, while Studio stays CMS-neutral.
+
+- `context`: functions `({ file, page, signal }) => Promise<{ title, content }[]>`. They are called for every request, and their sections go to the model as data under `host`.
+- `tools`: `{ name, description, parameters, run(input, { signal }) }`, offered to `AI_TOOL_MODELS` models next to the built-in ones. `parameters` is a JSON Schema object, and `run` parses its own input.
+
+Both must be read-only. Each call runs under a 15-second deadline. Results are cut at 50,000 characters for a tool and 8000 for a section, and a failure goes back to the model as an error rather than failing the request. Names and shapes are checked when Studio starts.
 
 ## Images and voice
 

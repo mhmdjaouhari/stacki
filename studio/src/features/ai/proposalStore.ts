@@ -62,13 +62,14 @@ export class ProposalStore {
     const file = sourcePath(input['file']);
     const chat = parseChatInput(input);
     const contextRequest = parseContextRequest(input);
-    const [context, guidance] = await Promise.all([gatherContext(this.root, file, contextRequest, sources), ownerInstructions(this.root)]);
+    const [context, guidance] = await Promise.all([gatherContext(this.root, file, contextRequest, sources, signal), ownerInstructions(this.root)]);
+    const tools = models.tools.includes(model);
     const proposal = await propose(
       this.root,
       file,
       string(input['prompt'], 12_000),
-      { ...config, model, ...(effort ? { effort } : {}) },
-      { ...chat, context, ...(guidance ? { guidance } : {}) },
+      { ...config, model, ...(effort ? { effort } : {}), ...(tools ? { tools } : {}) },
+      { ...chat, context, ...(guidance ? { guidance } : {}), ...(sources ? { sources } : {}) },
       signal,
     );
     signal?.throwIfAborted();
@@ -82,6 +83,7 @@ export class ProposalStore {
       files: proposal.changes.map((change) => change.file),
       changes: proposal.changes,
       diffs: proposalDiffs(await Promise.all(proposal.changes.map((change) => diffSource(this.root, change)))),
+      ...(proposal.problems ? { problems: proposal.problems } : {}),
     };
   }
   async apply(value: unknown) {

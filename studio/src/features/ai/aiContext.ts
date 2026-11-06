@@ -5,7 +5,8 @@ import { importedCallsInScope } from '../../../vendor/stacki/src/editor/dataSugg
 import { parsePage } from '../source/source';
 import { record, string } from '../../shared/validation';
 import { renderPath } from '../preview/renderPushServer';
-import { optionalSource } from './agent';
+import { optionalSource } from './proposalSources';
+import { EXTENSION_LIMITS, withDeadline, type AiContextSection, type AiExtensions } from './aiExtensions';
 import type { ValueRequest } from '../project/valueSampler';
 
 // What the model needs besides source code to make a good edit, gathered once
@@ -49,11 +50,15 @@ export interface ContextRequest {
 export interface ContextSources {
   readonly render: (path: string) => Promise<string>;
   readonly sample: (request: ValueRequest) => Promise<{ readonly value: unknown }>;
+  /** What the host integration adds (aiExtensions.ts). */
+  readonly extensions?: AiExtensions;
 }
 export interface PromptContext {
   readonly page?: { readonly path: string; readonly outline: string } | { readonly path: string; readonly unavailable: string };
   readonly selection?: { readonly label: string; readonly lines: string; readonly source: string };
   readonly data?: readonly { readonly name: string; readonly call: string; readonly value: string }[];
+  /** Sections from the host integration's context providers, such as a CMS's content model. */
+  readonly host?: readonly AiContextSection[];
 }
 
 export function parseContextRequest(input: Record<string, unknown>): ContextRequest {
@@ -65,14 +70,44 @@ export function parseContextRequest(input: Record<string, unknown>): ContextRequ
   return { ...(page ? { page } : {}), ...(selection ? { selection } : {}) };
 }
 
-export async function gatherContext(root: string, file: string, request: ContextRequest, sources: ContextSources | undefined): Promise<PromptContext> {
+export async function gatherContext(
+  root: string,
+  file: string,
+  request: ContextRequest,
+  sources: ContextSources | undefined,
+  signal: AbortSignal = new AbortController().signal,
+): Promise<PromptContext> {
   const source = (await optionalSource(root, file)) ?? '';
-  const [page, data] = await Promise.all([
+  const [page, data, host] = await Promise.all([
     request.page && sources ? renderedPage(request.page, sources) : undefined,
     sources ? dataSamples(file, source, sources) : undefined,
+    sources?.extensions?.context?.length ? hostSections(sources.extensions, { file, ...(request.page ? { page: request.page } : {}), signal }) : undefined,
   ]);
   const selection = request.selection ? selectedSource(source, request.selection) : undefined;
-  return { ...(page ? { page } : {}), ...(selection ? { selection } : {}), ...(data?.length ? { data } : {}) };
+  return { ...(page ? { page } : {}), ...(selection ? { selection } : {}), ...(data?.length ? { data } : {}), ...(host?.length ? { host } : {}) };
+}
+
+// Each provider runs under a deadline; one that fails or times out adds a section saying so.
+async function hostSections(
+  extensions: AiExtensions,
+  request: { readonly file: string; readonly page?: string; readonly signal: AbortSignal },
+): Promise<AiContextSection[]> {
+  const results = await Promise.all(
+    (extensions.context ?? []).map(async (provider): Promise<readonly AiContextSection[]> => {
+      try {
+        return await withDeadline(request.signal, (signal) => provider({ ...request, signal }));
+      } catch (error) {
+        return [{ title: 'Unavailable context', content: error instanceof Error ? error.message.slice(0, 300) : 'A context provider failed' }];
+      }
+    }),
+  );
+  return results
+    .flat()
+    .slice(0, EXTENSION_LIMITS.sectionsMax)
+    .map((section) => ({
+      title: clipText(String(section.title), EXTENSION_LIMITS.sectionTitleCharsMax),
+      content: clipText(String(section.content), EXTENSION_LIMITS.sectionCharsMax),
+    }));
 }
 
 /** The owner's guidance for the AI, or undefined when the project has none. */
@@ -143,7 +178,7 @@ async function renderedPage(path: string, sources: ContextSources): Promise<Prom
   }
 }
 
-async function dataSamples(file: string, source: string, sources: ContextSources): Promise<PromptContext['data']> {
+export async function dataSamples(file: string, source: string, sources: ContextSources): Promise<PromptContext['data']> {
   if (!file.startsWith('src/')) {
     return undefined;
   }

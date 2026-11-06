@@ -676,6 +676,20 @@ details[open] > .chat-diff-summary::before,
     padding: 0;
   }
 }
+.chat-proposal-problems {
+  border-top: 0.0625rem solid var(--border);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.6875rem;
+  color: #e3c08d;
+  background: #e3c08d14;
+  ul {
+    margin: 0.25rem 0 0;
+    padding-left: 1rem;
+  }
+  code {
+    font-family: var(--font-mono, ui-monospace, monospace);
+  }
+}
 .chat-proposal-actions .chat-review-open {
   margin-left: auto;
 }

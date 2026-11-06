@@ -11,6 +11,13 @@ export interface ChatProposal {
   readonly changes: readonly ProposedChange[];
   /** Line diffs from the server; proposals saved before diffs existed have none. */
   readonly diffs?: readonly FileDiff[];
+  /** What the server's check still found after the model's fix rounds. */
+  readonly problems?: readonly ProposalProblem[];
+}
+export interface ProposalProblem {
+  readonly file: string;
+  readonly line?: number;
+  readonly message: string;
 }
 export interface ChatMessage {
   readonly id: string;
@@ -238,5 +245,19 @@ export function parseProposal(value: unknown): ChatProposal {
       };
     }),
     ...(input['diffs'] === undefined ? {} : { diffs: parseFileDiffs(input['diffs']) }),
+    ...(input['problems'] === undefined ? {} : { problems: parseProblems(input['problems']) }),
   };
+}
+function parseProblems(value: unknown): readonly ProposalProblem[] {
+  if (!Array.isArray(value) || value.length > 20) {
+    throw new Error('Invalid proposal');
+  }
+  return value.map((item: unknown) => {
+    const problem = record(item);
+    const line = problem['line'];
+    if (line !== undefined && (typeof line !== 'number' || !Number.isSafeInteger(line) || line < 1)) {
+      throw new Error('Invalid proposal');
+    }
+    return { file: string(problem['file'], 500), ...(line === undefined ? {} : { line }), message: string(problem['message'], 300) };
+  });
 }

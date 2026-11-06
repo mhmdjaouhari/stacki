@@ -41,6 +41,71 @@ export function completionReply(payload: unknown): ReplyResult {
   return { kind: 'reply', content };
 }
 
+export interface ToolCall {
+  readonly id: string;
+  readonly name: string;
+  /** The arguments as the model wrote them: a JSON text, parsed by the tool. */
+  readonly arguments: string;
+}
+export type TurnResult =
+  | ReplyResult
+  | {
+      readonly kind: 'tools';
+      readonly calls: readonly ToolCall[];
+      readonly content: string;
+      /** Reasoning some providers (DeepSeek in thinking mode) need echoed back within a tool loop. */
+      readonly reasoning: string;
+    };
+
+export const TOOL_LIMITS = {
+  callsPerTurnMax: 8,
+  argumentsCharsMax: 1_200_000,
+  idCharsMax: 200,
+} as const satisfies Record<string, number>;
+const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/;
+
+/** A reply that may call tools: the calls of the first choice, or its text as `completionReply` reads it. */
+export function completionTurn(payload: unknown): TurnResult {
+  const choices = objectOf(payload)?.['choices'];
+  const choice = Array.isArray(choices) ? objectOf(choices[0]) : undefined;
+  const message = objectOf(choice?.['message']);
+  const calls = message?.['tool_calls'];
+  if (!Array.isArray(calls) || !calls.length) {
+    return completionReply(payload);
+  }
+  if (choice?.['finish_reason'] === 'length') {
+    return { kind: 'failure', message: OUT_OF_TOKENS };
+  }
+  if (calls.length > TOOL_LIMITS.callsPerTurnMax) {
+    return { kind: 'failure', message: `The model called more than ${TOOL_LIMITS.callsPerTurnMax} tools at once.` };
+  }
+  const parsed = calls.map(toolCall);
+  if (parsed.some((call) => call === undefined)) {
+    return { kind: 'failure', message: 'The model called a tool in a form the server cannot read.' };
+  }
+  const reasoning = message?.['reasoning_content'];
+  return {
+    kind: 'tools',
+    calls: parsed.filter((call): call is ToolCall => call !== undefined),
+    content: textContent(message?.['content']).slice(0, MAX_REPLY),
+    reasoning: typeof reasoning === 'string' ? reasoning.slice(0, MAX_REPLY) : '',
+  };
+}
+
+function toolCall(value: unknown): ToolCall | undefined {
+  const call = objectOf(value);
+  const target = objectOf(call?.['function']);
+  const id = call?.['id'];
+  const name = target?.['name'];
+  const input = target?.['arguments'];
+  if (typeof id !== 'string' || !id || id.length > TOOL_LIMITS.idCharsMax || typeof name !== 'string' || !TOOL_NAME.test(name)) {
+    return undefined;
+  }
+  // Some providers send the arguments as an object rather than as JSON text.
+  const text = typeof input === 'string' ? input : JSON.stringify(input ?? {});
+  return text.length > TOOL_LIMITS.argumentsCharsMax ? undefined : { id, name, arguments: text || '{}' };
+}
+
 /** Content is a string, or (in some providers) a list of typed parts. */
 function textContent(value: unknown): string {
   if (typeof value === 'string') {

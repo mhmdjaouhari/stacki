@@ -12,8 +12,9 @@ test('model configuration deduplicates the default and validates provider bounda
     defaultModel: 'local-vision',
     models: ['local-vision', 'local-fast'],
     efforts: {},
+    tools: [],
   });
-  assert.deepEqual(parseModels(modelConfiguration()), { defaultModel: '', models: [], efforts: {} });
+  assert.deepEqual(parseModels(modelConfiguration()), { defaultModel: '', models: [], efforts: {}, tools: [] });
   assert.throws(() => parseModels({ models: [false], defaultModel: '' }));
   assert.throws(() => modelConfiguration('default', Array.from({ length: 31 }, (_, i) => `model-${i}`).join(',')));
 });
@@ -40,8 +41,17 @@ test('effort levels are configured per model and must name configured models', (
     assert.throws(() => modelConfiguration('deepseek-v4-flash', '', efforts), /effort|AI_EFFORTS/i, efforts);
   }
 });
+test('tool calling is opted into per configured model', () => {
+  const configuration = modelConfiguration('deepseek-v4-flash', 'glm-5.2', undefined, ' glm-5.2 , glm-5.2 ');
+  assert.deepEqual(configuration.tools, ['glm-5.2']);
+  assert.deepEqual(parseModels(JSON.parse(JSON.stringify(configuration))), configuration);
+  assert.throws(() => modelConfiguration('deepseek-v4-flash', '', undefined, 'gpt-6-luna'), /AI_TOOL_MODELS/);
+  for (const tools of ['glm-5.2', ['unknown'], [1]]) {
+    assert.throws(() => parseModels({ models: ['glm-5.2'], defaultModel: 'glm-5.2', tools }), /Invalid model configuration/, JSON.stringify(tools));
+  }
+});
 test('hosted model configurations without efforts still parse, and malformed efforts fail', () => {
-  assert.deepEqual(parseModels({ models: ['a'], defaultModel: 'a' }), { models: ['a'], defaultModel: 'a', efforts: {} });
+  assert.deepEqual(parseModels({ models: ['a'], defaultModel: 'a' }), { models: ['a'], defaultModel: 'a', efforts: {}, tools: [] });
   for (const efforts of [[], 'low', { b: ['low'] }, { a: 'low' }, { a: [] }, { a: [1] }, { a: ['LOW'] }]) {
     assert.throws(() => parseModels({ models: ['a'], defaultModel: 'a', efforts }), JSON.stringify(efforts));
   }

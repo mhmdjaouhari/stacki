@@ -2,7 +2,7 @@ import { ErrorToast } from '../../../vendor/stacki/src/ui/ErrorToast';
 import { ChatText } from './ChatText';
 import { useEffect, useRef, useState } from 'react';
 import { applyProposal, discardProposal, revertChange } from './chatActions';
-import { type ChatThread, type ChatMessage } from './chatState';
+import { type ChatThread, type ChatMessage, type ProposalProblem } from './chatState';
 import { ChatIcon } from './ChatIcon';
 import { ChatDiff, DiffCounts, diffTotals, substringDiffs } from './ChatDiff';
 import type { FileDiff } from './lineDiff';
@@ -151,6 +151,7 @@ function ProposalCard({ chat, message, diffs, refresh, review }: ProposalProps &
         {proposal.changes.length} file{proposal.changes.length === 1 ? '' : 's'} changed
         <DiffCounts {...diffTotals(diffs)} />
       </div>
+      {proposal.problems && <ProposalProblems problems={proposal.problems} />}
       <ChatDiff diffs={diffs} numbers={proposal.diffs ? 'file' : 'none'} />
       <div className="chat-proposal-actions">
         <ProposalActions chat={chat} message={message} diffs={diffs} refresh={refresh} />
@@ -158,6 +159,28 @@ function ProposalCard({ chat, message, diffs, refresh, review }: ProposalProps &
           Review changes
         </button>
       </div>
+    </div>
+  );
+}
+
+// The check runs before a proposal reaches the person, and the model gets two rounds to fix
+// what it finds; what remains is shown, not hidden. Applying is still allowed: the check reads
+// syntax only, and the person may want the change anyway, then fix it or undo it.
+function ProposalProblems({ problems }: { readonly problems: readonly ProposalProblem[] }) {
+  return (
+    <div className="chat-proposal-problems" role="note">
+      <strong>The check found problems the model couldn't fix. Applying may break the page.</strong>
+      <ul>
+        {problems.map((problem, index) => (
+          <li key={index}>
+            <code>
+              {problem.file.replace(/^src\//, '')}
+              {problem.line === undefined ? '' : `:${problem.line}`}
+            </code>{' '}
+            {problem.message}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

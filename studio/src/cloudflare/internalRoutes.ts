@@ -17,7 +17,11 @@ export async function internal(request: Request, environment: Environment): Prom
 }
 const routes: Readonly<Record<string, (request: Request, environment: Environment, url: URL) => Promise<Response>>> = {
   '/studio/internal/ai/models': async (_request, environment) =>
-    Response.json(environment.AI_BASE_URL ? modelConfiguration(environment.AI_MODEL, environment.AI_MODELS, environment.AI_EFFORTS) : modelConfiguration()),
+    Response.json(
+      environment.AI_BASE_URL
+        ? modelConfiguration(environment.AI_MODEL, environment.AI_MODELS, environment.AI_EFFORTS, environment.AI_TOOL_MODELS)
+        : modelConfiguration(),
+    ),
   '/studio/internal/authorize': authorizeConnection,
   '/studio/internal/storage': storageInventory,
   '/studio/internal/storage-baseline': storageBaseline,
@@ -79,7 +83,7 @@ async function internalCompletions(request: Request, environment: Environment, u
       throw new Error('Hosted AI requires HTTPS');
     }
     const input = record(await request.json());
-    const models = modelConfiguration(environment.AI_MODEL, environment.AI_MODELS, environment.AI_EFFORTS);
+    const models = modelConfiguration(environment.AI_MODEL, environment.AI_MODELS, environment.AI_EFFORTS, environment.AI_TOOL_MODELS);
     const model = string(input['model'], 160);
     if (!models.models.includes(model)) {
       throw new Error('Model is not configured');
@@ -89,9 +93,11 @@ async function internalCompletions(request: Request, environment: Environment, u
       throw new Error('Effort is not configured for this model');
     }
     const messages = input['messages'];
-    if (!Array.isArray(messages) || messages.length > 26 || JSON.stringify(messages).length > 1_500_000) {
+    // A tool loop adds an assistant message and a result per call: up to 30 calls over 10 rounds (agentTools.ts).
+    if (!Array.isArray(messages) || messages.length > 64 || JSON.stringify(messages).length > 1_500_000) {
       throw new Error('Invalid AI context');
     }
+    const tools = toolFields(input, models.tools.includes(model));
     return fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -99,12 +105,28 @@ async function internalCompletions(request: Request, environment: Environment, u
         ...(environment.AI_API_KEY ? { Authorization: 'Bearer ' + environment.AI_API_KEY } : {}),
       },
       // The budget is the server's, never the caller's; see outputTokens.
-      body: JSON.stringify({ model, max_tokens: outputTokens(environment.AI_MAX_TOKENS), ...(effort ? { reasoning_effort: effort } : {}), messages }),
+      body: JSON.stringify({ model, max_tokens: outputTokens(environment.AI_MAX_TOKENS), ...(effort ? { reasoning_effort: effort } : {}), ...tools, messages }),
       // Matches the container's per-completion limit: thinking at high effort takes minutes.
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(180_000)]),
     });
   }
   return new Response('Not found', { status: 404 });
+}
+
+// Tool definitions pass through only for a model configured for tools (AI_TOOL_MODELS), bounded;
+// the container builds them, and the provider validates their schemas.
+function toolFields(input: Record<string, unknown>, allowed: boolean): { tools?: unknown[]; tool_choice?: 'auto' } {
+  const tools = input['tools'];
+  if (tools === undefined) {
+    return {};
+  }
+  if (!allowed) {
+    throw new Error('Tools are not configured for this model');
+  }
+  if (!Array.isArray(tools) || tools.length > 32 || JSON.stringify(tools).length > 64_000 || input['tool_choice'] !== 'auto') {
+    throw new Error('Invalid AI tools');
+  }
+  return { tools, tool_choice: 'auto' };
 }
 
 async function internalAssets(request: Request, environment: Environment, url: URL): Promise<Response> {
