@@ -35,9 +35,10 @@ try {
   await verifyCompactDiff(page);
   await verifyStreamedReply(page);
   await verifyEditAndMentions(page);
+  await verifyApplyCheck(page);
   assert.deepEqual(errors, []);
   console.log(
-    'Chat drafts, switching, image preparation/removal, reload persistence, single transcript across renders, the chat list by keyboard, the background-chat dot, the compact proposal diff, the review overlay, a streamed reply with its steps, editing from a message, @ mentions, and mobile composer passed. Live AI and microphone recognition require a configured provider and an interactive microphone.',
+    'Chat drafts, switching, image preparation/removal, reload persistence, single transcript across renders, the chat list by keyboard, the background-chat dot, the compact proposal diff, the review overlay, a streamed reply with its steps, editing from a message, @ mentions, apply and check, and mobile composer passed. Live AI and microphone recognition require a configured provider and an interactive microphone.',
   );
 } finally {
   await browser.close();
@@ -309,6 +310,35 @@ async function verifyEditAndMentions(page: Page) {
   await prompt.press('Enter');
   assert.equal(await prompt.inputValue(), 'Compare with @src/pages/index.astro ');
   assert.equal(await page.getByRole('listbox', { name: 'Attach a file' }).count(), 0);
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+}
+// Apply and check: when the server finds the change broke a page and put it back, the proposal stays
+// with the error, and "Ask to fix" writes the error into the prompt. The canvas page goes with Apply.
+async function verifyApplyCheck(page: Page) {
+  const applies: string[] = [];
+  await page.route('**/studio/api/ai/models', (route) => route.fulfill({ json: { models: ['test-model'], defaultModel: 'test-model' } }));
+  await page.route('**/studio/api/ai/propose', (route) =>
+    route.fulfill({ json: { id: 'broken', summary: 'Swapped the heading.', changes: [{ file: 'src/pages/index.astro', before: 'a', after: 'b' }] } }),
+  );
+  await page.route('**/studio/api/ai/apply', (route) => {
+    applies.push(route.request().postData() ?? '');
+    return route.fulfill({ json: { applied: false, broken: [{ path: '/', error: 'Status 500: ReferenceError: Missing is not defined' }] } });
+  });
+  await page.reload();
+  await page.getByRole('button', { name: 'AI chat', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'New chat', exact: true })
+    .filter({ has: page.locator('svg') })
+    .last()
+    .click();
+  const prompt = page.getByLabel('AI prompt', { exact: true });
+  await prompt.fill('Swap the heading');
+  await sendWhenReady(page);
+  await page.getByRole('button', { name: 'Apply to draft', exact: true }).click();
+  await page.getByText('Applying this broke the page, so it was undone.').waitFor();
+  assert.match(applies[0] ?? '', /"page":"\/"/);
+  await page.getByRole('button', { name: 'Ask to fix', exact: true }).click();
+  assert.match(await prompt.inputValue(), /Missing is not defined/);
   await page.unrouteAll({ behavior: 'ignoreErrors' });
 }
 // Send is disabled until the chat's model is in the loaded list, and Enter before then is

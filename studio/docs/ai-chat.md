@@ -6,6 +6,8 @@ Use the chat title menu to switch or delete chats (arrow keys, Enter and Escape 
 
 While a reply runs, the chat shows the step it is on ("Rendered /", "Read Hero.astro", "Thinking", "Checked the proposal") and how long it has taken. The steps stream from the server as server-sent events on the same request, with a heartbeat every 15 seconds so proxies keep the stream open; proxies must pass `text/event-stream` through unbuffered. Under each reply, a collapsed line gives the model, effort and duration, and opens on the list of steps.
 
+**Apply to draft** checks the change. Studio renders the canvas page and every changed page with a fixed route, before and after writing the files. If a page that rendered before now fails, the files are put back straight away, and the proposal shows the error, with the file and line from the dev server. **Ask to fix** then writes the error into the prompt. Collaborators can see the change for the second or two the check takes, which is why it runs only on Apply, never while the model is proposing. A page that was already failing doesn't count against the change. When the check passes, the outcome names the pages that still render, and **Rendered text** shows how their text changed.
+
 The up arrow in an empty prompt recalls your last message. **Edit** under one of your earlier messages takes you back to it: the replies after it are removed, the changes they applied are undone (newest first, all or nothing, and it says how many first), and the message returns to the composer. Type `@` to attach a page, component or collection file. The model receives it already read, and may edit it.
 
 ## Reading a change

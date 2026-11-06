@@ -52,6 +52,8 @@ export interface ContextSources {
   readonly sample: (request: ValueRequest) => Promise<{ readonly value: unknown }>;
   /** What the host integration adds (aiExtensions.ts). */
   readonly extensions?: AiExtensions;
+  /** A page's status and HTML, for the check after applying a change (applyCheck.ts). */
+  readonly fetchPage?: (path: string) => Promise<{ readonly status: number; readonly html: string; readonly error?: string }>;
 }
 export interface PromptContext {
   readonly page?: { readonly path: string; readonly outline: string } | { readonly path: string; readonly unavailable: string };
@@ -153,6 +155,12 @@ async function readInstructions(root: string): Promise<string | undefined> {
 
 /** The page's rendered HTML fetched from the dev server on `port`, as the browser would get it. */
 export async function fetchRenderedPage(port: number, path: string): Promise<string> {
+  const { status, html } = await fetchPageResponse(port, path);
+  return status < 400 ? html : `<p>(The page answered with status ${status}.)</p>${html}`;
+}
+
+/** The page's status and HTML, whatever the status: the apply check tells a broken page from a working one. */
+export async function fetchPageResponse(port: number, path: string): Promise<{ readonly status: number; readonly html: string }> {
   assert(Number.isSafeInteger(port), 'render: port must be an integer');
   assert(renderPath({ path }) === path, 'render: path must be a validated render path');
   const response = await fetch(`http://127.0.0.1:${port}${path}`, { redirect: 'error', signal: AbortSignal.timeout(CONTEXT_LIMITS.renderMsMax) });
@@ -167,7 +175,7 @@ export async function fetchRenderedPage(port: number, path: string): Promise<str
   if (html.length > CONTEXT_LIMITS.renderBytesMax) {
     throw new Error('The rendered page is too large');
   }
-  return response.ok ? html : `<p>(The page answered with status ${response.status}.)</p>${html}`;
+  return { status: response.status, html };
 }
 
 async function renderedPage(path: string, sources: ContextSources): Promise<PromptContext['page']> {

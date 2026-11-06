@@ -5,6 +5,8 @@ import { aiConfiguration, creatable, optionalSource, propose, proposedSource, va
 import { proposalDiffs, type DiffSource } from './lineDiff';
 import { gatherContext, ownerInstructions, parseContextRequest, type ContextSources, type PromptContext } from './aiContext';
 import { stepRecorder, type Step } from './progress';
+import { affectedPages, brokenPages, renderedChanges, renderPages } from './applyCheck';
+import { renderPath } from '../preview/renderPushServer';
 import { parseDirection, parseReversibleChanges, reversibleChange, reversibleChanges, revertStep } from './reversible';
 import type { FileChange } from '../project/changeFiles';
 import type { createRooms } from '../collaboration/rooms';
@@ -104,13 +106,27 @@ export class ProposalStore {
       meta: { model, ...(effort ? { effort } : {}), durationMs: Date.now() - startedAtMs },
     };
   }
-  async apply(value: unknown) {
-    const id = string(record(value)['id'], 100);
+  async apply(value: unknown, sources?: ContextSources) {
+    const input = record(value);
+    const id = string(input['id'], 100);
     const entry = this.proposals.get(id);
     if (!entry || entry.expires < Date.now()) {
       throw new Error('Proposal expired. Generate it again.');
     }
-    const changes = await this.rooms.coordinator.run(async () => {
+    const canvas = input['page'] === undefined ? undefined : renderPath({ path: input['page'] });
+    if (input['page'] !== undefined && canvas === undefined) {
+      throw new Error('Invalid page path');
+    }
+    // Apply and check (applyCheck.ts): render the affected pages before and after writing.
+    const fetchPage = sources?.fetchPage;
+    const pages = fetchPage
+      ? affectedPages(
+          entry.proposal.changes.map((change) => change.file),
+          canvas,
+        )
+      : [];
+    const before = fetchPage && pages.length ? await renderPages(pages, fetchPage) : undefined;
+    const files = await this.rooms.coordinator.run(async () => {
       const files = await Promise.all(
         entry.proposal.changes.map(async (change) => ({
           file: change.file,
@@ -122,11 +138,44 @@ export class ProposalStore {
         throw new Error('AI must return one change per file');
       }
       await changeFiles(this.root, this.rooms, files);
-      return reversibleChanges(files.map((file) => reversibleChange(file.file, file.previous, file.source)));
+      return files;
     });
-    this.proposals.delete(id);
     // Without a record (too large to send back), the change is applied but can't be undone from the chat.
-    return changes ? { applied: true, changes } : { applied: true };
+    const changes = reversibleChanges(files.map((file) => reversibleChange(file.file, file.previous, file.source)));
+    const recorded = changes ? { changes } : {};
+    if (!fetchPage || !before) {
+      this.proposals.delete(id);
+      return { applied: true, ...recorded };
+    }
+    const after = await renderPages(pages, fetchPage);
+    const broken = brokenPages(before, after);
+    if (!broken.length) {
+      this.proposals.delete(id);
+      return { applied: true, ...recorded, checked: pages, rendered: renderedChanges(before, after) };
+    }
+    // The change broke a page: put the files back, unless someone edited them in the meantime. The
+    // proposal stays, so the person can ask the model to fix it with the error.
+    if (await this.restore(files)) {
+      return { applied: false, broken };
+    }
+    this.proposals.delete(id);
+    return { applied: true, ...recorded, broken, restored: false };
+  }
+  /** Puts each file back to `previous`, only when every file is still exactly what the change wrote. */
+  private async restore(files: readonly { readonly file: string; readonly previous: string | undefined; readonly source: string }[]): Promise<boolean> {
+    return this.rooms.coordinator.run(async () => {
+      for (const file of files) {
+        if ((await optionalSource(this.root, file.file)) !== file.source) {
+          return false;
+        }
+      }
+      await changeFiles(
+        this.root,
+        this.rooms,
+        files.map((file) => (file.previous === undefined ? { file: file.file, remove: true } : { file: file.file, source: file.previous })),
+      );
+      return true;
+    });
   }
   /** One file of a live proposal, whole, before and after: for the review, which diffs more than the chat's hunks show. */
   async proposalFile(id: string, value: unknown): Promise<ReviewSources> {

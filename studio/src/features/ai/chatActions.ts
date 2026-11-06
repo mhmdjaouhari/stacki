@@ -6,6 +6,9 @@ import {
   parseApplied,
   parseReplyRecord,
   parseStep,
+  parseApplyCheck,
+  parseBrokenPages,
+  type ApplyCheck,
   type AppliedChange,
   type ChatThread,
   type ChatMessage,
@@ -72,7 +75,7 @@ export async function sendChat(id: string, file: string, effort: string, context
           role: 'assistant' as const,
           content: proposal.summary,
           images: [],
-          ...(proposal.changes.length ? { proposal } : {}),
+          ...(proposal.changes.length ? { proposal: context.page ? { ...proposal, page: context.page } : proposal } : {}),
           ...replyRecord,
         },
       ].slice(-40),
@@ -96,7 +99,7 @@ export function discardProposal(id: string, messageId: string) {
   finishProposal(id, messageId, 'Discarded. No changes were applied.', 'nothing');
 }
 // A discarded proposal leaves only its outcome; an applied one keeps its diffs, so the change can still be read.
-function finishProposal(id: string, messageId: string, outcome: string, kept: 'nothing' | 'diffs', applied?: AppliedChange) {
+function finishProposal(id: string, messageId: string, outcome: string, kept: 'nothing' | 'diffs', applied?: AppliedChange, check?: ApplyCheck) {
   updateChat(id, (thread) => ({
     ...thread,
     messages: thread.messages.map((message) => {
@@ -105,9 +108,20 @@ function finishProposal(id: string, messageId: string, outcome: string, kept: 'n
       }
       const { proposal, ...rest } = message;
       const diffs = kept === 'diffs' ? proposal?.diffs : undefined;
-      return { ...rest, outcome, ...(applied ? { applied } : {}), ...(diffs ? { diffs } : {}) };
+      return { ...rest, outcome, ...(applied ? { applied } : {}), ...(diffs ? { diffs } : {}), ...(check ? { check } : {}) };
     }),
   }));
+}
+// The outcome line for an applied change: what was checked, or why it couldn't be put back.
+function appliedOutcome(check: ApplyCheck | undefined, undoable: boolean): string {
+  const undo = undoable ? '' : ' It is too large to undo from the chat.';
+  if (check?.broken?.length) {
+    return `Applied, but it broke ${check.broken.map((page) => page.path).join(', ')}, and the files changed again before it could be undone.${undo}`;
+  }
+  if (check?.pages.length) {
+    return `Applied to the shared draft. Checked: ${check.pages.join(', ')} still render${check.pages.length === 1 ? 's' : ''}.${undo}`;
+  }
+  return `${APPLIED}${undo}`;
 }
 const APPLIED = 'Applied to the shared draft. Ready to preview.';
 const OUTCOMES: Readonly<Record<Direction, string>> = {
@@ -126,17 +140,27 @@ export async function applyProposal(id: string, messageId: string, refresh: () =
       await request('/studio/api/ai/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: proposal.id }),
+        body: JSON.stringify({ id: proposal.id, ...(proposal.page ? { page: proposal.page } : {}) }),
       }),
     );
+    refresh();
+    // The check found a page the change broke, and put the files back: the proposal stays, with the errors.
+    if (result['applied'] === false) {
+      const broken = parseBrokenPages(result['broken']);
+      updateChat(id, (chat) => ({
+        ...chat,
+        messages: chat.messages.map((message) =>
+          message.id === messageId && message.proposal ? { ...message, proposal: { ...message.proposal, broken } } : message,
+        ),
+      }));
+      return;
+    }
+    const check =
+      result['checked'] === undefined ? undefined : parseApplyCheck({ pages: result['checked'], rendered: result['rendered'] ?? [], broken: result['broken'] });
     // A change too large to send back is applied without an undo record.
     const changes = result['changes'];
-    if (changes === undefined) {
-      finishProposal(id, messageId, `${APPLIED} It is too large to undo from the chat.`, 'diffs');
-    } else {
-      finishProposal(id, messageId, APPLIED, 'diffs', parseApplied({ changes, state: 'applied' }));
-    }
-    refresh();
+    const applied = changes === undefined ? undefined : parseApplied({ changes, state: 'applied' });
+    finishProposal(id, messageId, appliedOutcome(check, applied !== undefined), 'diffs', applied, check);
   } catch (error) {
     updateChat(id, (chat) => ({
       ...chat,
