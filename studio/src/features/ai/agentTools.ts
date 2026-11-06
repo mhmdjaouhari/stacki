@@ -60,7 +60,7 @@ export const BUILT_IN_TOOLS: readonly ToolDefinition[] = [
   tool('check_changes', 'Check candidate changes without proposing them: whether each applies, and whether the files compile.', { changes: changesSchema() }),
   tool(
     'propose_changes',
-    'Finish by proposing changes for the person to review, with a clear summary. Each change replaces a unique exact substring ("before") of a file you have read with "after"; one change per file; before="" creates a new file. The changes are checked; if they have problems you get them back to fix.',
+    'Finish by proposing changes for the person to review, with a clear summary. Each change replaces a unique exact substring ("before") of a file you have read with "after"; one change per file, so edits in several places of one file are one change whose before spans from the first to the last; before="" creates a new file. The changes are checked; if they have problems you get them back to fix.',
     { summary: { type: 'string' }, changes: changesSchema() },
   ),
 ];
@@ -94,7 +94,21 @@ export async function proposeWithTools(options: Options, messages: Message[], in
       // No tool call: an answer in prose, or a proposal written as JSON by a model that ignored the tool.
       const parsed = parseAnswer(turn.content);
       if (parsed.kind === 'answer' && Array.isArray(parsed.answer['changes']) && parsed.answer['changes'].length) {
-        const proposal = parseProposal(parsed.answer, input.files, input.read);
+        let proposal: Proposal;
+        try {
+          proposal = parseProposal(parsed.answer, input.files, input.read);
+        } catch (error) {
+          if (fixRounds >= TOOL_LOOP_LIMITS.fixRoundsMax) {
+            throw error;
+          }
+          fixRounds++;
+          input.progress('The proposal was malformed; asked the model to correct it');
+          messages.push(
+            { role: 'assistant', content: turn.content },
+            { role: 'user', content: JSON.stringify({ error: messageOf(error), instruction: 'Correct it and call propose_changes.' }) },
+          );
+          continue;
+        }
         return { ...proposal, ...problemsField(await checkProposal(input.root, proposal.changes)) };
       }
       return {

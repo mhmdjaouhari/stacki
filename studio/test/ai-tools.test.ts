@@ -263,6 +263,43 @@ test('screenshots need an existing absolute browser path, and only capture the l
   await assert.rejects(captureScreenshot(process.execPath, 'https://example.com/', 'model'), /Assertion failed/);
 });
 
+test('two changes to one file go back to be combined, in both protocols, and still fail when they never are', async () => {
+  const root = await project();
+  const json = (value: unknown) => ({ content: JSON.stringify(value) });
+  const twice = {
+    summary: 'Two edits',
+    changes: [change('<h1>Hello</h1>'), { file: HERO, before: '<section class="hero">', after: '<section class="hero big">' }],
+  };
+  const once = {
+    summary: 'One edit',
+    changes: [{ file: HERO, before: '<section class="hero">\n  <h1>Welcome home</h1>', after: '<section class="hero big">\n  <h1>Hello</h1>' }],
+  };
+  const provider = await scripted([json({ read: [HERO] }), json(twice), json(once)]);
+  try {
+    const proposal = await propose(root, PAGE, 'Make the hero bigger', { ...provider.options, tools: false });
+    assert.equal(proposal.summary, 'One edit');
+    const correction = String(messagesOf(provider.bodies[2]).at(-1)?.['content']);
+    assert.match(correction, /src\/components\/Hero\.astro has several: make one change whose before runs from the first edited line to the last/);
+  } finally {
+    await provider.close();
+  }
+  const stubborn = await scripted([json({ read: [HERO] }), json(twice)]);
+  try {
+    await assert.rejects(propose(root, PAGE, 'Make the hero bigger', { ...stubborn.options, tools: false }), /one change per file/);
+    assert.equal(stubborn.bodies.length, 4, 'one read, then the proposal and two corrections');
+  } finally {
+    await stubborn.close();
+  }
+  // With tools, a proposal written as plain JSON gets the same correction.
+  const plain = await scripted([calls(['read_file', { paths: [HERO] }]), json(twice), calls(['propose_changes', once])]);
+  try {
+    assert.equal((await propose(root, PAGE, 'Make the hero bigger', plain.options)).summary, 'One edit');
+  } finally {
+    await plain.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('host extensions are validated once, when Studio starts', () => {
   const run = () => Promise.resolve(null);
   const valid = { name: 'cms_schema', description: 'Schema', parameters: { type: 'object' }, run };
