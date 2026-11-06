@@ -19,7 +19,7 @@ const routes: Readonly<Record<string, (request: Request, environment: Environmen
   '/studio/internal/ai/models': async (_request, environment) =>
     Response.json(
       environment.AI_BASE_URL
-        ? modelConfiguration(environment.AI_MODEL, environment.AI_MODELS, environment.AI_EFFORTS, environment.AI_TOOL_MODELS)
+        ? modelConfiguration(environment.AI_MODEL, environment.AI_MODELS, environment.AI_EFFORTS, environment.AI_TOOL_MODELS, environment.AI_VISION_MODELS)
         : modelConfiguration(),
     ),
   '/studio/internal/authorize': authorizeConnection,
@@ -83,7 +83,13 @@ async function internalCompletions(request: Request, environment: Environment, u
       throw new Error('Hosted AI requires HTTPS');
     }
     const input = record(await request.json());
-    const models = modelConfiguration(environment.AI_MODEL, environment.AI_MODELS, environment.AI_EFFORTS, environment.AI_TOOL_MODELS);
+    const models = modelConfiguration(
+      environment.AI_MODEL,
+      environment.AI_MODELS,
+      environment.AI_EFFORTS,
+      environment.AI_TOOL_MODELS,
+      environment.AI_VISION_MODELS,
+    );
     const model = string(input['model'], 160);
     if (!models.models.includes(model)) {
       throw new Error('Model is not configured');

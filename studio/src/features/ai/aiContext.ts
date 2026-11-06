@@ -8,6 +8,7 @@ import { renderPath } from '../preview/renderPushServer';
 import { optionalSource } from './proposalSources';
 import { EXTENSION_LIMITS, withDeadline, type AiContextSection, type AiExtensions } from './aiExtensions';
 import type { ValueRequest } from '../project/valueSampler';
+import type { ShotSize } from './screenshots';
 
 // What the model needs besides source code to make a good edit, gathered once
 // for the first message of a request. Source alone hides every value a page
@@ -54,6 +55,8 @@ export interface ContextSources {
   readonly extensions?: AiExtensions;
   /** A page's status and HTML, for the check after applying a change (applyCheck.ts). */
   readonly fetchPage?: (path: string) => Promise<{ readonly status: number; readonly html: string; readonly error?: string }>;
+  /** A PNG data URL of a page, when a browser is configured for screenshots (screenshots.ts). */
+  readonly screenshot?: (path: string, size: ShotSize) => Promise<string>;
 }
 export interface PromptContext {
   readonly page?: { readonly path: string; readonly outline: string } | { readonly path: string; readonly unavailable: string };

@@ -28,6 +28,17 @@ export interface ApplyCheck {
   readonly rendered: readonly { readonly path: string; readonly added: number; readonly removed: number; readonly lines: readonly string[] }[];
   /** Pages that broke but couldn't be put back, because they were edited meanwhile. */
   readonly broken?: readonly BrokenPage[];
+  /** Pictures of the canvas page before and after, when the server takes screenshots. */
+  readonly thumbnails?: { readonly path: string; readonly before: string; readonly after: string };
+}
+// A 640×400 PNG thumbnail is at most 200 kB, so about 270,000 characters of base64.
+const THUMBNAIL_CHARS_MAX = 280_000;
+function thumbnail(value: unknown): string {
+  const url = string(value, THUMBNAIL_CHARS_MAX);
+  if (!/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(url)) {
+    throw new Error('Invalid thumbnail');
+  }
+  return url;
 }
 export interface ProposalProblem {
   readonly file: string;
@@ -280,7 +291,12 @@ export function parseApplyCheck(value: unknown): ApplyCheck {
       return { path: string(change['path'], 2000), added, removed, lines: lines.map((line) => string(line, 400)) };
     }),
     ...(input['broken'] === undefined ? {} : { broken: parseBrokenPages(input['broken']) }),
+    ...(input['thumbnails'] === undefined ? {} : { thumbnails: parseThumbnails(input['thumbnails']) }),
   };
+}
+function parseThumbnails(value: unknown): NonNullable<ApplyCheck['thumbnails']> {
+  const input = record(value);
+  return { path: string(input['path'], 2000), before: thumbnail(input['before']), after: thumbnail(input['after']) };
 }
 /** The steps and metadata a reply carries, when it carries them (older servers and chats don't). */
 export function parseReplyRecord(input: Record<string, unknown>): Pick<ChatMessage, 'steps' | 'meta'> {

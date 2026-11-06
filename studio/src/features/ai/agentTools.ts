@@ -64,13 +64,29 @@ export const BUILT_IN_TOOLS: readonly ToolDefinition[] = [
     { summary: { type: 'string' }, changes: changesSchema() },
   ),
 ];
-export const BUILT_IN_TOOL_NAMES = BUILT_IN_TOOLS.map((definition) => definition.function.name);
+// Offered only to vision models (AI_VISION_MODELS) when a browser is configured (screenshots.ts).
+const SCREENSHOT_TOOL = tool(
+  'screenshot',
+  'A picture of how a page looks, 960×600, sent to you as an image. Use it for layout, spacing and visual questions.',
+  {
+    path: { type: 'string', description: 'The page path, such as /' },
+  },
+);
+export const BUILT_IN_TOOL_NAMES = [...BUILT_IN_TOOLS, SCREENSHOT_TOOL].map((definition) => definition.function.name);
+// A screenshot is about 200 kB of base64; the context bound (1.5 MB) holds a few.
+const SCREENSHOTS_MAX = 4;
 
 export async function proposeWithTools(options: Options, messages: Message[], input: ToolLoopInput): Promise<Proposal> {
   const extensions = input.sources?.extensions?.tools ?? [];
-  const definitions = [...BUILT_IN_TOOLS, ...extensions.map((extension) => tool(extension.name, extension.description, extension.parameters, 'schema'))];
+  const screenshots = options.vision && input.sources?.screenshot ? input.sources.screenshot : undefined;
+  const definitions = [
+    ...BUILT_IN_TOOLS,
+    ...(screenshots ? [SCREENSHOT_TOOL] : []),
+    ...extensions.map((extension) => tool(extension.name, extension.description, extension.parameters, 'schema')),
+  ];
   let calls = 0;
   let fixRounds = 0;
+  let shots = 0;
   for (let round = 0; round < TOOL_LOOP_LIMITS.roundsMax; round++) {
     input.progress(round ? 'Thinking' : 'Thinking about the request');
     const turn = await completion(options, messages, input.signal, definitions);
@@ -87,6 +103,8 @@ export async function proposeWithTools(options: Options, messages: Message[], in
       };
     }
     messages.push(toolCallMessage(turn.calls, turn.content, turn.reasoning));
+    // Tool results are text, so pictures follow the results in one user message.
+    const pictures: { path: string; url: string }[] = [];
     for (const call of turn.calls) {
       calls++;
       if (calls > TOOL_LOOP_LIMITS.callsMax) {
@@ -99,10 +117,27 @@ export async function proposeWithTools(options: Options, messages: Message[], in
         }
         fixRounds += outcome.kind === 'fix' ? 1 : 0;
         messages.push({ role: 'tool', tool_call_id: call.id, content: outcome.reply });
+      } else if (call.name === 'screenshot' && screenshots) {
+        input.progress(toolLabel(call));
+        const outcome = await takeScreenshot(call, screenshots, shots < SCREENSHOTS_MAX);
+        if (outcome.kind === 'picture') {
+          shots++;
+          pictures.push(outcome.picture);
+        }
+        messages.push({ role: 'tool', tool_call_id: call.id, content: outcome.reply });
       } else {
         input.progress(toolLabel(call));
         messages.push({ role: 'tool', tool_call_id: call.id, content: await runTool(call, input, extensions) });
       }
+    }
+    if (pictures.length) {
+      messages.push({
+        role: 'user',
+        content: [
+          { type: 'text', text: `Screenshots you asked for: ${pictures.map((picture) => picture.path).join(', ')}.` },
+          ...pictures.map((picture) => ({ type: 'image_url' as const, image_url: { url: picture.url } })),
+        ],
+      });
     }
   }
   throw new Error('AI tool limit reached. Try a more focused request.');
@@ -127,6 +162,28 @@ async function proposalOutcome(call: ToolCall, input: ToolLoopInput, canFix: boo
     return { kind: 'fix', reply: JSON.stringify({ accepted: false, problems, instruction }) };
   }
   return { kind: 'done', proposal: { ...proposal, ...problemsField(problems) } };
+}
+
+type ScreenshotOutcome =
+  { readonly kind: 'picture'; readonly picture: { path: string; url: string }; readonly reply: string } | { readonly kind: 'error'; readonly reply: string };
+
+async function takeScreenshot(call: ToolCall, capture: NonNullable<ContextSources['screenshot']>, allowed: boolean): Promise<ScreenshotOutcome> {
+  try {
+    if (!allowed) {
+      throw new Error(`At most ${SCREENSHOTS_MAX} screenshots per request`);
+    }
+    const path = renderPath({ path: record(JSON.parse(call.arguments))['path'] });
+    if (!path) {
+      throw new Error('Invalid page path');
+    }
+    return {
+      kind: 'picture',
+      picture: { path, url: await capture(path, 'model') },
+      reply: JSON.stringify({ ok: true, note: 'The screenshot follows as an image.' }),
+    };
+  } catch (error) {
+    return { kind: 'error', reply: JSON.stringify({ error: messageOf(error) }) };
+  }
 }
 
 async function runTool(call: ToolCall, input: ToolLoopInput, extensions: readonly AiTool[]): Promise<string> {
@@ -237,6 +294,8 @@ function toolLabel(call: ToolCall): string {
       return `Sampled the data of ${text('file').replace(/^src\//, '')}`;
     case 'check_changes':
       return 'Checked candidate changes';
+    case 'screenshot':
+      return `Took a screenshot of ${text('path')}`;
     default:
       return `Asked ${call.name}`;
   }

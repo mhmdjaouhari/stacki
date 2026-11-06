@@ -26,6 +26,13 @@ Set `AI_BASE_URL`, `AI_MODEL`, and optionally `AI_API_KEY` on the local server o
 
 Every proposal is checked before it is shown. `.astro` files go through the Astro compiler and their frontmatter and expressions through TypeScript's syntax check; scripts, JSON and CSS go through their parsers; and each change must apply exactly once. Problems go back to the model for up to two rounds of fixes, and whatever remains is shown above the proposal. The check reads syntax only, not types or imports.
 
+Screenshots are optional. Set `AI_SCREENSHOT_BROWSER` to the absolute path of a Chrome or Chromium binary on the server, and Studio uses its headless mode, one process and about two seconds per picture. Two things use them:
+
+- models in `AI_VISION_MODELS` (a subset of `AI_TOOL_MODELS` that read images) get a `screenshot` tool, at most four per request, sent at 960×600;
+- **Apply to draft** shows the canvas page before and after the change as 640×400 thumbnails.
+
+Without a browser, neither appears and nothing else changes. Studio's hosted container has no browser, and the person's browser can't redraw the canvas faithfully without a large library, which is why the server's browser takes the pictures.
+
 For example, with your own local model server:
 
 ```sh

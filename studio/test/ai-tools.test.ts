@@ -17,6 +17,7 @@ import { BUILT_IN_TOOL_NAMES } from '../src/features/ai/agentTools';
 import { parseAiExtensions, type AiExtensions } from '../src/features/ai/aiExtensions';
 import { gatherContext } from '../src/features/ai/aiContext';
 import { completionTurn } from '../src/features/ai/replies';
+import { captureScreenshot, chromeArguments, screenshotBrowser } from '../src/features/ai/screenshots';
 import { record } from '../src/shared/validation';
 
 const PAGE = 'src/pages/index.astro';
@@ -80,7 +81,8 @@ test('the model reads, proposes a broken change, gets the problems, and fixes it
     const first = provider.bodies[0];
     assert.deepEqual(
       (first?.['tools'] as readonly { function: { name: string } }[]).map((tool) => tool.function.name),
-      BUILT_IN_TOOL_NAMES,
+      // The screenshot tool is only for vision models with a browser configured.
+      BUILT_IN_TOOL_NAMES.filter((name) => name !== 'screenshot'),
     );
     assert.equal(first?.['tool_choice'], 'auto');
     const second = messagesOf(provider.bodies[1]);
@@ -212,6 +214,53 @@ test('the JSON protocol gets the same check and fix round', async () => {
     await provider.close();
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test('a vision model gets screenshots as images after the tool results; other models never see the tool', async () => {
+  const root = await project();
+  const shot = 'data:image/png;base64,iVBORw0KGgo=';
+  const shots: string[] = [];
+  const sources = {
+    render: () => Promise.resolve(''),
+    sample: () => Promise.resolve({ value: null }),
+    screenshot: (path: string) => {
+      shots.push(path);
+      return Promise.resolve(shot);
+    },
+  };
+  const provider = await scripted([calls(['screenshot', { path: '/' }], ['screenshot', { path: 'https://example.com' }]), { content: 'Looks fine.' }]);
+  try {
+    await propose(root, PAGE, 'How does it look?', { ...provider.options, vision: true }, { images: [], history: [], sources });
+    const offered = (provider.bodies[0]?.['tools'] as readonly { function: { name: string } }[]).map((tool) => tool.function.name);
+    assert.ok(offered.includes('screenshot'));
+    assert.deepEqual(shots, ['/']);
+    const messages = messagesOf(provider.bodies[1]);
+    const results = messages.filter((message) => message['role'] === 'tool').map((message) => Object.keys(record(JSON.parse(String(message['content'])))));
+    assert.deepEqual(results, [['ok', 'note'], ['error']]);
+    const pictures = messages.at(-1);
+    assert.equal(pictures?.['role'], 'user');
+    assert.deepEqual((pictures?.['content'] as unknown[])[1], { type: 'image_url', image_url: { url: shot } });
+    // Without vision, the same sources offer no screenshot tool.
+    await propose(root, PAGE, 'How does it look?', provider.options, { images: [], history: [], sources });
+    const plain = (provider.bodies.at(-1)?.['tools'] as readonly { function: { name: string } }[]).map((tool) => tool.function.name);
+    assert.equal(plain.includes('screenshot'), false);
+  } finally {
+    await provider.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test('screenshots need an existing absolute browser path, and only capture the local dev server', async () => {
+  assert.equal(screenshotBrowser(''), undefined);
+  assert.equal(screenshotBrowser(undefined), undefined);
+  assert.throws(() => screenshotBrowser('chromium'), /absolute path/);
+  assert.throws(() => screenshotBrowser('/no/such/chrome'), /absolute path/);
+  assert.equal(screenshotBrowser(process.execPath), process.execPath);
+  const args = chromeArguments('/tmp/shot', '/tmp/shot/shot.png', 'http://127.0.0.1:4350/', 0.5);
+  assert.ok(args.includes('--headless=new'));
+  assert.ok(args.includes('--screenshot=/tmp/shot/shot.png'));
+  assert.equal(args.at(-1), 'http://127.0.0.1:4350/');
+  await assert.rejects(captureScreenshot(process.execPath, 'https://example.com/', 'model'), /Assertion failed/);
 });
 
 test('host extensions are validated once, when Studio starts', () => {
