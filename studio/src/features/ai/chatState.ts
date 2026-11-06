@@ -31,11 +31,12 @@ export interface ApplyCheck {
   /** Pictures of the canvas page before and after, when the server takes screenshots. */
   readonly thumbnails?: { readonly path: string; readonly before: string; readonly after: string };
 }
-// A 640×400 PNG thumbnail is at most 200 kB, so about 270,000 characters of base64.
+// A 640×400 thumbnail (PNG from the server, JPEG from the browser) is at most 200 kB, about
+// 270,000 characters of base64.
 const THUMBNAIL_CHARS_MAX = 280_000;
 function thumbnail(value: unknown): string {
   const url = string(value, THUMBNAIL_CHARS_MAX);
-  if (!/^data:image\/png;base64,[A-Za-z0-9+/]+={0,2}$/.test(url)) {
+  if (!/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/]+={0,2}$/.test(url)) {
     throw new Error('Invalid thumbnail');
   }
   return url;

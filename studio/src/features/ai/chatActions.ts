@@ -17,6 +17,7 @@ import { record, string } from '../../shared/validation';
 import type { Direction } from './reversible';
 import type { ChatContext } from './chatContracts';
 import type { ChatRequestContext } from './chatRequestContext';
+import { captureAfterChange, captureCanvas } from './canvasCapture';
 
 const running = new Map<string, AbortController>();
 function context(chat: ChatThread): readonly ChatContext[] {
@@ -135,6 +136,8 @@ export async function applyProposal(id: string, messageId: string, refresh: () =
     return;
   }
   updateChat(id, (chat) => ({ ...chat, status: 'applying', error: '' }));
+  // Taken before the request, while the canvas still shows the page without the change.
+  const shotBefore = captureCanvas();
   try {
     const result = record(
       await request('/studio/api/ai/apply', {
@@ -155,10 +158,13 @@ export async function applyProposal(id: string, messageId: string, refresh: () =
       }));
       return;
     }
+    // The server's pictures when it has a browser, otherwise the person's own (canvasCapture.ts).
+    const after = shotBefore && result['thumbnails'] === undefined ? await captureAfterChange(shotBefore) : undefined;
+    const thumbnails = result['thumbnails'] ?? (shotBefore && after ? { path: proposal.page ?? 'Canvas', before: shotBefore, after } : undefined);
     const check =
-      result['checked'] === undefined
+      result['checked'] === undefined && thumbnails === undefined
         ? undefined
-        : parseApplyCheck({ pages: result['checked'], rendered: result['rendered'] ?? [], broken: result['broken'], thumbnails: result['thumbnails'] });
+        : parseApplyCheck({ pages: result['checked'] ?? [], rendered: result['rendered'] ?? [], broken: result['broken'], thumbnails });
     // A change too large to send back is applied without an undo record.
     const changes = result['changes'];
     const applied = changes === undefined ? undefined : parseApplied({ changes, state: 'applied' });
