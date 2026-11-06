@@ -1,3 +1,5 @@
+import { CodeTokens, useCodeLines } from '../../../vendor/stacki/src/ui/CodeBlock';
+import { languageFor } from '../../../vendor/stacki/src/ui/codeHighlight';
 import { fileDiff, NO_FINAL_NEWLINE, type DiffHunk, type FileDiff } from './lineDiff';
 import type { ProposedChange } from './agent';
 
@@ -66,7 +68,7 @@ function FileSection({ diff, open }: { readonly diff: FileDiff; readonly open: b
         <DiffCounts added={diff.added} removed={diff.removed} />
       </summary>
       {diff.hunks.map((hunk) => (
-        <Hunk key={`${hunk.oldStart}:${hunk.newStart}`} hunk={hunk} />
+        <Hunk key={`${hunk.oldStart}:${hunk.newStart}`} hunk={hunk} file={diff.file} />
       ))}
       {diff.omitted > 0 && (
         <p className="chat-diff-message">
@@ -79,10 +81,15 @@ function FileSection({ diff, open }: { readonly diff: FileDiff; readonly open: b
 }
 
 // One number column: the new line number, or the old one for a removed line. Two
-// columns would take a sixth of the narrow pane.
-function Hunk({ hunk }: { readonly hunk: DiffHunk }) {
+// columns would take a sixth of the narrow pane. The code rows are coloured as one
+// text, as the history diff does, so a comment or a tag that spans lines keeps its
+// colour on all of them; both sides of a change share it, and a parser recovers past the seam.
+function Hunk({ hunk, file }: { readonly hunk: DiffHunk; readonly file: string }) {
+  const code = hunk.lines.filter((line) => line !== NO_FINAL_NEWLINE).map((line) => line.slice(1));
+  const coloured = useCodeLines(code.join('\n'), languageFor(file));
   let oldLine = hunk.oldStart;
   let newLine = hunk.newStart;
+  let codeIndex = 0;
   return (
     <div className="chat-diff-hunk" role="table" aria-label={`Lines from ${hunk.newStart}`}>
       {hunk.lines.map((line, index) => {
@@ -92,10 +99,13 @@ function Hunk({ hunk }: { readonly hunk: DiffHunk }) {
           return (
             <div key={index} className="chat-diff-line is-note" role="row">
               <span role="cell" />
-              <code role="cell">No newline at end of file</code>
+              <span role="cell" className="chat-diff-code">
+                No newline at end of file
+              </span>
             </div>
           );
         }
+        const tokens = coloured[codeIndex++];
         const kind = marker === '+' ? 'is-added' : marker === '-' ? 'is-removed' : 'is-context';
         const number = marker === '-' ? oldLine : newLine;
         if (marker !== '+') {
@@ -109,7 +119,9 @@ function Hunk({ hunk }: { readonly hunk: DiffHunk }) {
             <span role="cell" className="chat-diff-number" data-marker={marker === ' ' ? '' : marker}>
               {number}
             </span>
-            <code role="cell">{text || ' '}</code>
+            <span role="cell" className="chat-diff-code">
+              {text === '' ? ' ' : <CodeTokens line={tokens} />}
+            </span>
           </div>
         );
       })}
