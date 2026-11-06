@@ -6,6 +6,8 @@ Use the chat title menu to switch or delete chats (arrow keys, Enter and Escape 
 
 While a reply runs, the chat shows the step it is on ("Rendered /", "Read Hero.astro", "Thinking", "Checked the proposal") and how long it has taken. The steps stream from the server as server-sent events on the same request, with a heartbeat every 15 seconds so proxies keep the stream open; proxies must pass `text/event-stream` through unbuffered. Under each reply, a collapsed line gives the model, effort and duration, and opens on the list of steps.
 
+The up arrow in an empty prompt recalls your last message. **Edit** under one of your earlier messages takes you back to it: the replies after it are removed, the changes they applied are undone (newest first, all or nothing, and it says how many first), and the message returns to the composer. Type `@` to attach a page, component or collection file. The model receives it already read, and may edit it.
+
 ## Reading a change
 
 Each proposal shows its files with lines added and removed, and the changed lines with three lines of context. A file whose change can no longer apply shows why, and blocks **Apply to draft**. **Review changes** opens the whole files over the canvas, unified or side by side, with unchanged stretches collapsed; Apply and Discard work there too, and Escape closes it. An applied change keeps its diff under the outcome, and **Review** shows it, next to Undo or Redo.

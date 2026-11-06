@@ -1,7 +1,7 @@
 import { ErrorToast } from '../../../vendor/stacki/src/ui/ErrorToast';
 import { ChatText } from './ChatText';
 import { useEffect, useRef, useState } from 'react';
-import { applyProposal, discardProposal, revertChange } from './chatActions';
+import { applyProposal, changesAfter, discardProposal, editFromMessage, revertChange } from './chatActions';
 import { type ChatThread, type ChatMessage, type ProposalProblem } from './chatState';
 import { ChatIcon } from './ChatIcon';
 import { ChatDiff, DiffCounts, diffTotals, substringDiffs } from './ChatDiff';
@@ -114,6 +114,49 @@ function ReplyDetails({ message }: { readonly message: ChatMessage }) {
   );
 }
 
+// "Edit" on a message of yours: it goes back into the composer, and the replies after it are removed,
+// with the changes they applied undone. It asks first, saying how many changes that undoes.
+function EditFromHere({ chat, message, refresh }: ItemProps) {
+  const [confirming, setConfirming] = useState(false);
+  const isLast = chat.messages.at(-1)?.id === message.id;
+  if (isLast && chat.status === 'idle') {
+    return null; // Nothing follows it: the up arrow in the composer recalls it instead.
+  }
+  const changes = changesAfter(chat, message.id).length;
+  const idle = chat.status === 'idle';
+  if (!confirming) {
+    return (
+      <button
+        className="chat-edit-message"
+        disabled={!idle}
+        title={idle ? 'Edit this message and send it again' : 'Wait for the reply, or stop it, before going back'}
+        onClick={() => setConfirming(true)}
+      >
+        Edit
+      </button>
+    );
+  }
+  return (
+    <div className="chat-edit-confirm" role="alertdialog" aria-label="Edit from here">
+      <span>
+        {changes
+          ? `Undo ${changes} applied change${changes === 1 ? '' : 's'} and edit this message? The replies after it are removed.`
+          : 'Edit this message? The replies after it are removed.'}
+      </span>
+      <button
+        disabled={!idle}
+        onClick={() => {
+          setConfirming(false);
+          void editFromMessage(chat.id, message.id, refresh);
+        }}
+      >
+        {changes ? 'Undo and edit' : 'Edit'}
+      </button>
+      <button onClick={() => setConfirming(false)}>Cancel</button>
+    </div>
+  );
+}
+
 interface ItemProps {
   readonly chat: ChatThread;
   readonly message: ChatMessage;
@@ -138,6 +181,7 @@ function MessageItem({ chat, message, refresh }: ItemProps) {
       )}
       {message.content && (message.role === 'assistant' ? <ChatText text={message.content} /> : <div className="chat-message-text">{message.content}</div>)}
       {message.role === 'assistant' && <ReplyDetails message={message} />}
+      {message.role === 'user' && <EditFromHere chat={chat} message={message} refresh={refresh} />}
       {message.proposal && review && <ProposalCard chat={chat} message={message} diffs={review.diffs} refresh={refresh} review={openReview} />}
       {message.outcome && <p className="chat-outcome">{message.outcome}</p>}
       {message.diffs && <AppliedDiff diffs={message.diffs} review={openReview} />}

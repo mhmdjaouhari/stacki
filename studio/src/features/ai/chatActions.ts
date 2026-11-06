@@ -195,6 +195,49 @@ async function generateReply(chat: ChatThread, { file, effort, context: editor }
   return { proposal: parseProposal(reply), record: parseReplyRecord(record(reply)) };
 }
 
+/** The applied changes of the replies after a message, newest first: what "edit from here" undoes. */
+export function changesAfter(chat: ChatThread, messageId: string): readonly AppliedChange['changes'][] {
+  const index = chat.messages.findIndex((message) => message.id === messageId);
+  return chat.messages
+    .slice(index + 1)
+    .flatMap((message) => (message.applied?.state === 'applied' ? [message.applied.changes] : []))
+    .reverse();
+}
+
+/**
+ * Go back to a message to change it: undo the applied changes of every later reply (all or nothing),
+ * remove the message and the replies after it, and put its text and images back in the composer.
+ * A chat that is working refuses: the reply would land after the messages are gone.
+ */
+export async function editFromMessage(id: string, messageId: string, refresh: () => void) {
+  const thread = chatState().threads.find((thread) => thread.id === id);
+  const index = thread?.messages.findIndex((message) => message.id === messageId) ?? -1;
+  const message = thread?.messages[index];
+  if (!thread || !message || message.role !== 'user' || thread.status !== 'idle') {
+    return;
+  }
+  const sets = changesAfter(thread, messageId);
+  if (sets.length) {
+    updateChat(id, (chat) => ({ ...chat, status: 'applying', error: '' }));
+    try {
+      const result = record(
+        await request('/studio/api/ai/undo-series', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sets }) }),
+      );
+      if (result['reverted'] !== true) {
+        updateChat(id, (chat) => ({ ...chat, error: conflictMessage('undo', result['conflicts']) }));
+        return;
+      }
+      refresh();
+    } catch (error) {
+      updateChat(id, (chat) => ({ ...chat, error: error instanceof Error ? error.message : 'Could not undo the changes.' }));
+      return;
+    } finally {
+      updateChat(id, (chat) => ({ ...chat, status: 'idle' }));
+    }
+  }
+  updateChat(id, (chat) => ({ ...chat, messages: chat.messages.slice(0, index), draft: message.content, images: message.images, error: '' }));
+}
+
 /** Undo an applied change, or redo an undone one. A conflict in any file changes nothing. */
 export async function revertChange(id: string, messageId: string, direction: Direction, refresh: () => void) {
   const thread = chatState().threads.find((thread) => thread.id === id);

@@ -7,14 +7,16 @@ import { useDictation } from './useDictation';
 import { sendChat, stopChat } from './chatActions';
 import { effortLevels, type ModelConfiguration } from './chatContracts';
 import type { ChatRequestContext } from './chatRequestContext';
+import { insertMention, mentionOptions, mentionQuery } from './mentions';
 
 interface ComposerProps {
   readonly chat: ChatThread;
   readonly file: string;
   readonly context: ChatRequestContext;
   readonly config: ModelConfiguration;
+  readonly mentionable: readonly string[];
 }
-export function ChatComposer({ chat, file, context, config }: ComposerProps) {
+export function ChatComposer({ chat, file, context, config, mentionable }: ComposerProps) {
   const { loading, attach } = useChatAttachments(chat.id);
   const [dragging, setDragging] = useState(false);
   const voice = useDictation((text) =>
@@ -62,7 +64,7 @@ export function ChatComposer({ chat, file, context, config }: ComposerProps) {
         }}
       >
         <AttachmentStrip chat={chat} />
-        <PromptInput chat={chat} dragging={dragging} />
+        <PromptInput chat={chat} dragging={dragging} mentionable={mentionable} />
         <ComposerTools chat={chat} config={config} voice={voice} loading={loading} attach={attach} />
       </form>
       <ErrorToast message={voice.error} />
@@ -100,25 +102,122 @@ function AttachmentStrip({ chat }: { readonly chat: ChatThread }) {
   );
 }
 
-function PromptInput({ chat, dragging }: { readonly chat: ChatThread; readonly dragging: boolean }) {
+interface PromptProps {
+  readonly chat: ChatThread;
+  readonly dragging: boolean;
+  /** Project files `@` can attach. */
+  readonly mentionable: readonly string[];
+}
+
+function PromptInput({ chat, dragging, mentionable }: PromptProps) {
+  const field = useRef<HTMLTextAreaElement>(null);
+  const [caret, setCaret] = useState(0);
+  const [active, setActive] = useState(0);
+  // Escape closes the list for the mention it was open on; typing another `@` opens it again.
+  const [dismissed, setDismissed] = useState(-1);
   const patch = (draft: string) => updateChat(chat.id, (thread) => ({ ...thread, draft }));
+  const query = mentionQuery(chat.draft, caret);
+  const options = query && query.start !== dismissed ? mentionOptions(mentionable, query.text) : [];
+  const choose = (file: string) => {
+    if (!query) {
+      return;
+    }
+    const next = insertMention(chat.draft, query, file);
+    patch(next.draft);
+    setCaret(next.caret);
+    requestAnimationFrame(() => field.current?.setSelectionRange(next.caret, next.caret));
+  };
   return (
-    <textarea
-      autoFocus
-      aria-label="AI prompt"
-      placeholder={dragging ? 'Drop images here' : 'Ask anything, or describe a change…'}
-      rows={3}
-      maxLength={12_000}
-      value={chat.draft}
-      onChange={(event) => patch(event.target.value)}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-          event.preventDefault();
-          event.currentTarget.form?.requestSubmit();
+    <div className="chat-prompt">
+      {options.length > 0 && (
+        <ul className="chat-mentions" role="listbox" aria-label="Attach a file">
+          {options.map((file, index) => (
+            <li
+              key={file}
+              role="option"
+              aria-selected={index === Math.min(active, options.length - 1)}
+              onMouseDown={(event) => {
+                event.preventDefault(); // Keeps the focus, and the caret, in the prompt.
+                choose(file);
+              }}
+            >
+              {file.replace(/^src\//, '')}
+            </li>
+          ))}
+        </ul>
+      )}
+      <textarea
+        ref={field}
+        autoFocus
+        aria-label="AI prompt"
+        placeholder={dragging ? 'Drop images here' : 'Ask anything, describe a change, or @ a file…'}
+        rows={3}
+        maxLength={12_000}
+        value={chat.draft}
+        onChange={(event) => {
+          patch(event.target.value);
+          setCaret(event.target.selectionStart);
+          setActive(0);
+        }}
+        onSelect={(event) => setCaret(event.currentTarget.selectionStart)}
+        onKeyDown={(event) =>
+          promptKey(event, {
+            chat,
+            options,
+            active: Math.min(active, options.length - 1),
+            setActive,
+            choose,
+            dismiss: () => setDismissed(query?.start ?? -1),
+            patch,
+          })
         }
-      }}
-    />
+      />
+    </div>
   );
+}
+
+interface KeyContext {
+  readonly chat: ChatThread;
+  readonly options: readonly string[];
+  readonly active: number;
+  readonly setActive: (index: number) => void;
+  readonly choose: (file: string) => void;
+  readonly dismiss: () => void;
+  readonly patch: (draft: string) => void;
+}
+
+// With the mention list open, the arrows move through it, Enter or Tab attaches, Escape closes.
+// Otherwise Enter sends, and the up arrow in an empty prompt recalls your last message.
+function promptKey(event: React.KeyboardEvent<HTMLTextAreaElement>, context: KeyContext) {
+  const { chat, options, active } = context;
+  if (event.nativeEvent.isComposing) {
+    return;
+  }
+  if (options.length) {
+    const moves: Readonly<Record<string, number>> = { ArrowDown: 1, ArrowUp: -1 };
+    const move = moves[event.key];
+    if (move !== undefined) {
+      event.preventDefault();
+      context.setActive((active + move + options.length) % options.length);
+    } else if (event.key === 'Enter' || event.key === 'Tab') {
+      event.preventDefault();
+      context.choose(options[active] ?? options[0] ?? '');
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      context.dismiss();
+    }
+    return;
+  }
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
+  } else if (event.key === 'ArrowUp' && !chat.draft) {
+    const last = [...chat.messages].reverse().find((message) => message.role === 'user')?.content;
+    if (last) {
+      event.preventDefault();
+      context.patch(last);
+    }
+  }
 }
 
 interface ToolsProps {

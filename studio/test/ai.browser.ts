@@ -34,9 +34,10 @@ try {
   await verifyBackgroundDot(page);
   await verifyCompactDiff(page);
   await verifyStreamedReply(page);
+  await verifyEditAndMentions(page);
   assert.deepEqual(errors, []);
   console.log(
-    'Chat drafts, switching, image preparation/removal, reload persistence, single transcript across renders, the chat list by keyboard, the background-chat dot, the compact proposal diff, the review overlay, a streamed reply with its steps, and mobile composer passed. Live AI and microphone recognition require a configured provider and an interactive microphone.',
+    'Chat drafts, switching, image preparation/removal, reload persistence, single transcript across renders, the chat list by keyboard, the background-chat dot, the compact proposal diff, the review overlay, a streamed reply with its steps, editing from a message, @ mentions, and mobile composer passed. Live AI and microphone recognition require a configured provider and an interactive microphone.',
   );
 } finally {
   await browser.close();
@@ -265,6 +266,49 @@ async function verifyStreamedReply(page: Page) {
   assert.equal(await details.locator('summary').textContent(), 'test-model · high · 4 s · 2 steps');
   await details.locator('summary').click();
   assert.deepEqual(await details.locator('li').allTextContents(), ['0 sRendered /', '2 sRead pages/index.astro']);
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
+}
+// Going back: the up arrow recalls the last prompt; "Edit" on a message asks how many applied changes
+// it undoes, undoes them in one request, and puts the message back; `@` attaches a file from a list.
+async function verifyEditAndMentions(page: Page) {
+  const change = { file: 'src/pages/index.astro', before: 'Welcome', after: 'Hello', created: false };
+  const undone: string[] = [];
+  await page.route('**/studio/api/ai/models', (route) => route.fulfill({ json: { models: ['test-model'], defaultModel: 'test-model' } }));
+  await page.route('**/studio/api/ai/propose', (route) =>
+    route.fulfill({ json: { id: 'edit-proposal', summary: 'Said hello.', changes: [{ file: change.file, before: 'Welcome', after: 'Hello' }] } }),
+  );
+  await page.route('**/studio/api/ai/apply', (route) => route.fulfill({ json: { applied: true, changes: [change] } }));
+  await page.route('**/studio/api/ai/undo-series', (route) => {
+    undone.push(route.request().postData() ?? '');
+    return route.fulfill({ json: { reverted: true, files: 1 } });
+  });
+  await page.reload();
+  await page.getByRole('button', { name: 'AI chat', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'New chat', exact: true })
+    .filter({ has: page.locator('svg') })
+    .last()
+    .click();
+  const prompt = page.getByLabel('AI prompt', { exact: true });
+  await prompt.fill('Say hello');
+  await sendWhenReady(page);
+  await page.getByRole('button', { name: 'Apply to draft', exact: true }).click();
+  await page.locator('.chat-applied-diff, .chat-outcome').first().waitFor();
+  await prompt.press('ArrowUp');
+  assert.equal(await prompt.inputValue(), 'Say hello');
+  await prompt.fill('');
+  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByText('Undo 1 applied change and edit this message?', { exact: false }).waitFor();
+  await page.getByRole('button', { name: 'Undo and edit', exact: true }).click();
+  await page.locator('.chat-message-user').waitFor({ state: 'detached' });
+  assert.equal(await prompt.inputValue(), 'Say hello');
+  assert.deepEqual(JSON.parse(undone[0] ?? '{}'), { sets: [[change]] });
+  await prompt.fill('Compare with ');
+  await prompt.pressSequentially('@ind');
+  await page.getByRole('listbox', { name: 'Attach a file' }).waitFor();
+  await prompt.press('Enter');
+  assert.equal(await prompt.inputValue(), 'Compare with @src/pages/index.astro ');
+  assert.equal(await page.getByRole('listbox', { name: 'Attach a file' }).count(), 0);
   await page.unrouteAll({ behavior: 'ignoreErrors' });
 }
 // Send is disabled until the chat's model is in the loaded list, and Enter before then is
