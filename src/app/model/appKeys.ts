@@ -15,11 +15,12 @@ import type { PageEditError, PageEdited } from '../../../shared/ipc/pageSave';
 import { loopVarsAt, strippedBindings } from '../../editor/loopBindings';
 import { cleanError } from '../../lib/cleanError';
 import { menuPasteClaimed } from '../../ui/menuPasteClaim';
-import { type AppHistory, type LeftTab, type NodeClipboard, type ProjectIdentity, type RightTab, type ToastKind } from '../appTypes';
+import { type AppHistory, type LeftTab, type NodeClipboard, type ProjectIdentity, type PseudoPick, type RightTab, type ToastKind } from '../appTypes';
 import { toEditorPageState, carriedParse, type EditorPageState, type OpenFile, type PageStateSnapshot } from '../../editor/pageState';
 import { nodeId, type EditorModel, type EditorNode } from '../../editor/pageView';
 import { copyEditorSelection, runNativeEdit, editProjectPage, type ImportPaths } from '../../ipc/appBridge';
 import { revertedOrigin, frontmatterOf } from './nodeFactory';
+import { structuralSelection } from './selectionStructure';
 import { withPrunedImports, chooseImportPath, withLayoutField, type PasteNeeds } from './pageGestures';
 
 // The app's own keys, read through refs at keypress time: see the keydown effect in App.
@@ -27,6 +28,7 @@ export interface AppKeys {
   readonly historyRef: React.MutableRefObject<AppHistory>;
   readonly pageStateRef: React.MutableRefObject<PageStateSnapshot>;
   readonly selectedIdRef: React.MutableRefObject<string | undefined>;
+  readonly pseudoPickRef: React.MutableRefObject<PseudoPick | undefined>;
   readonly openCodeWindowRef: React.MutableRefObject<(() => boolean) | undefined>;
   readonly nodeClipboardRef: React.MutableRefObject<NodeClipboard | undefined>;
   readonly cmsOpenRef: React.MutableRefObject<boolean>;
@@ -127,7 +129,7 @@ export function handleCommandKey(event: KeyboardEvent, keys: AppKeys): boolean {
     if (!keys.pageStateRef.current.pageState?.editable) {
       return true;
     }
-    if (!keys.selectedIdRef.current || keys.selectedIdRef.current === 'frontmatter') {
+    if (structuralSelection(keys.selectedIdRef.current, keys.pseudoPickRef.current) === undefined) {
       return true;
     }
     const element = event.target;
@@ -171,7 +173,6 @@ export function handleSelectionKey(event: KeyboardEvent, keys: AppKeys): void {
     return;
   }
   const selectionId = keys.selectedIdRef.current;
-  const hasNodeSelection = !!selectionId && selectionId !== 'frontmatter';
 
   // Enter opens the floating editor for a selection that has one
   // (frontmatter, <style>, <script>) — same as its "Edit code" button.
@@ -203,24 +204,30 @@ export function handleSelectionKey(event: KeyboardEvent, keys: AppKeys): void {
   }
 
   if (!mod && (event.key === 'Delete' || event.key === 'Backspace')) {
-    if (!hasNodeSelection) {
+    const deletable = structuralSelection(selectionId, keys.pseudoPickRef.current);
+    if (deletable === undefined) {
       return;
     }
     event.preventDefault();
-    keys.removeNode(selectionId);
+    keys.removeNode(deletable);
   } else if (mod && event.key.toLowerCase() === 'c') {
+    const copyable = structuralSelection(selectionId, keys.pseudoPickRef.current);
+    if (copyable === undefined) {
+      return;
+    }
     // Let native copy win when actual text is selected.
-    if (!hasNodeSelection || String(window.getSelection() || '')) {
+    if (String(window.getSelection() || '')) {
       return;
     }
     event.preventDefault();
-    keys.copyNode(selectionId);
+    keys.copyNode(copyable);
   } else if (mod && event.key.toLowerCase() === 'd') {
-    if (!hasNodeSelection) {
+    const duplicable = structuralSelection(selectionId, keys.pseudoPickRef.current);
+    if (duplicable === undefined) {
       return;
     }
     event.preventDefault();
-    keys.duplicateNode(selectionId);
+    keys.duplicateNode(duplicable);
   } else if (mod && event.key.toLowerCase() === 'v') {
     // An open tool that reads the clipboard (the clip-path editor) takes ⌘V: the
     // key is left alone so the browser's paste reaches it (menuPasteClaim.ts).
@@ -535,6 +542,7 @@ export function broughtMessage(needs: PasteNeeds): string | undefined {
 // What the menu's Copy and Paste act on when no field has focus: see the menu effect in App.
 export interface MenuEdits {
   readonly selectedIdRef: React.MutableRefObject<string | undefined>;
+  readonly pseudoPickRef: React.MutableRefObject<PseudoPick | undefined>;
   readonly pageStateRef: React.MutableRefObject<PageStateSnapshot>;
   readonly cmsOpenRef: React.MutableRefObject<boolean>;
   readonly nodeClipboardRef: React.MutableRefObject<NodeClipboard | undefined>;
@@ -549,9 +557,12 @@ export function menuCopy(menu: MenuEdits): void {
     runNativeEdit('copy');
     return;
   }
-  const selectionId = menu.selectedIdRef.current;
-  if (selectionId && menu.pageStateRef.current.pageState?.editable && !menu.cmsOpenRef.current) {
-    menu.copyNode(selectionId);
+  const copyable = structuralSelection(menu.selectedIdRef.current, menu.pseudoPickRef.current);
+  if (copyable === undefined) {
+    return;
+  }
+  if (menu.pageStateRef.current.pageState?.editable && !menu.cmsOpenRef.current) {
+    menu.copyNode(copyable);
   }
 }
 

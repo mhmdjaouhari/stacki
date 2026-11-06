@@ -11,8 +11,12 @@ Run the fast checks and complete regression suite locally before pushing. Also r
 `npm run verify` and `npm run test:browser` against a disposable fixture workspace before tagging:
 the Desktop regression gate does not run that separate Studio browser scenario.
 
-After the regression suite passes and before tagging, run `npm run check:linux` (about 30 seconds).
-It checks, on a Mac, the ways the Linux release job has failed:
+Pushing a version tag runs the Linux preflight automatically: the `pre-push` hook runs it after the
+full gate has rebuilt `dist/`, and a failure stops the tag reaching GitHub, so no release build
+starts. `npm run release` pushes the version commit before the tag, so after a failure that commit
+is on `main` and the tag exists only locally: fix the finding and release a new version rather than
+moving the tag. Run `npm run check:linux` by hand (about 30 seconds) to find problems before
+tagging. It checks, on a Mac, the ways the Linux release job has failed:
 
 - relative imports and package or workflow paths match their files' case exactly (macOS ignores
   case, Linux does not), and no two tracked paths differ only in case;
@@ -27,7 +31,7 @@ It checks, on a Mac, the ways the Linux release job has failed:
   failures have been probes that measured before a popup, scroll or hover finished moving. A
   warning lists probes that measure after a fixed sleep without waiting for the motion.
 
-It runs the probes from the existing build, so run it after the regression suite. `--static`
+By hand, it runs the probes from the existing build, so run it after the regression suite. `--static`
 skips the probes, `--repeat=3` runs them three times, and `--only=<name>` narrows them. What it
 cannot reproduce stays with the Linux job: xvfb's GPU and capture paths (`thumbs`), inotify watcher
 timing in Studio, the packaged deb and AppImage installs, and native module builds.
@@ -35,6 +39,47 @@ timing in Studio, the packaged deb and AppImage installs, and native module buil
 Use an isolated checkout when other tasks are editing the working directory. Match the root,
 Studio, Studio release manifest, and npm starter versions. Never move an existing release tag to
 include later changes.
+
+## 1.0.15 collection fields stick, prop renames follow through
+
+- Fields added in a content collection's settings now stay. A name like `My Field` becomes the key
+  `my-field`, an invalid name keeps its text and shows why, and a refused save no longer wipes the
+  form (#75).
+- Renaming a prop renames its local variable and every use in the file, in one undo step. A clash
+  is refused under Name.
+- With `::before` or `::after` selected, Duplicate, Wrap, Make component and Copy no longer act on
+  the parent element.
+- Studio: the chat no longer stacks copies of its transcript (#74).
+- Pushing a version tag now also runs the Linux preflight.
+- Desktop, the Studio source bundle and `create-stacki` are aligned at 1.0.15.
+
+## 1.0.14 the 1.0.13 Desktop release, through the Linux build
+
+- The same app as 1.0.13, which never became a public Desktop release: its Linux build failed on
+  two tests, and a tag is never moved. A reveal check read a smooth scroll the runner had paused
+  10px in, and a chip width compared exactly differed by a pixel in Linux text rendering. Both
+  tests are fixed; no app code changed.
+- `create-stacki` 1.0.13 is on npm, and it creates the same project as 1.0.14. It is republished
+  when someone can approve the sign-in, so npm can trail Desktop by this one version.
+
+## 1.0.13 page templates, moving frontmatter into components, prop settings
+
+- Create page template: the Pages `+` menu makes a template from a content collection, a Sanity
+  connection or JSON from a link. The form fills itself from a fetched sample, shows the pages it
+  will make, and keeps secrets in `.env`.
+- Making a section a component moves the frontmatter it reads into the new component, leaving a
+  copy when the parent still uses it. Passing a prop is the secondary choice. Extracting a section
+  inside a loop no longer breaks the page.
+- Props: a settings gear in the data picker opens the Properties form, existing props save as you
+  edit, and list item fields can bind to data. Reset moves to the label's menu.
+- Loops over a List prop have Filters, Sort and Limit, each with a code view for code the controls
+  cannot show. Renaming a loop's variable updates every reference and refuses names that would
+  break the page.
+- Canvas: a click in a loop's outline selects the loop, an element in view no longer scrolls, and
+  Delete on `::before` or `::after` no longer deletes the parent element.
+- Code shown anywhere in the app is syntax highlighted, and the page dropdown matches the Pages
+  panel's names. Switching CMS entries no longer flashes a slug error.
+- Desktop, the Studio source bundle and `create-stacki` are aligned at 1.0.13.
 
 ## 1.0.12 clip-path SVG paste is back, a new default shape, quieter undo
 

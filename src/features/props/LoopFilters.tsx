@@ -13,6 +13,7 @@ import {
   type LoopFieldKind,
   type LoopOperator,
   type LoopQuery,
+  type LoopSourceKind,
 } from '../../editor/loopQuery';
 import { CodeIcon } from '../../ui/Icons';
 import { type CatalogField, type LoopCatalog } from './loopCatalog';
@@ -60,6 +61,8 @@ type FilterSectionProps = SectionProps & {
   readonly binding?: BindingContext | undefined;
   /** The section's label, when it says more than its title (a page's own value). */
   readonly label?: ReactNode;
+  /** The `{}` that shows the filters as code. */
+  readonly toggle?: ReactNode;
 };
 
 /** Filters, or, once linked to a property, its purple bar with the filters as its default. */
@@ -76,7 +79,7 @@ export function FilterSection(props: FilterSectionProps) {
 function filterDraft(props: FilterSectionProps): DraftEditor {
   return {
     query: props.query,
-    render: (query, onChange) => <FilterEditor {...props} query={query} binding={undefined} label={undefined} onChange={onChange} />,
+    render: (query, onChange) => <FilterEditor {...props} query={query} binding={undefined} label={undefined} toggle={undefined} onChange={onChange} />,
   };
 }
 
@@ -112,6 +115,7 @@ function FilterEditor(props: FilterSectionProps) {
         title="Filters"
         label={props.label}
         dot={<SettingDot setting="filter" binding={props.binding} draft={filterDraft(props)} />}
+        toggle={props.toggle}
         addable={!full && (filterable.length > 0 || props.operatorSet === 'code')}
         extra={query.conditions.length > 1 ? <MatchMenu query={query} onChange={props.onChange} /> : undefined}
         onAdd={() => setOpen('new')}
@@ -244,13 +248,28 @@ function CustomConditionEditor(props: {
       <CodeBox
         value={props.code}
         label="Filter code"
-        placeholder={source === 'sanity' ? 'count(serviceTimes) > 1' : 'data.title.startsWith("Pastor")'}
-        charsMax={LOOP_QUERY_LIMITS.customCodeCharsMax}
+        placeholder={customFilterPlaceholder(source)}
         check={(code) => customFilterProblem(code, source)}
         onCommit={(code) => props.onCommit({ kind: 'custom', code })}
       />
     </div>
   );
+}
+
+// What a custom filter reads its fields from, as an example of the source's own code.
+function customFilterPlaceholder(source: LoopSourceKind): string {
+  switch (source) {
+    case 'astro':
+      return 'data.title.startsWith("Pastor")';
+    case 'sanity':
+      return 'count(serviceTimes) > 1';
+    case 'list':
+      return 'item.title.startsWith("Pastor")';
+    default: {
+      const exhaustive: never = source;
+      return exhaustive;
+    }
+  }
 }
 
 // The fields a filter can name, as a tree of what an item holds with each

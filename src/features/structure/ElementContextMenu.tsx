@@ -11,6 +11,8 @@ export interface ElementActionProps {
   readonly onSetDefaults?: (name: string, id: string) => void;
   readonly onOpenComponent?: (name: string, id: string) => void;
   readonly onWrapNode?: (id: string, tag: WrapperTag) => void;
+  /** Whether Delete, Cut, Copy, Duplicate and Wrap may act on this node. Left out, the protected nodes alone are refused. */
+  readonly canChangeStructure?: (id: string) => boolean;
   readonly onRemoveNode: (id: string) => void;
   readonly onCopyNode: (id: string) => void;
   readonly onCutNode?: (id: string) => void;
@@ -65,23 +67,37 @@ function runContextAction(action: ContextAction, props: ElementActionProps, menu
       return;
     }
     case 'cut':
-      props.onCutNode?.(menu.nodeId);
+      if (capabilities.canCut) {
+        props.onCutNode?.(menu.nodeId);
+      }
       return;
     case 'copy':
-      props.onCopyNode(menu.nodeId);
+      if (capabilities.canChange) {
+        props.onCopyNode(menu.nodeId);
+      }
       return;
     case 'duplicate':
-      props.onDuplicateNode(menu.nodeId);
+      if (capabilities.canChange) {
+        props.onDuplicateNode(menu.nodeId);
+      }
       return;
     case 'paste':
       props.onPasteNode();
       return;
     case 'delete':
-      props.onRemoveNode(menu.nodeId);
+      if (capabilities.canChange) {
+        props.onRemoveNode(menu.nodeId);
+      }
       return;
     case 'div':
+      if (capabilities.canWrapBox) {
+        props.onWrapNode?.(menu.nodeId, action);
+      }
+      return;
     case 'a':
-      props.onWrapNode?.(menu.nodeId, action);
+      if (capabilities.canWrapLink) {
+        props.onWrapNode?.(menu.nodeId, action);
+      }
       return;
     default: {
       const exhaustive: never = action;
@@ -100,12 +116,14 @@ function contextCapabilities(props: ElementActionProps, position: ContextPositio
     node.kind === 'chunk-group' ||
     node.kind === 'branch' ||
     (props.clientMode === true && node.id === 'layout');
-  const wrap = props.onWrapNode !== undefined && !protectedNode;
+  const canChange = !protectedNode && props.canChangeStructure?.(position.nodeId) !== false;
+  const wrap = props.onWrapNode !== undefined && canChange;
   return {
     component,
     protectedNode,
+    canChange,
     canSetDefaults: component && !props.clientMode && props.onSetDefaults !== undefined,
-    canCut: props.onCutNode !== undefined && !protectedNode,
+    canCut: props.onCutNode !== undefined && canChange,
     canOpen: component && !node.astroAsset && props.onOpenComponent !== undefined,
     canWrapBox: wrap && canWrapNode(nodes, position.nodeId, 'div'),
     canWrapLink: wrap && canWrapNode(nodes, position.nodeId, 'a'),

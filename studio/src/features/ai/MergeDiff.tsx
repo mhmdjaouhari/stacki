@@ -3,7 +3,7 @@ import { EditorState, type Extension } from '@codemirror/state';
 import { EditorView, lineNumbers } from '@codemirror/view';
 import { MergeView, unifiedMergeView } from '@codemirror/merge';
 import { appHighlight, appTheme, codeEditorLanguage } from '../../../vendor/stacki/src/ui/CodeEditor';
-import { languageFor } from '../../../vendor/stacki/src/features/git/Code';
+import { languageFor } from '../../../vendor/stacki/src/ui/codeHighlight';
 
 // A whole file's change in CodeMirror's merge view, read-only, with the code
 // editor's own theme and highlighting. Unchanged stretches collapse to a bar that

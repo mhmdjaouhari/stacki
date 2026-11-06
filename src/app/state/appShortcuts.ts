@@ -151,7 +151,7 @@ export function useKeyboard(
   history: ReturnType<typeof useHistory>,
 ) {
   const { historyRef, reportFailure } = lifecycle;
-  const { openCodeWindowRef, pageStateRef, selectedIdRef, setClassFocus } = coreState;
+  const { openCodeWindowRef, pageStateRef, pseudoPickRef, selectedIdRef, setClassFocus } = coreState;
   const { setCreateRequest, setLeftTab, setRightTab } = coreState;
   const { copyNode, duplicateNode, nodeClipboardRef, pasteNode, removeNode } = nodeEdits;
   const { setInsertOpen } = nodeEdits;
@@ -166,6 +166,7 @@ export function useKeyboard(
       historyRef,
       pageStateRef,
       selectedIdRef,
+      pseudoPickRef,
       openCodeWindowRef,
       nodeClipboardRef,
       cmsOpenRef,
@@ -198,6 +199,7 @@ export function useKeyboard(
     nodeClipboardRef,
     openCodeWindowRef,
     pageStateRef,
+    pseudoPickRef,
     selectedIdRef,
     setClassFocus,
     setCreateRequest,
@@ -216,7 +218,7 @@ export function useMenuShortcuts(
   history: ReturnType<typeof useHistory>,
 ) {
   const { flushSave, reportFailure, showToast } = lifecycle;
-  const { pageStateRef, projectRef, selectedIdRef, selectionKeysRef } = coreState;
+  const { pageStateRef, projectRef, pseudoPickRef, selectedIdRef, selectionKeysRef } = coreState;
   const { cmsOpenRef } = insertItemScope;
   const { copyNode, nodeClipboardRef, pasteNode } = nodeEdits;
   const { redo, undo } = history;
@@ -230,6 +232,7 @@ export function useMenuShortcuts(
     const copySelection = (): Promise<void> => copySelectionTrail(copying);
     const menu: MenuEdits = {
       selectedIdRef,
+      pseudoPickRef,
       pageStateRef,
       cmsOpenRef,
       nodeClipboardRef,
@@ -288,6 +291,7 @@ export function useMenuShortcuts(
     nodeClipboardRef,
     pageStateRef,
     projectRef,
+    pseudoPickRef,
     selectedIdRef,
     selectionKeysRef,
   ]);

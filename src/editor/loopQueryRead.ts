@@ -7,12 +7,13 @@
 //
 // The reading is honest about how far it got:
 //   query    every step is a condition, a sort key, a start or a limit (a
-//            condition it could not model is kept as a custom one);
+//            condition it could not model is kept as a custom one), over a
+//            collection or a List prop of the open component;
 //   partial  the collection is known but some step is not a query step (a
 //            `.map`, a filter after a slice): the panel shows the source and
 //            keeps that code rather than guessing at it;
-//   value    a list from anywhere else — a prop, a constant, an imported
-//            function's result, an outer loop's item — named for where it is;
+//   value    a list from anywhere else — a constant, an imported function's
+//            result, an outer loop's item — named for where it is;
 //   empty    `[]`, the loop with nothing chosen yet;
 //   code     an expression that does not parse.
 
@@ -26,6 +27,7 @@ import { readComparator } from './loopSortRead';
 import { LOOP_QUERY_LIMITS, assertLoopQuery, emptyQuery } from './loopQuery';
 import type { AstroItemParameter, LoopCondition, LoopFieldKind, LoopQuery, LoopSort, LoopSortOrder, LoopSource } from './loopQuery';
 import { namePath, parseExpression, parseFrontmatter, textOf, type Js, type ParsedFrontmatter } from './loopSyntax';
+import { listPropOf } from './propDeclaration';
 
 export interface LoopImport {
   readonly name: string;
@@ -92,7 +94,7 @@ export function readLoop(input: LoopReadInput): LoopReading {
   const context: Context = { input, frontmatter };
   const pipeline = pipelineOf({ source: parsed.source, node: parsed.expression }, context, []);
   if (pipeline.kind === 'value') {
-    return { kind: 'value', root: pipeline.root, origin: originOf(pipeline.root, context), chain: pipeline.chain };
+    return listPropReading(pipeline, context) ?? { kind: 'value', root: pipeline.root, origin: originOf(pipeline.root, context), chain: pipeline.chain };
   }
   if (pipeline.kind === 'unknown') {
     return { kind: 'code' };
@@ -103,6 +105,113 @@ export function readLoop(input: LoopReadInput): LoopReading {
   const reading = queryOf(pipeline, context);
   assert(reading.kind === 'query' || reading.kind === 'partial', 'A collection pipeline reads as a query or partly');
   return reading;
+}
+
+/** Which text a step's spans index: the loop's data expression, or the frontmatter. */
+export type StepPlace = 'head' | 'frontmatter';
+
+/** One method call on a list, whether or not any setting can say it. */
+export interface PipelineStep {
+  readonly place: StepPlace;
+  readonly source: string;
+  readonly call: Js;
+}
+
+/** `getCollection`'s own filter: the argument, and the span from the name to the closing bracket. */
+export interface PipelineFilterArgument {
+  readonly place: StepPlace;
+  readonly code: string;
+  readonly from: number;
+  readonly to: number;
+}
+
+/** A list's steps as written, for reading and rewriting each by its own bytes (loopSections.ts). */
+export interface LoopPipeline {
+  readonly source: LoopSource;
+  /** The list before any step, as code a step can be chained on. */
+  readonly base: string;
+  readonly steps: readonly PipelineStep[];
+  readonly filterArgument: PipelineFilterArgument | undefined;
+  readonly itemPath: ItemPath;
+  /** The declarations followed from the loop to the list, head first. */
+  readonly chain: readonly string[];
+  /** Where the data expression starts inside the text its head spans index. */
+  readonly headOffset: number;
+}
+
+/**
+ * The steps a List prop or an Astro collection takes in code, or undefined for
+ * a list that has none to edit: a Sanity query (its steps are GROQ), an options
+ * object (its settings are data), picked items, a value from anywhere else.
+ */
+export function readPipeline(input: LoopReadInput): LoopPipeline | undefined {
+  const data = input.data.trim();
+  const parsed = data === '' ? undefined : parseExpression(data);
+  if (parsed === undefined) {
+    return undefined;
+  }
+  const frontmatter = parseFrontmatter(input.frontmatter);
+  const context: Context = { input, frontmatter };
+  const pipeline = pipelineOf({ source: parsed.source, node: parsed.expression }, context, []);
+  const headOffset = parsed.source.indexOf(data);
+  assert(headOffset >= 0, 'A parsed expression holds its own text');
+  const placed = (step: Step): PipelineStep => ({
+    place: step.call.source === parsed.source ? 'head' : 'frontmatter',
+    source: step.call.source,
+    call: step.call.node,
+  });
+  if (pipeline.kind === 'value') {
+    const reading = listPropReading(pipeline, context);
+    if (reading === undefined) {
+      return undefined;
+    }
+    const source: LoopSource = { kind: 'list', collection: pipeline.root };
+    return { source, base: pipeline.root, steps: (pipeline.steps ?? []).map(placed), filterArgument: undefined, itemPath: [], chain: [], headOffset };
+  }
+  if (pipeline.kind !== 'collection' || pipeline.base.kind !== 'astro') {
+    return undefined;
+  }
+  const base = pipeline.base;
+  if (base.selection !== undefined || !COLLECTION_NAME.test(base.collection)) {
+    return undefined;
+  }
+  if (base.filter === undefined && base.list === undefined && pickedSteps(pipeline.steps) !== undefined) {
+    return undefined;
+  }
+  const list = base.list?.text ?? astroBaseCode(base);
+  if (list === undefined) {
+    return undefined;
+  }
+  return {
+    source: { kind: 'astro', collection: base.collection },
+    base: list,
+    steps: pipeline.steps.map(placed),
+    filterArgument: filterArgumentOf(base, parsed.source),
+    itemPath: base.list?.itemPath ?? ['data'],
+    chain: pipeline.chain,
+    headOffset,
+  };
+}
+
+// `getCollection('blog')` as a list a step can be chained on, without its filter.
+function astroBaseCode(base: Extract<Base, { readonly kind: 'astro' }>): string | undefined {
+  const call = base.call?.node;
+  if (call?.kind !== 'call' || call.callee.kind !== 'name') {
+    return undefined;
+  }
+  return `(await ${call.callee.name}(${JSON.stringify(base.collection)}))`;
+}
+
+function filterArgumentOf(base: Extract<Base, { readonly kind: 'astro' }>, headSource: string): PipelineFilterArgument | undefined {
+  const located = base.call;
+  const name = located?.node.kind === 'call' ? located.node.args[0] : undefined;
+  if (located === undefined || base.filter === undefined || name === undefined) {
+    return undefined;
+  }
+  // The closing bracket, so a filter wrapped in brackets of its own goes whole.
+  const to = located.node.to - 1;
+  assert(name.to <= to, 'A filter follows the collection’s name');
+  return { place: located.source === headSource ? 'head' : 'frontmatter', code: textOf(base.filter, base.filter.node), from: name.to, to };
 }
 
 /** Where an item keeps its fields: `data` (an Astro entry), `fields` (a builder export), or on itself. */
@@ -119,18 +228,23 @@ interface Located {
   readonly node: Js;
 }
 
-type Step =
+type StepBody =
   | { readonly kind: 'filter'; readonly function: Located }
   | { readonly kind: 'sort'; readonly function: Located | undefined }
   | { readonly kind: 'slice'; readonly start: number; readonly end: number | undefined }
   | { readonly kind: 'reverse' }
   | { readonly kind: 'other'; readonly name: string };
 
+/** A step and the call that says it, so its bytes can be found again (loopSections.ts). */
+type Step = StepBody & { readonly call: Located };
+
 type Base =
   | {
       readonly kind: 'astro';
       readonly collection: string;
       readonly filter: Located | undefined;
+      /** The `getCollection(…)` call itself, when the list is read by one. */
+      readonly call?: Located;
       /** A list expression kept as written (`[...collections["campus"]]`), and where its items hold fields. */
       readonly list?: { readonly text: string; readonly itemPath: ItemPath };
       /** Items picked by id, in order, in place of a filter (`getEntries`, a curated list). */
@@ -140,10 +254,17 @@ type Base =
 
 type Pipeline =
   | { readonly kind: 'collection'; readonly base: Base; readonly steps: readonly Step[]; readonly chain: readonly string[] }
-  | { readonly kind: 'value'; readonly root: string; readonly chain: readonly string[] }
+  | {
+      readonly kind: 'value';
+      readonly root: string;
+      readonly chain: readonly string[];
+      /** The steps taken on `root` itself, when the expression ended at that bare name. */
+      readonly steps?: readonly Step[];
+    }
   | { readonly kind: 'options'; readonly query: LoopQuery; readonly home: OptionsHome; readonly chain: readonly string[] }
   | { readonly kind: 'unknown' };
 
+const COLLECTION_NAME = /^[A-Za-z0-9_][\w.-]*$/;
 const METHOD_STEPS = new Set(['filter', 'sort', 'toSorted', 'slice', 'reverse', 'toReversed']);
 
 // Iterative over the method chain (each pass peels one call off the end) and
@@ -161,7 +282,7 @@ function pipelineOf(start: Located, context: Context, chainStart: readonly strin
     if (node.kind === 'name') {
       const declaration = context.frontmatter.declarations.get(node.name);
       if (!declaration?.init || chain.includes(node.name) || chain.length >= CHAIN_STEPS_MAX) {
-        return { kind: 'value', root: node.name, chain };
+        return { kind: 'value', root: node.name, chain, steps: [...steps].reverse() };
       }
       chain.push(node.name);
       // A builder's collection list: its settings are an options object here.
@@ -221,33 +342,33 @@ function stepOf(located: Located): { readonly step: Step; readonly from: Located
   const from = { source: located.source, node: node.callee.object };
   if (!METHOD_STEPS.has(method)) {
     // `.map(…)` and the like reshape items; the list is no longer the collection's.
-    return namePath(node.callee) === undefined ? { step: { kind: 'other', name: method }, from } : undefined;
+    return namePath(node.callee) === undefined ? { step: { kind: 'other', name: method, call: located }, from } : undefined;
   }
-  const argument = node.args[0];
+  return { step: { ...stepBodyOf(method, node.args, located.source), call: located }, from };
+}
+
+function stepBodyOf(method: string, args: readonly Js[], source: string): StepBody {
+  const argument = args[0];
   switch (method) {
     case 'filter':
-      return argument?.kind === 'function' && node.args.length === 1
-        ? { step: { kind: 'filter', function: { source: located.source, node: argument } }, from }
-        : { step: { kind: 'other', name: method }, from };
+      return argument?.kind === 'function' && args.length === 1 ? { kind: 'filter', function: { source, node: argument } } : { kind: 'other', name: method };
     case 'sort':
     case 'toSorted':
-      if (node.args.length === 0) {
-        return { step: { kind: 'sort', function: undefined }, from };
+      if (args.length === 0) {
+        return { kind: 'sort', function: undefined };
       }
-      return argument?.kind === 'function' && node.args.length === 1
-        ? { step: { kind: 'sort', function: { source: located.source, node: argument } }, from }
-        : { step: { kind: 'other', name: method }, from };
+      return argument?.kind === 'function' && args.length === 1 ? { kind: 'sort', function: { source, node: argument } } : { kind: 'other', name: method };
     case 'slice':
-      return { step: sliceStep(node.args), from };
+      return sliceStep(args);
     case 'reverse':
     case 'toReversed':
-      return { step: { kind: 'reverse' }, from };
+      return { kind: 'reverse' };
     default:
-      return { step: { kind: 'other', name: method }, from };
+      return { kind: 'other', name: method };
   }
 }
 
-function sliceStep(args: readonly Js[]): Step {
+function sliceStep(args: readonly Js[]): StepBody {
   const [first, second] = args;
   const start = first === undefined ? 0 : wholeNumber(first);
   const end = second === undefined ? undefined : wholeNumber(second);
@@ -273,10 +394,7 @@ function baseOf(located: Located, context: Context): Base | undefined {
     if (name?.kind !== 'string' || node.args.length > 2) {
       return undefined;
     }
-    if (filter !== undefined && filter.kind !== 'function') {
-      return undefined;
-    }
-    return { kind: 'astro', collection: name.value, filter: filter ? { source: located.source, node: filter } : undefined };
+    return { kind: 'astro', collection: name.value, filter: filter ? { source: located.source, node: filter } : undefined, call: located };
   }
   if (node.callee.kind === 'name' && importedFrom(context, node.callee.name, 'astro:content') === 'getEntries') {
     const entries = entriesSelection(node.args);
@@ -347,6 +465,22 @@ function originOf(root: string, context: Context): LoopValueOrigin {
   return imported ? { kind: 'import', spec: imported.path } : { kind: 'scope' };
 }
 
+// A List prop read where the loop reads it (`features`, `features.slice(0, 3)`),
+// whose steps are list settings too. One held in a constant first stays a value:
+// its steps could be spread over declarations that other code also reads.
+function listPropReading(pipeline: Extract<Pipeline, { readonly kind: 'value' }>, context: Context): LoopReading | undefined {
+  const steps = pipeline.steps;
+  if (steps === undefined || pipeline.chain.length > 0 || !COLLECTION_NAME.test(pipeline.root)) {
+    return undefined;
+  }
+  if (listPropOf(context.input.frontmatter, pipeline.root) === undefined) {
+    return undefined;
+  }
+  const reading = stepsReading({ source: { kind: 'list', collection: pipeline.root }, steps, chain: [], filter: undefined, itemPath: [] }, context);
+  assert(reading.kind === 'query' || reading.kind === 'partial', 'A list prop’s steps read as a query or partly');
+  return reading;
+}
+
 // ---------------------------------------------------------------------------
 // A collection pipeline as a query.
 // ---------------------------------------------------------------------------
@@ -357,7 +491,7 @@ function queryOf(pipeline: Extract<Pipeline, { readonly kind: 'collection' }>, c
   if (base.kind === 'sanity') {
     return sanityQueryOf(base, pipeline, context);
   }
-  if (!/^[A-Za-z0-9_][\w.-]*$/.test(source.collection)) {
+  if (!COLLECTION_NAME.test(source.collection)) {
     return partial(source, pipeline, 'The collection is named by code.');
   }
   if (base.selection !== undefined) {
@@ -367,12 +501,34 @@ function queryOf(pipeline: Extract<Pipeline, { readonly kind: 'collection' }>, c
   if (picked !== undefined) {
     return selectedOf({ ...base, selection: picked }, { ...pipeline, steps: [] });
   }
-  const order = stepOrder(pipeline.steps);
+  const itemPath = base.list?.itemPath ?? ['data'];
+  const read = stepsReading({ source, steps: pipeline.steps, chain: pipeline.chain, filter: base.filter, itemPath }, context);
+  if (read.kind === 'query' && base.list !== undefined) {
+    return { ...read, home: { kind: 'chain', list: base.list.text, itemPath: base.list.itemPath } };
+  }
+  return read;
+}
+
+// A list's JavaScript steps as a query, or partly when one is not a setting:
+// the same for a collection and a List prop, apart from where items hold fields.
+function stepsReading(
+  list: {
+    readonly source: LoopSource;
+    readonly steps: readonly Step[];
+    readonly chain: readonly string[];
+    /** A filter given where the list is read: `getCollection`'s second argument. */
+    readonly filter: Located | undefined;
+    readonly itemPath: ItemPath;
+  },
+  context: Context,
+): LoopReading {
+  const { source, itemPath } = list;
+  const pipeline = { chain: list.chain };
+  const order = stepOrder(list.steps);
   if (order === undefined) {
     return partial(source, pipeline, 'Its items are changed by code the list settings cannot show.');
   }
-  const itemPath = base.list?.itemPath ?? ['data'];
-  const filters = [...(base.filter ? [base.filter] : []), ...order.filters];
+  const filters = [...(list.filter ? [list.filter] : []), ...order.filters];
   const conditions = astroConditions(filters, source, context, itemPath);
   if (conditions === undefined) {
     return partial(source, pipeline, 'Its filter is written in a way the list settings cannot show.');
@@ -391,7 +547,11 @@ function queryOf(pipeline: Extract<Pipeline, { readonly kind: 'collection' }>, c
   const sorts = order.reversed ? typed.map(flipped) : typed;
   const random = sorting?.random === true;
   if (order.reversed && sorts.length === 0 && !random) {
-    return partial(source, pipeline, 'It is shown in reverse of the collection’s own order.');
+    return partial(
+      source,
+      pipeline,
+      source.kind === 'list' ? 'It is shown in reverse of the list’s own order.' : 'It is shown in reverse of the collection’s own order.',
+    );
   }
   const query: LoopQuery = {
     source,
@@ -403,11 +563,7 @@ function queryOf(pipeline: Extract<Pipeline, { readonly kind: 'collection' }>, c
     projection: undefined,
     ...(customSort === undefined ? {} : { customSort }),
   };
-  const read = checked(query, pipeline, undefined);
-  if (read?.kind === 'query' && base.list !== undefined) {
-    return { ...read, home: { kind: 'chain', list: base.list.text, itemPath: base.list.itemPath } };
-  }
-  return read ?? partial(source, pipeline, 'Its settings are outside what the list settings can show.');
+  return checked(query, pipeline, undefined) ?? partial(source, pipeline, 'Its settings are outside what the list settings can show.');
 }
 
 // Picked items. Filters after them only drop ids no longer found (getEntries
@@ -429,7 +585,7 @@ function sanityQueryOf(
   context: Context,
 ): LoopReading {
   const groq = readGroq(base.groq);
-  if (groq === undefined || !/^[A-Za-z0-9_][\w.-]*$/.test(groq.type)) {
+  if (groq === undefined || !COLLECTION_NAME.test(groq.type)) {
     // Not one type's list: only the code can say what it is.
     return { kind: 'value', root: pipeline.chain[0] ?? base.client, origin: { kind: 'frontmatter' }, chain: pipeline.chain };
   }
@@ -478,7 +634,7 @@ function sanityQueryOf(
   return checked(query, pipeline, base.client) ?? partial(source, pipeline, 'Its settings are outside what the list settings can show.');
 }
 
-function checked(query: LoopQuery, pipeline: Extract<Pipeline, { readonly kind: 'collection' }>, client: string | undefined): LoopReading | undefined {
+function checked(query: LoopQuery, pipeline: { readonly chain: readonly string[] }, client: string | undefined): LoopReading | undefined {
   if (!withinLimits(query)) {
     return undefined;
   }
@@ -496,7 +652,7 @@ function withinLimits(query: LoopQuery): boolean {
   return query.limit === undefined || (query.limit >= 1 && query.limit <= LOOP_QUERY_LIMITS.limitMax);
 }
 
-function partial(source: LoopSource, pipeline: Extract<Pipeline, { readonly kind: 'collection' }>, reason: string): LoopReading {
+function partial(source: LoopSource, pipeline: { readonly chain: readonly string[] }, reason: string): LoopReading {
   return { kind: 'partial', source, chain: pipeline.chain, reason };
 }
 
@@ -598,7 +754,7 @@ interface AstroConditions {
 
 function astroConditions(filters: readonly Located[], source: LoopSource, context: Context, itemPath: ItemPath): AstroConditions | undefined {
   if (filters.length === 0) {
-    return { match: 'all', conditions: [], parameter: { kind: 'data' } };
+    return { match: 'all', conditions: [], parameter: emptyQuery(source).parameter };
   }
   let parameter: AstroItemParameter | undefined;
   let match: 'all' | 'any' = 'all';

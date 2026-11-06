@@ -27,12 +27,15 @@ export const LOOP_QUERY_LIMITS = {
   itemIdCharsMax: 256,
 } as const;
 
-/** Where a collection's items come from: Astro's content layer, or a Sanity dataset. */
-export type LoopSourceKind = 'astro' | 'sanity';
+/**
+ * Where a list's items come from: Astro's content layer, a Sanity dataset, or
+ * a List prop of the open component, whose items hold their fields on themselves.
+ */
+export type LoopSourceKind = 'astro' | 'sanity' | 'list';
 
 export interface LoopSource {
   readonly kind: LoopSourceKind;
-  /** The Astro collection name, or the Sanity document type. */
+  /** The Astro collection name, the Sanity document type, or the name a List prop is read by. */
   readonly collection: string;
 }
 
@@ -214,10 +217,31 @@ export function sortOrdersFor(kind: LoopFieldKind, source: LoopSourceKind): read
       }
     }
   })();
-  const offered = source === 'sanity' ? orders.filter((order) => GROQ_ORDERS.includes(order)) : orders;
+  const offered = ordersOffered(orders, source);
   assert(offered.length <= orders.length, 'A source offers a subset of the orders');
   return offered;
 }
+
+// A List prop's image is a URL or a path in text, with no file Astro imported
+// to measure, so its size would compare as 0 for every item.
+function ordersOffered(orders: readonly LoopSortOrder[], source: LoopSourceKind): readonly LoopSortOrder[] {
+  switch (source) {
+    case 'astro':
+      return orders;
+    case 'sanity':
+      return orders.filter((order) => GROQ_ORDERS.includes(order));
+    case 'list':
+      return orders.filter((order) => order !== 'fileSize');
+    default: {
+      const exhaustive: never = source;
+      return exhaustive;
+    }
+  }
+}
+
+// A List prop's items hold their fields on themselves, so its filter always
+// names the item: there is no `data` to destructure.
+const LIST_ITEM_PARAMETER: AstroItemParameter = { kind: 'entry', name: 'item' };
 
 /** A query with nothing narrowed: every item, in the source's own order. */
 export function emptyQuery(source: LoopSource): LoopQuery {
@@ -230,7 +254,7 @@ export function emptyQuery(source: LoopSource): LoopQuery {
     offset: 0,
     limit: undefined,
     projection: undefined,
-    parameter: { kind: 'data' },
+    parameter: source.kind === 'list' ? LIST_ITEM_PARAMETER : { kind: 'data' },
   };
   assertLoopQuery(query);
   assert(query.conditions.length === 0, 'An empty query has no conditions');
@@ -262,6 +286,10 @@ export function assertLoopQuery(query: LoopQuery): void {
   }
   if (query.parameter.kind === 'entry') {
     assert(PARAMETER_NAME.test(query.parameter.name), 'An entry parameter is a name');
+  }
+  if (query.source.kind === 'list') {
+    assert(query.parameter.kind === 'entry', 'A list prop’s filter names its item');
+    assert(query.selection === undefined, 'A list prop’s items have no ids to pick by');
   }
   for (const condition of query.conditions) {
     assertCondition(condition);
@@ -419,7 +447,7 @@ export function astroQueryCode(query: LoopQuery, reader = 'getCollection'): stri
   }
   const filter = astroFilterCode(query);
   const read = `await ${reader}(${jsString(query.source.collection)}${filter === undefined ? '' : `, ${filter}`})`;
-  const sort = sortStepCode(query, ['data']);
+  const sort = sortStepCode(query, ['data'], 'sort');
   const slice = sliceCode(query.offset, query.limit);
   const code = sort === '' && slice === '' ? read : `(${read})${sort}${slice}`;
   assert(code.startsWith('await') || code.startsWith('(await'), 'An Astro query awaits its collection');
@@ -448,9 +476,46 @@ export function chainQueryCode(query: LoopQuery, list: string, itemPath: readonl
   const joiner = query.match === 'all' ? ' && ' : ' || ';
   const filter =
     query.conditions.length === 0 ? '' : `.filter((${name}) => ${query.conditions.map((condition) => astroConditionCode(condition, base)).join(joiner)})`;
-  const sort = sortStepCode(query, itemPath);
+  const sort = sortStepCode(query, itemPath, 'sort');
   const code = `[...${list.trim()}]${filter}${sort}${sliceCode(query.offset, query.limit)}`;
   assert(code.startsWith('[...'), 'A kept list is copied');
+  return code;
+}
+
+/**
+ * A List prop filtered, sorted and sliced where the loop reads it, or just its
+ * name when nothing is asked of it. A prop belongs to the page passing it and
+ * is usually readonly, so it is sorted by `toSorted`, which leaves it as it was.
+ */
+export function listQueryCode(query: LoopQuery): string {
+  assertLoopQuery(query);
+  assert(query.source.kind === 'list', 'A list query reads a List prop');
+  assert(query.parameter.kind === 'entry', 'A list prop’s filter names its item');
+  const parameter = query.parameter.name;
+  const joiner = query.match === 'all' ? ' && ' : ' || ';
+  const clauses = query.conditions.map((condition) => astroConditionCode(condition, parameter));
+  const filter = clauses.length === 0 ? '' : `.filter((${parameter}) => ${clauses.join(joiner)})`;
+  const code = `${query.source.collection}${filter}${sortStepCode(query, [], 'toSorted')}${sliceCode(query.offset, query.limit)}`;
+  assert(code.startsWith(query.source.collection), 'A list query starts from its prop');
+  return code;
+}
+
+/**
+ * The filters as one function a `.filter()` takes, over items that hold their
+ * fields under `itemPath`, or undefined with no filters to say.
+ */
+export function filterFunctionCode(query: LoopQuery, itemPath: readonly string[]): string | undefined {
+  if (query.conditions.length === 0) {
+    return undefined;
+  }
+  if (query.parameter.kind === 'data' && itemPath.length === 1 && itemPath[0] === 'data') {
+    return astroFilterCode(query);
+  }
+  const name = query.parameter.kind === 'entry' ? query.parameter.name : 'entry';
+  const base = [name, ...itemPath].join('.');
+  const joiner = query.match === 'all' ? ' && ' : ' || ';
+  const code = `(${name}) => ${query.conditions.map((condition) => astroConditionCode(condition, base)).join(joiner)}`;
+  assert(code.includes('=>'), 'A filter is a function');
   return code;
 }
 
@@ -532,16 +597,22 @@ function groupedCode(code: string): string {
   return /\|\||&&|\?/.test(trimmed) ? `(${trimmed})` : trimmed;
 }
 
-// The `.sort(…)` a JavaScript list takes: a shuffle, the code a custom sort
+// The sort step a JavaScript list takes: a shuffle, the code a custom sort
 // holds, or a comparator over the sort keys; none for the source's own order.
-function sortStepCode(query: LoopQuery, itemPath: readonly string[]): string {
+function sortStepCode(query: LoopQuery, itemPath: readonly string[], method: 'sort' | 'toSorted'): string {
+  const comparator = sortFunctionCode(query, itemPath);
+  return comparator === undefined ? '' : `.${method}(${comparator})`;
+}
+
+/** The function a sort step takes, or undefined for the source's own order. */
+export function sortFunctionCode(query: LoopQuery, itemPath: readonly string[]): string | undefined {
   if (query.random) {
-    return '.sort(() => Math.random() - 0.5)';
+    return '() => Math.random() - 0.5';
   }
   if (query.customSort !== undefined) {
-    return `.sort(${query.customSort.trim()})`;
+    return query.customSort.trim();
   }
-  return query.sorts.length > 0 ? `.sort(${astroComparatorCode(query.sorts, itemPath)})` : '';
+  return query.sorts.length > 0 ? astroComparatorCode(query.sorts, itemPath) : undefined;
 }
 
 /** The sort keys as one comparator over items that hold their fields under
@@ -601,7 +672,8 @@ function fileSizeCode(image: string): string {
   return code;
 }
 
-function sliceCode(offset: number, limit: number | undefined): string {
+/** The slice a start and a limit take, or nothing when they ask for every item. */
+export function sliceCode(offset: number, limit: number | undefined): string {
   if (limit !== undefined) {
     return `.slice(${offset}, ${offset + limit})`;
   }
@@ -697,7 +769,7 @@ export function groqQueryText(query: LoopQuery, fields: readonly LoopField[]): s
   // A shuffle happens after the fetch (GROQ has no random order), so the
   // query returns every match and the slice is taken from the shuffled list.
   const sorted = !query.random && query.sorts.length > 0;
-  const order = sorted ? ` | order(${query.sorts.map((sort) => `${sort.field} ${sort.direction === 'ascending' ? 'asc' : 'desc'}`).join(', ')})` : '';
+  const order = sorted ? ` | ${groqOrderText(query.sorts)}` : '';
   // A custom sort, like a shuffle, runs on the fetched list: so does its slice.
   const afterFetch = query.random || query.customSort !== undefined;
   const slice = afterFetch ? '' : groqSlice(query.offset, query.limit);
@@ -720,7 +792,7 @@ export function sanityQueryCode(query: LoopQuery, fields: readonly LoopField[], 
     return `(${fetch}).sort((a, b) => ${ids}.indexOf(a._id) - ${ids}.indexOf(b._id))`;
   }
   const afterFetch = query.random || query.customSort !== undefined;
-  const code = afterFetch ? `(${fetch})${sortStepCode(query, [])}${sliceCode(query.offset, query.limit)}` : fetch;
+  const code = afterFetch ? `(${fetch})${sortStepCode(query, [], 'sort')}${sliceCode(query.offset, query.limit)}` : fetch;
   assert(code.includes(`${client}.fetch(`), 'A Sanity query fetches through its client');
   return code;
 }
@@ -769,6 +841,22 @@ export function groqConditionCode(condition: LoopCondition): string {
       return exhaustive;
     }
   }
+}
+
+/** The filters as the clauses of a GROQ filter, joined the way the query joins them. */
+export function groqFilterText(query: LoopQuery): string {
+  const clauses = query.conditions.map(groqConditionCode);
+  return clauses.join(query.match === 'all' ? ' && ' : ' || ');
+}
+
+/** The sort keys as a GROQ pipe, `order(name asc)`; nothing with no keys. */
+export function groqOrderText(sorts: readonly LoopSort[]): string {
+  return sorts.length === 0 ? '' : `order(${sorts.map((sort) => `${sort.field} ${sort.direction === 'ascending' ? 'asc' : 'desc'}`).join(', ')})`;
+}
+
+/** A start and a limit as a GROQ slice, trimmed of its leading space. */
+export function groqSliceText(offset: number, limit: number | undefined): string {
+  return groqSlice(offset, limit).trim();
 }
 
 function groqSlice(offset: number, limit: number | undefined): string {
