@@ -81,11 +81,12 @@ export class ProposalStore {
       recorder.progress(gathered);
     }
     const tools = models.tools.includes(model);
+    const vision = models.vision.includes(model);
     const proposal = await propose(
       this.root,
       file,
       string(input['prompt'], 12_000),
-      { ...config, model, ...(effort ? { effort } : {}), ...(tools ? { tools } : {}) },
+      { ...config, model, ...(effort ? { effort } : {}), ...(tools ? { tools } : {}), ...(vision ? { vision } : {}) },
       { ...chat, context, ...(guidance ? { guidance } : {}), ...(sources ? { sources } : {}) },
       signal,
       recorder.progress,
@@ -125,7 +126,8 @@ export class ProposalStore {
           canvas,
         )
       : [];
-    const before = fetchPage && pages.length ? await renderPages(pages, fetchPage) : undefined;
+    const shoot = canvas && sources?.screenshot ? (size: 'thumbnail') => sources.screenshot?.(canvas, size).catch(() => undefined) : undefined;
+    const [before, shotBefore] = await Promise.all([fetchPage && pages.length ? renderPages(pages, fetchPage) : undefined, shoot?.('thumbnail')]);
     const files = await this.rooms.coordinator.run(async () => {
       const files = await Promise.all(
         entry.proposal.changes.map(async (change) => ({
@@ -151,7 +153,10 @@ export class ProposalStore {
     const broken = brokenPages(before, after);
     if (!broken.length) {
       this.proposals.delete(id);
-      return { applied: true, ...recorded, checked: pages, rendered: renderedChanges(before, after) };
+      // Before and after pictures of the canvas page, when a browser is configured (screenshots.ts).
+      const shotAfter = shotBefore && canvas ? await shoot?.('thumbnail') : undefined;
+      const thumbnails = shotBefore && shotAfter && canvas ? { thumbnails: { path: canvas, before: shotBefore, after: shotAfter } } : {};
+      return { applied: true, ...recorded, checked: pages, rendered: renderedChanges(before, after), ...thumbnails };
     }
     // The change broke a page: put the files back, unless someone edited them in the meantime. The
     // proposal stays, so the person can ask the model to fix it with the error.

@@ -23,6 +23,8 @@ export interface Options {
   readonly containerToken?: string;
   /** Use the provider's native tool calling rather than the JSON protocol (AI_TOOL_MODELS). */
   readonly tools?: boolean;
+  /** The model reads images, so the tools include screenshots (AI_VISION_MODELS). */
+  readonly vision?: boolean;
 }
 export type Content =
   string | readonly ({ readonly type: 'text'; readonly text: string } | { readonly type: 'image_url'; readonly image_url: { readonly url: string } })[];

@@ -185,6 +185,7 @@ function MessageItem({ chat, message, refresh }: ItemProps) {
       {message.proposal && review && <ProposalCard chat={chat} message={message} diffs={review.diffs} refresh={refresh} review={openReview} />}
       {message.outcome && <p className="chat-outcome">{message.outcome}</p>}
       {message.diffs && <AppliedDiff diffs={message.diffs} review={openReview} />}
+      {message.check?.thumbnails && <BeforeAfter thumbnails={message.check.thumbnails} />}
       {message.check?.rendered.length ? <RenderedChanges check={message.check} /> : null}
       {message.applied && <RevertAction chat={chat} message={message} applied={message.applied} refresh={refresh} />}
       {/* A discarded proposal leaves nothing to review, which closes the overlay. */}
@@ -345,6 +346,20 @@ function AppliedDiff({ diffs, review }: { readonly diffs: readonly FileDiff[]; r
       <button className="chat-review-open" onClick={review}>
         Review
       </button>
+    </div>
+  );
+}
+
+// The canvas page before and after the change, side by side.
+function BeforeAfter({ thumbnails }: { readonly thumbnails: NonNullable<ApplyCheck['thumbnails']> }) {
+  return (
+    <div className="chat-before-after" aria-label={`${thumbnails.path} before and after the change`}>
+      {(['before', 'after'] as const).map((side) => (
+        <figure key={side}>
+          <img src={thumbnails[side]} alt={`${thumbnails.path} ${side} the change`} />
+          <figcaption>{side === 'before' ? 'Before' : 'After'}</figcaption>
+        </figure>
+      ))}
     </div>
   );
 }

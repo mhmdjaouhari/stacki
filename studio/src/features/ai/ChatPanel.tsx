@@ -75,7 +75,7 @@ export function ChatPanel({ file, context, mentionable, refresh }: ChatPanelProp
   );
 }
 function useModels() {
-  const [config, setConfig] = useState<ModelConfiguration>({ models: [], defaultModel: '', efforts: {}, tools: [] });
+  const [config, setConfig] = useState<ModelConfiguration>({ models: [], defaultModel: '', efforts: {}, tools: [], vision: [] });
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   useEffect(() => {

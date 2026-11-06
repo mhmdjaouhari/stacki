@@ -20,6 +20,8 @@ export interface ModelConfiguration {
   readonly efforts: Readonly<Record<string, readonly string[]>>;
   /** Models that use the provider's native tool calling; the rest use the JSON protocol. */
   readonly tools: readonly string[];
+  /** Tool-calling models that read images, and so get the screenshot tool. */
+  readonly vision: readonly string[];
 }
 // Providers name their effort levels differently (DeepSeek: low/high/max;
 // OpenAI: low/medium/high), so the levels come from configuration rather than
@@ -33,7 +35,7 @@ const EFFORT_LEVEL = /^[a-z][a-z0-9_-]{0,15}$/;
 export const DEFAULT_OUTPUT_TOKENS = 16_384;
 const MIN_OUTPUT_TOKENS = 1024;
 const MAX_OUTPUT_TOKENS = 393_216;
-export function modelConfiguration(model?: string, models?: string, efforts?: string, tools?: string): ModelConfiguration {
+export function modelConfiguration(model?: string, models?: string, efforts?: string, tools?: string, vision?: string): ModelConfiguration {
   const values = [
     ...new Set(
       [model, ...(models ?? '').split(',')]
@@ -45,13 +47,22 @@ export function modelConfiguration(model?: string, models?: string, efforts?: st
   if (values.length > 30) {
     throw new Error('Configure at most 30 AI models');
   }
-  return { models: values, defaultModel: model?.trim() ?? '', efforts: effortConfiguration(efforts, values), tools: toolConfiguration(tools, values) };
+  const toolModels = toolConfiguration(tools, values);
+  return {
+    models: values,
+    defaultModel: model?.trim() ?? '',
+    efforts: effortConfiguration(efforts, values),
+    tools: toolModels,
+    vision: toolConfiguration(vision, toolModels, 'AI_VISION_MODELS'),
+  };
 }
 /**
  * AI_TOOL_MODELS lists the models that get native tool calling: `deepseek-v4-flash, glm-5.2`.
  * Opt-in, because a provider or proxy that doesn't support the `tools` field rejects the request.
+ * AI_VISION_MODELS, a subset of those, lists the ones that read images: an image sent to a model
+ * that can't read it fails the request.
  */
-export function toolConfiguration(value: string | undefined, models: readonly string[]): readonly string[] {
+export function toolConfiguration(value: string | undefined, models: readonly string[], name = 'AI_TOOL_MODELS'): readonly string[] {
   const names = [
     ...new Set(
       (value ?? '')
@@ -62,7 +73,7 @@ export function toolConfiguration(value: string | undefined, models: readonly st
   ];
   const unknown = names.find((name) => !models.includes(name));
   if (unknown !== undefined) {
-    throw new Error(`AI_TOOL_MODELS names a model that is not configured: ${unknown.slice(0, 160)}`);
+    throw new Error(`${name} names a model that is not configured${name === 'AI_TOOL_MODELS' ? '' : ' for tools'}: ${unknown.slice(0, 160)}`);
   }
   return names;
 }
@@ -132,6 +143,7 @@ export function parseModels(value: unknown): ModelConfiguration {
     defaultModel: string(input['defaultModel'], 160),
     efforts: parseEfforts(input['efforts'], models),
     tools: parseToolModels(input['tools'], models),
+    vision: parseToolModels(input['vision'], models),
   };
 }
 // Older backends send no tool models; every model then uses the JSON protocol.

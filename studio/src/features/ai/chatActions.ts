@@ -156,7 +156,9 @@ export async function applyProposal(id: string, messageId: string, refresh: () =
       return;
     }
     const check =
-      result['checked'] === undefined ? undefined : parseApplyCheck({ pages: result['checked'], rendered: result['rendered'] ?? [], broken: result['broken'] });
+      result['checked'] === undefined
+        ? undefined
+        : parseApplyCheck({ pages: result['checked'], rendered: result['rendered'] ?? [], broken: result['broken'], thumbnails: result['thumbnails'] });
     // A change too large to send back is applied without an undo record.
     const changes = result['changes'];
     const applied = changes === undefined ? undefined : parseApplied({ changes, state: 'applied' });

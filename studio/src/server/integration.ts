@@ -28,6 +28,11 @@ import { featureRoutes } from './featureRoutes';
 import { fetchPageResponse, fetchRenderedPage } from '../features/ai/aiContext';
 import { parseAiExtensions, type AiExtensions } from '../features/ai/aiExtensions';
 import { captureDevErrors, describeDevError, type DevErrors } from '../features/ai/devErrors';
+import { captureScreenshot, screenshotBrowser, type ShotSize } from '../features/ai/screenshots';
+
+// Set when the integration is created, from AI_SCREENSHOT_BROWSER: a wrong path is a configuration
+// error at startup, not a failure on first use. One process runs one Studio.
+let screenshots: string | undefined;
 import { BUILT_IN_TOOL_NAMES } from '../features/ai/agentTools';
 import { saveAsset } from '../features/storage/assetStorage';
 import { interceptBrowserReloads } from '../features/preview/browserReloads';
@@ -48,6 +53,7 @@ import type { ViteDevServer, Plugin } from 'vite';
 type StudioCatalogs = ReturnType<typeof projectCatalogs> & { readonly devErrors: DevErrors };
 export default function studio(input: Options): AstroIntegration {
   const ai = parseAiExtensions(input.ai, BUILT_IN_TOOL_NAMES);
+  screenshots = screenshotBrowser();
   const options: Options = { ...input, ...(ai ? { ai } : {}) };
   let prioritizeRequests = () => {};
   const rooms = createRooms(options.root);
@@ -173,6 +179,7 @@ async function handleRequestInWorkspace(
     json(response, 200, { kind: 'local', editing: options.editing ?? 'draft' });
     return;
   }
+  const browser = screenshots;
   const sources = {
     render: (page: string) => fetchRenderedPage(options.port, page),
     fetchPage: async (page: string) => {
@@ -184,6 +191,7 @@ async function handleRequestInWorkspace(
     },
     sample: catalogs.values,
     ...(options.ai ? { extensions: options.ai } : {}),
+    ...(browser ? { screenshot: (page: string, size: ShotSize) => captureScreenshot(browser, `http://127.0.0.1:${options.port}${page}`, size) } : {}),
   };
   if (await features(request, response, url.pathname, sources, () => body(request))) {
     return;
