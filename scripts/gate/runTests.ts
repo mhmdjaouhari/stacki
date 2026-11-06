@@ -134,9 +134,23 @@ const staticChecks: readonly TestCommand[] = [
     ],
   },
   {
+    // Cold, this was the gate's longest static check (six minutes on four
+    // cores). The cache shares the pre-commit hook's location, so a commit
+    // warms the gate. Content, not modification times, for Prettier's reason
+    // below. CI has no cache, so it still lints every file cold.
     name: 'eslint',
     command: node,
-    argumentsList: [path.join(root, 'node_modules', 'eslint', 'bin', 'eslint.js'), '--max-warnings', '0', '.'],
+    argumentsList: [
+      path.join(root, 'node_modules', 'eslint', 'bin', 'eslint.js'),
+      '--cache',
+      '--cache-strategy',
+      'content',
+      '--cache-location',
+      path.join(root, 'node_modules', '.cache', 'eslint') + path.sep,
+      '--max-warnings',
+      '0',
+      '.',
+    ],
   },
   {
     // Line width, shell scripts, test headers, the dependency record, one

@@ -39,7 +39,18 @@ export function repositoryRoot(): string {
   return path.resolve(import.meta.dirname, '..', '..');
 }
 
-export function checkFiles(root: string, candidates: readonly string[], options: { readonly format: FormatMode }): CheckOutcome {
+// `scope`, when given, is the wider set of changed files that decides whether
+// the Studio program is checked; the file checks still run on `candidates` only.
+export function checkFiles(
+  root: string,
+  candidates: readonly string[],
+  options: { readonly format: FormatMode; readonly scope?: readonly string[] },
+): CheckOutcome {
+  const scope = options.scope ?? candidates;
+  assert(
+    candidates.every((file) => scope.includes(file)),
+    'checkFiles: the scope holds every candidate',
+  );
   const files = relevantFiles(root, candidates);
   const sections: string[] = [];
   // Batches bound each child's command line and memory; every file is checked.
@@ -47,7 +58,7 @@ export function checkFiles(root: string, candidates: readonly string[], options:
   for (let start = 0; start < files.length; start += batchSize) {
     sections.push(...checkBatch(root, files.slice(start, start + batchSize), options.format));
   }
-  if (studioAffected(candidates.map((file) => normalizePath(root, file)))) {
+  if (studioAffected(scope.map((file) => normalizePath(root, file)))) {
     const studio = checkStudio(root, options.format);
     if (studio.status !== 0) {
       sections.push(section('Studio', studio.stdout + studio.stderr));
@@ -109,6 +120,25 @@ export function stagedFiles(root: string): readonly string[] {
   return splitNul(staged);
 }
 
+// During a merge, the staged files whose content neither side had: the conflict
+// resolutions and the files git combined from both. A file taken whole from
+// either parent passed that parent's checks, and an upstream sync stages a
+// release's worth of them (215 files, a minute of cold ESLint, in 1.0.15).
+// Undefined when no merge is in progress. What a merge breaks across files
+// without changing them, the Studio type check catches: callers keep the wider
+// list as checkFiles's scope.
+export function mergeCreatedFiles(root: string, staged: readonly string[]): readonly string[] | undefined {
+  assert(path.isAbsolute(root), 'mergeCreatedFiles: the root is absolute');
+  const merging = runChild('git', ['rev-parse', '--quiet', '--verify', 'MERGE_HEAD'], { cwd: root });
+  if (merging.status !== 0) {
+    return undefined;
+  }
+  const fromTheirs = new Set(splitNul(git(root, ['diff', '--cached', '--name-only', '-z', '--diff-filter=ACMR', 'MERGE_HEAD'])));
+  const created = staged.filter((file) => fromTheirs.has(file));
+  assert(created.length <= staged.length, 'mergeCreatedFiles: a subset of the staged files');
+  return created;
+}
+
 export function runTypeCheck(root: string): ChildResult {
   const compiler = path.join(root, 'node_modules', 'typescript', 'bin', 'tsc');
   const cache = path.join(root, 'node_modules', '.cache', 'tsc');
@@ -132,7 +162,8 @@ export function runEslint(root: string, files: readonly string[]): ChildResult {
   assert(files.length <= POLICY_LIMITS.filesPerCheckMax, 'runEslint: file limit exceeded');
   const eslint = path.join(root, 'node_modules', 'eslint', 'bin', 'eslint.js');
   const cache = path.join(root, 'node_modules', '.cache', 'eslint') + path.sep;
-  const argumentsList = [eslint, '--cache', '--cache-location', cache, '--max-warnings', '0', '--no-warn-ignored', ...files];
+  // Content, as the gate's ESLint uses on the same cache (runTests.ts).
+  const argumentsList = [eslint, '--cache', '--cache-strategy', 'content', '--cache-location', cache, '--max-warnings', '0', '--no-warn-ignored', ...files];
   return runChild(process.execPath, argumentsList, { cwd: root });
 }
 
