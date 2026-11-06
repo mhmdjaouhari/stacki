@@ -1,3 +1,12 @@
+/* Studio's faces: Inter for the UI, Iosevka for code, both self-hosted (main.tsx).
+   Doubled :root outranks the shared sheets' :root defaults whatever order they load in. */
+:root:root {
+  --font: 'Inter Variable', 'Inter', system-ui, sans-serif;
+  --mono: 'Iosevka', ui-monospace, monospace;
+  --font-family-sans: var(--font);
+  --font-family-mono: var(--mono);
+}
+
 .studio-app {
   height: 100dvh;
 }

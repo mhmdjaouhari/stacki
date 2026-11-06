@@ -24,6 +24,7 @@ import { componentPreviewPlugin, renderComponentPreviewPage } from '../../vendor
 import { createRooms } from '../features/collaboration/rooms';
 import { safePath, preparePath, readSource } from '../features/project/projectServer';
 import { filePath, sourcePath, string, record, MAX_SOURCE } from '../shared/validation';
+import { isStudioAsset } from '../shared/studioAssets';
 import { featureRoutes } from './featureRoutes';
 import { fetchPageResponse, fetchRenderedPage } from '../features/ai/aiContext';
 import { parseAiExtensions, type AiExtensions } from '../features/ai/aiExtensions';
@@ -229,7 +230,7 @@ async function handleRequestInWorkspace(
     return;
   }
   const name = url.pathname === '/studio' || url.pathname === '/studio/' ? 'index.html' : url.pathname.slice('/studio/'.length);
-  if (!['index.html', 'studio.js', 'studio.css', 'preview.js', 'morph.js'].includes(name)) {
+  if (!isStudioAsset(name)) {
     json(response, 404, { error: 'Not found' });
     return;
   }
@@ -253,6 +254,8 @@ function mime(file: string): string {
         gif: 'image/gif',
         pdf: 'application/pdf',
         mp4: 'video/mp4',
+        woff: 'font/woff',
+        woff2: 'font/woff2',
       } as Record<string, string>
     )[extension] ?? 'application/octet-stream'
   );

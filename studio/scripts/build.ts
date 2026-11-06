@@ -19,6 +19,9 @@ await build({
   jsx: 'automatic',
   sourcemap: true,
   define: { 'process.env.NODE_ENV': '"production"' },
+  // The UI fonts (main.tsx) ship beside studio.css, in dist/fonts.
+  loader: { '.woff2': 'file', '.woff': 'file' },
+  assetNames: 'fonts/[name]-[hash]',
   plugins: [browserBoundary],
 });
 await build({

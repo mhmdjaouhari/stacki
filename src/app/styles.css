@@ -4739,7 +4739,7 @@ body > .embed-editor_provenance {
   color: var(--text-faint);
 }
 .hint-text code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 11px;
   padding: 1px 4px;
   border-radius: 4px;
@@ -4803,7 +4803,7 @@ body > .embed-editor_provenance {
   overflow-y: auto;
   border-radius: 6px;
   background: var(--bg-input);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--mono);
   font-size: 11px;
   line-height: 1.7;
   color: var(--text-dim);
@@ -7999,7 +7999,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
 }
 .history-row-hash {
   color: var(--text-faint);
-  font-family: monospace;
+  font-family: var(--mono);
   font-size: 9px;
 }
 .history-subject-line {
