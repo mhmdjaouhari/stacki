@@ -2,7 +2,15 @@
 
 The editor's AI panel supports up to 20 local chats, separate drafts and model choices, and three simultaneous requests. Chat history and image previews are saved in IndexedDB on this browser. Each chat retains the latest 40 messages; requests include up to 12 recent messages. Switching editor panels does not stop a request. Reloading interrupts it and displays a recovery message.
 
-Use the chat title menu to switch or delete chats, or the plus button to start another. Enter sends; Shift+Enter inserts a newline. Stop cancels a pending response. Source changes remain proposals until **Apply to draft** is selected, and stale proposals cannot overwrite newer changes. Proposals expire on the server after 15 minutes or a server restart.
+Use the chat title menu to switch or delete chats (arrow keys, Enter and Escape work in it), or the plus button to start another. A dot on the title shows that another chat is working. Enter sends; Shift+Enter inserts a newline. Stop cancels a pending response. Source changes remain proposals until **Apply to draft** is selected, and stale proposals cannot overwrite newer changes. Proposals expire on the server after 15 minutes or a server restart.
+
+## Reading a change
+
+Each proposal shows its files with lines added and removed, and the changed lines with three lines of context. A file whose change can no longer apply shows why, and blocks **Apply to draft**. **Review changes** opens the whole files over the canvas, unified or side by side, with unchanged stretches collapsed; Apply and Discard work there too, and Escape closes it. An applied change keeps its diff under the outcome, and **Review** shows it, next to Undo or Redo.
+
+## What the model sees
+
+Besides the prompt and the current file, each request carries an outline of the text the canvas page renders (so values from a CMS or site settings are visible), what the file's `await call()` data returns, and the selected element's source; the composer shows the selection next to the file name. A site owner can write `.stacki/ai.md` with guidance for this site, such as "the home title comes from the CMS settings; change the layout, not the text". It is the only project file the model takes as instructions, and is read up to 8000 characters.
 
 ## Provider configuration
 
@@ -22,4 +30,4 @@ The microphone uses the browser's Web Speech recognition service and inserts dic
 
 ## Validation
 
-`npm run verify` runs the repository checks. With a draft Studio running, `npx tsx test/ai.browser.ts` checks chat switching, separate drafts, image preparation and removal, browser persistence, and the mobile composer without sending requests to a paid model. Actual model quality, model-specific image support, and live microphone transcription require verification with the deployed provider and browser.
+`npm run verify` runs the repository checks. With a draft Studio running, `npx tsx test/ai.browser.ts` checks chat switching, separate drafts, image preparation and removal, browser persistence, the background-chat dot, the compact diff, the review overlay, and the mobile composer without sending requests to a paid model. Actual model quality, model-specific image support, and live microphone transcription require verification with the deployed provider and browser.

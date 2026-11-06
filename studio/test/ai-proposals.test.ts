@@ -167,6 +167,44 @@ test('a proposal carries a line diff per file, and a change that cannot apply sh
   }
 });
 
+test('the review gets whole files: from a live proposal, then from the applied record', async () => {
+  const setup = await fixture([proposal({ file: PAGE, before: '<h1>Welcome</h1>', after: '<h1>Hello</h1>' })]);
+  try {
+    const reply = record(await setup.store.create(request({ model: 'deepseek-v4-flash' })));
+    const id = String(reply['id']);
+    const original = '<h1>Welcome</h1>\n<p>Intro</p>\n';
+    const changed = '<h1>Hello</h1>\n<p>Intro</p>\n';
+    assert.deepEqual(await setup.store.proposalFile(id, PAGE), { file: PAGE, previous: original, next: changed });
+    await assert.rejects(setup.store.proposalFile(id, ABOUT), /not part of the proposal/);
+    await assert.rejects(setup.store.proposalFile('unknown', PAGE), /expired/);
+    await assert.rejects(setup.store.proposalFile(id, '../secret.astro'), /Invalid project path/);
+    const applied = record(await setup.store.apply({ id }));
+    const changes = applied['changes'];
+    assert.ok(Array.isArray(changes));
+    const first: unknown = changes.at(0);
+    await assert.rejects(setup.store.proposalFile(id, PAGE), /expired/);
+    // Edits made since the change show on both sides; only the change differs.
+    await setup.write(PAGE, `${changed}<footer>Later</footer>\n`);
+    assert.deepEqual(await setup.store.changeFile({ change: first, state: 'applied' }), {
+      file: PAGE,
+      previous: `${original}<footer>Later</footer>\n`,
+      next: `${changed}<footer>Later</footer>\n`,
+    });
+    await setup.store.revert({ direction: 'undo', changes });
+    assert.deepEqual(await setup.store.changeFile({ change: first, state: 'undone' }), {
+      file: PAGE,
+      previous: `${original}<footer>Later</footer>\n`,
+      next: `${changed}<footer>Later</footer>\n`,
+    });
+    // The changed region is gone: the whole file can't be shown, and the reason says so.
+    await setup.write(PAGE, '<h1>Rewritten</h1>\n');
+    await assert.rejects(setup.store.changeFile({ change: first, state: 'undone' }), /changed since/);
+    await assert.rejects(setup.store.changeFile({ change: first, state: 'sideways' }), /Invalid change record/);
+  } finally {
+    await setup.close();
+  }
+});
+
 test('an applied change undoes and redoes on disk, and a stale record changes nothing', async () => {
   const setup = await fixture([proposal({ file: PAGE, before: '<h1>Welcome</h1>', after: '<h1>Hello there</h1>' })]);
   try {

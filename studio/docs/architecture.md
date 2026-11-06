@@ -51,7 +51,7 @@ While the studio is open, GitHub source changes are checked at most once per min
 
 ## AI
 
-The provider receives the user's prompt, the current file, a source-file inventory, and requested source files. It can read up to five additional rounds and propose up to twenty files. Total context, output size, request duration, and pending proposals are bounded. The UI displays exact before/after replacements. Applying a proposal rechecks current source, validates Astro markup/JSON, and runs through the project coordinator. A failed storage operation attempts recovery and reports any recovery failure.
+The provider receives the user's prompt, the current file, a source-file inventory, and requested source files. With the dev server running, the first message also carries, as data: an outline of the text the canvas page renders, samples of the file's frontmatter data calls, and the source of the selected element (`src/features/ai/aiContext.ts`). `.stacki/ai.md`, when present, is sent as the site owner's guidance; it is the only project text treated as instructions. It can read up to five additional rounds and propose up to twenty files. Total context, output size, request duration, and pending proposals are bounded. Each proposal carries a capped line diff per file (`lineDiff.ts`), shown inline in the chat; the review overlay fetches whole files on demand, from the live proposal or from an applied change's undo record and the current file. Applying a proposal rechecks current source, validates Astro markup/JSON, and runs through the project coordinator. A failed storage operation attempts recovery and reports any recovery failure.
 
 The default has no AI provider and incurs no AI token charges. A compatible model served locally can omit `AI_API_KEY`. Hosted deployments need an endpoint the Worker can reach; self-hosting still has compute costs. This implementation does not reuse a ChatGPT subscription or automate a consumer chat website.
 
@@ -62,6 +62,7 @@ The default has no AI provider and incurs no AI token charges. A compatible mode
 - ws: the Node preview server's collaboration transport.
 - Stacki native navigator drag/drop plus a touch adapter; dnd-kit remains for collection list sorting.
 - CodeMirror and its language packages/Lezer: Astro, CSS, JavaScript, and Markdown code fields.
+- `@codemirror/merge`: the AI chat's review of a change, unified or side by side, with unchanged stretches collapsed. The platform has no diff view, and Stacki's history renderer shows patch rows without highlighting or side by side. It is MIT, about 200 kB unpacked, and depends only on CodeMirror packages already listed; the view is created only while a review is open.
 - PostCSS, postcss-selector-parser, known-css-properties: Stacki stylesheet editing, selectors and CSS completion.
 - Astro compiler: validation of AI-authored Astro markup.
 - TypeScript: safe parsing of imported type declarations without executing them.

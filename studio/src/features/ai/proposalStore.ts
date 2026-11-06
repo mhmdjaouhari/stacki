@@ -10,6 +10,13 @@ import type { createRooms } from '../collaboration/rooms';
 import { changeFiles } from '../project/changeFiles';
 import { record, sourcePath, string } from '../../shared/validation';
 
+/** A file's whole source before and after a change; `previous` is null when the change creates it. */
+export interface ReviewSources {
+  readonly file: string;
+  readonly previous: string | null;
+  readonly next: string;
+}
+
 export class ProposalStore {
   private readonly proposals = new Map<string, { proposal: Proposal; expires: number }>();
   constructor(
@@ -100,6 +107,42 @@ export class ProposalStore {
     this.proposals.delete(id);
     // Without a record (too large to send back), the change is applied but can't be undone from the chat.
     return changes ? { applied: true, changes } : { applied: true };
+  }
+  /** One file of a live proposal, whole, before and after: for the review, which diffs more than the chat's hunks show. */
+  async proposalFile(id: string, value: unknown): Promise<ReviewSources> {
+    const file = sourcePath(value);
+    const entry = this.proposals.get(string(id, 100));
+    if (!entry || entry.expires < Date.now()) {
+      throw new Error('Proposal expired. Generate it again.');
+    }
+    const change = entry.proposal.changes.find((candidate) => candidate.file === file);
+    if (!change) {
+      throw new Error('This file is not part of the proposal');
+    }
+    return { file, previous: (await optionalSource(this.root, file)) ?? null, next: await proposedSource(this.root, change) };
+  }
+  /**
+   * One file of an applied change, whole, as it was before the change and after it. The current
+   * file is one side; the record undone or redone on it gives the other, so edits made since the
+   * change show on both sides and only the change itself differs.
+   */
+  async changeFile(value: unknown): Promise<ReviewSources> {
+    const input = record(value);
+    const [change] = parseReversibleChanges([input['change']]);
+    const state = input['state'];
+    if (!change || (state !== 'applied' && state !== 'undone')) {
+      throw new Error('Invalid change record');
+    }
+    const current = await optionalSource(this.root, change.file);
+    const step = revertStep(current, change, state === 'applied' ? 'undo' : 'redo');
+    if (step.kind === 'conflict') {
+      throw new Error(`${change.file} changed since, so this change can't be shown in the whole file.`);
+    }
+    const [previous, next] = state === 'applied' ? [step.source, current] : [current, step.source];
+    if (next === undefined) {
+      throw new Error('Invalid change record');
+    }
+    return { file: change.file, previous: previous ?? null, next };
   }
   /** Undo or redo an applied change: every file, or none when any file conflicts. */
   async revert(value: unknown) {
