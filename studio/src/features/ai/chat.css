@@ -481,6 +481,16 @@ details[open] > .chat-diff-summary::before,
     flex-shrink: 0;
   }
 }
+.chat-selection-label {
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--text);
+}
 .chat-draft-label {
   margin-left: auto;
   border: 0.0625rem solid var(--border);

@@ -129,7 +129,7 @@ async function verifyBackgroundDot(page: Page) {
   await page.getByRole('button', { name: 'AI chat', exact: true }).click();
   const prompt = page.getByLabel('AI prompt', { exact: true });
   await prompt.fill('Make the hero bigger');
-  await prompt.press('Enter');
+  await sendWhenReady(page);
   await page.locator('.chat-working').waitFor();
   const dot = page.locator('.chat-switcher-button .chat-running-dot');
   assert.equal(await dot.count(), 0, 'the active chat is not a background chat');
@@ -173,7 +173,11 @@ async function verifyCompactDiff(page: Page) {
   ];
   const changes = diffs.map((diff) => ({ file: diff.file, before: '', after: 'x' }));
   await page.route('**/studio/api/ai/models', (route) => route.fulfill({ json: { models: ['test-model'], defaultModel: 'test-model' } }));
-  await page.route('**/studio/api/ai/propose', (route) => route.fulfill({ json: { id: 'diff-proposal', summary: 'Retitled the page.', changes, diffs } }));
+  const sent: string[] = [];
+  await page.route('**/studio/api/ai/propose', (route) => {
+    sent.push(route.request().postData() ?? '');
+    return route.fulfill({ json: { id: 'diff-proposal', summary: 'Retitled the page.', changes, diffs } });
+  });
   await page.route('**/studio/api/ai/apply', (route) =>
     route.fulfill({ json: { applied: true, changes: [{ file: 'src/pages/index.astro', before: 'Welcome', after: 'Hello there', created: false }] } }),
   );
@@ -186,9 +190,11 @@ async function verifyCompactDiff(page: Page) {
     .click();
   const prompt = page.getByLabel('AI prompt', { exact: true });
   await prompt.fill('Retitle the page');
-  await prompt.press('Enter');
+  await sendWhenReady(page);
   const proposal = page.locator('.chat-proposal');
   await proposal.waitFor();
+  // The canvas page goes with the request, so the server can render it for the model.
+  assert.match(sent[0] ?? '', /"page":"\/"/);
   assert.equal(await proposal.locator('.chat-diff-line.is-added:visible').count(), 2, 'the first file opens by default, the second stays closed');
   assert.equal(await proposal.getByLabel('3 added, 1 removed', { exact: true }).count(), 1);
   assert.equal(await proposal.locator('.chat-diff-number').first().textContent(), '4');
@@ -208,6 +214,13 @@ async function verifyCompactDiff(page: Page) {
   await applied.locator('> summary').click();
   assert.equal(await applied.locator('.chat-diff-line.is-added:visible').count(), 2);
   await page.unrouteAll({ behavior: 'ignoreErrors' });
+}
+// Send is disabled until the chat's model is in the loaded list, and Enter before then is
+// ignored. On a server with a provider, the chat may have saved the server's model before the
+// routed list replaced it, so the test picks the routed model.
+async function sendWhenReady(page: Page) {
+  await page.locator('.chat-model select').first().selectOption('test-model');
+  await page.locator('button[aria-label="Send message"]:not([disabled])').click();
 }
 async function verifyImages(page: Page) {
   const image = await page.screenshot({ clip: { x: 0, y: 0, width: 100, height: 100 } });

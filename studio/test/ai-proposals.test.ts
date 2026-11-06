@@ -110,6 +110,34 @@ test('only an effort the chosen model lists reaches the provider', async () => {
   }
 });
 
+test('the provider gets the rendered page, the selection and the owner guidance', async () => {
+  const setup = await fixture();
+  try {
+    await mkdir(path.join(setup.root, '.stacki'), { recursive: true });
+    await setup.write('.stacki/ai.md', 'The title comes from the CMS settings.\n');
+    const sources = { render: () => Promise.resolve('<h1>InSyndic</h1>'), sample: () => Promise.resolve({ value: null }) };
+    await setup.store.create(request({ model: 'deepseek-v4-flash', page: '/', selection: { start: 0, end: 16, label: '<h1>' } }), undefined, sources);
+    const messages = setup.bodies[0]?.['messages'];
+    assert.ok(Array.isArray(messages));
+    const [system, guidance, user] = messages.map((message: unknown) => String(record(message)['content']));
+    assert.match(system ?? '', /"page" is an outline/);
+    assert.match(guidance ?? '', /site owner wrote these instructions[\s\S]*The title comes from the CMS settings\./);
+    assert.deepEqual(record(JSON.parse(user ?? '{}'))['context'], {
+      page: { path: '/', outline: 'h1: InSyndic' },
+      selection: { label: '<h1>', lines: '1', source: '<h1>Welcome</h1>' },
+    });
+    // Without the dev server's sources and the owner's file, the request is as before.
+    await setup.write('.stacki/ai.md', '');
+    await setup.store.create(request({ model: 'deepseek-v4-flash' }));
+    const plain = setup.bodies[1]?.['messages'];
+    assert.ok(Array.isArray(plain));
+    assert.equal(plain.length, 2);
+    assert.equal('context' in record(JSON.parse(String(record(plain[1])['content']))), false);
+  } finally {
+    await setup.close();
+  }
+});
+
 test('a proposal carries a line diff per file, and a change that cannot apply shows why', async () => {
   const setup = await fixture([
     { read: [ABOUT] },

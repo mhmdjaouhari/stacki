@@ -25,6 +25,7 @@ import { createRooms } from '../features/collaboration/rooms';
 import { safePath, preparePath, readSource } from '../features/project/projectServer';
 import { filePath, sourcePath, string, record, MAX_SOURCE } from '../shared/validation';
 import { featureRoutes } from './featureRoutes';
+import { fetchRenderedPage } from '../features/ai/aiContext';
 import { saveAsset } from '../features/storage/assetStorage';
 import { interceptBrowserReloads } from '../features/preview/browserReloads';
 
@@ -163,7 +164,8 @@ async function handleRequestInWorkspace(
     json(response, 200, { kind: 'local', editing: options.editing ?? 'draft' });
     return;
   }
-  if (await features(request, response, url.pathname, () => body(request))) {
+  const sources = { render: (page: string) => fetchRenderedPage(options.port, page), sample: catalogs.values };
+  if (await features(request, response, url.pathname, sources, () => body(request))) {
     return;
   }
   if (url.pathname === '/studio/api/preview-url' && request.method === 'GET') {
