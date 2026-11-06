@@ -13,6 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createRooms } from '../src/features/collaboration/rooms';
 import { ProposalStore } from '../src/features/ai/proposalStore';
+import { aiRoute } from '../src/features/ai/aiRoutes';
 import { record } from '../src/shared/validation';
 
 const ENVIRONMENT = ['AI_BASE_URL', 'AI_MODEL', 'AI_MODELS', 'AI_EFFORTS', 'AI_API_KEY', 'AI_MAX_TOKENS'] as const;
@@ -106,6 +107,59 @@ test('only an effort the chosen model lists reaches the provider', async () => {
     }
     assert.equal(setup.bodies.length, 2);
   } finally {
+    await setup.close();
+  }
+});
+
+test('a reply records its steps and how it was made, and streams them as server-sent events', async () => {
+  const edit = proposal({ file: ABOUT, before: '<h1>About</h1>', after: '<h1>About us</h1>' });
+  // Two runs of the same exchange: one through the store, one through the route.
+  const setup = await fixture([{ read: [ABOUT] }, edit, { read: [ABOUT] }, edit]);
+  const server = createServer((request, response) => {
+    let body = '';
+    request.on('data', (chunk: Buffer) => {
+      body += chunk.toString();
+    });
+    request.on('end', () => {
+      void aiRoute(setup.store, undefined, request, response, '/studio/api/ai/propose', () => Promise.resolve(body));
+    });
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  try {
+    const streamed: string[] = [];
+    const reply = record(
+      await setup.store.create(request({ model: 'deepseek-v4-flash', effort: 'high' }), undefined, undefined, (step) => streamed.push(step.label)),
+    );
+    const steps = reply['steps'];
+    assert.ok(Array.isArray(steps));
+    assert.deepEqual(
+      steps.map((step: unknown) => record(step)['label']),
+      streamed,
+    );
+    assert.deepEqual(streamed, ['Thinking about the request', 'Read pages/about.astro', 'Thinking', 'Checked 1 changed file: no problems']);
+    const meta = record(reply['meta']);
+    assert.deepEqual([meta['model'], meta['effort'], typeof meta['durationMs']], ['deepseek-v4-flash', 'high', 'number']);
+    // The same request over the route, as a stream: steps, then the reply.
+    const response = await fetch(`http://127.0.0.1:${address.port}/studio/api/ai/propose`, {
+      method: 'POST',
+      headers: { Accept: 'text/event-stream' },
+      body: JSON.stringify(request({ model: 'deepseek-v4-flash' })),
+    });
+    assert.match(response.headers.get('content-type') ?? '', /text\/event-stream/);
+    const events = [...(await response.text()).matchAll(/^event: (\w+)$/gm)].map((match) => match[1]);
+    assert.deepEqual(events, ['step', 'step', 'step', 'step', 'result']);
+    // A failure after the headers went out is an event too.
+    const failed = await fetch(`http://127.0.0.1:${address.port}/studio/api/ai/propose`, {
+      method: 'POST',
+      headers: { Accept: 'text/event-stream' },
+      body: JSON.stringify(request({ model: 'unknown-model' })),
+    });
+    assert.match(await failed.text(), /event: error\ndata: \{"error":"Choose a configured AI model"\}/);
+  } finally {
+    server.close();
     await setup.close();
   }
 });

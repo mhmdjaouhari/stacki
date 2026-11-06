@@ -38,12 +38,7 @@ export function ChatMessages({ chat, refresh }: { readonly chat: ChatThread; rea
       {chat.messages.map((message) => (
         <MessageItem key={message.id} chat={chat} message={message} refresh={refresh} />
       ))}
-      {chat.status !== 'idle' && (
-        <div className="chat-working" role="status">
-          <span />
-          {chat.status === 'working' ? 'Thinking through your request…' : 'Applying changes to the draft…'}
-        </div>
-      )}
+      {chat.status !== 'idle' && <WorkingStatus chat={chat} />}
       {chat.error && <ErrorToast message={chat.error} />}
       {unread && (
         <button
@@ -58,6 +53,64 @@ export function ChatMessages({ chat, refresh }: { readonly chat: ChatThread; rea
         </button>
       )}
     </div>
+  );
+}
+
+// The step the reply is on, and how long it has run: a reasoning model can think for minutes,
+// and a moving label and clock say it is still working.
+function WorkingStatus({ chat }: { readonly chat: ChatThread }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  if (chat.status === 'applying') {
+    return (
+      <div className="chat-working" role="status">
+        <span />
+        Applying changes to the draft…
+      </div>
+    );
+  }
+  const progress = chat.progress;
+  return (
+    <div className="chat-working" role="status">
+      <span />
+      <span className="chat-working-label">{progress ? `${progress.label}…` : 'Thinking through your request…'}</span>
+      {progress && <span className="chat-working-time">{formatDuration(now - progress.startedAt)}</span>}
+    </div>
+  );
+}
+
+function formatDuration(durationMs: number): string {
+  const seconds = Math.max(0, Math.round(durationMs / 1000));
+  return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
+}
+
+// Under a reply: the model, effort and time it took, and the steps it went through, collapsed.
+function ReplyDetails({ message }: { readonly message: ChatMessage }) {
+  const { meta, steps } = message;
+  if (!meta && !steps?.length) {
+    return null;
+  }
+  const summary = meta ? [meta.model, meta.effort, formatDuration(meta.durationMs)].filter(Boolean).join(' · ') : '';
+  return (
+    <details className="chat-reply-details">
+      <summary>
+        {summary}
+        {steps?.length ? `${summary ? ' · ' : ''}${steps.length} step${steps.length === 1 ? '' : 's'}` : ''}
+      </summary>
+      {steps?.length ? (
+        <ol>
+          {steps.map((step, index) => (
+            <li key={index}>
+              <span>{formatDuration(step.atMs)}</span>
+              {step.label}
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </details>
   );
 }
 
@@ -84,6 +137,7 @@ function MessageItem({ chat, message, refresh }: ItemProps) {
         </div>
       )}
       {message.content && (message.role === 'assistant' ? <ChatText text={message.content} /> : <div className="chat-message-text">{message.content}</div>)}
+      {message.role === 'assistant' && <ReplyDetails message={message} />}
       {message.proposal && review && <ProposalCard chat={chat} message={message} diffs={review.diffs} refresh={refresh} review={openReview} />}
       {message.outcome && <p className="chat-outcome">{message.outcome}</p>}
       {message.diffs && <AppliedDiff diffs={message.diffs} review={openReview} />}
