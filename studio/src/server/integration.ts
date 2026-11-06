@@ -26,6 +26,8 @@ import { safePath, preparePath, readSource } from '../features/project/projectSe
 import { filePath, sourcePath, string, record, MAX_SOURCE } from '../shared/validation';
 import { featureRoutes } from './featureRoutes';
 import { fetchRenderedPage } from '../features/ai/aiContext';
+import { parseAiExtensions, type AiExtensions } from '../features/ai/aiExtensions';
+import { BUILT_IN_TOOL_NAMES } from '../features/ai/agentTools';
 import { saveAsset } from '../features/storage/assetStorage';
 import { interceptBrowserReloads } from '../features/preview/browserReloads';
 
@@ -34,12 +36,16 @@ interface Options {
   readonly assets: string;
   readonly port: number;
   readonly editing?: 'source' | 'draft';
+  /** Context and read-only tools a host integration adds to the AI chat (aiExtensions.ts). */
+  readonly ai?: AiExtensions;
 }
 interface PreviewOptions extends Options {
   readonly trailingSlash: 'always' | 'never' | 'ignore';
 }
 import type { ViteDevServer, Plugin } from 'vite';
-export default function studio(options: Options): AstroIntegration {
+export default function studio(input: Options): AstroIntegration {
+  const ai = parseAiExtensions(input.ai, BUILT_IN_TOOL_NAMES);
+  const options: Options = { ...input, ...(ai ? { ai } : {}) };
   let prioritizeRequests = () => {};
   const rooms = createRooms(options.root);
   const features = featureRoutes(options.root, rooms);
@@ -164,7 +170,11 @@ async function handleRequestInWorkspace(
     json(response, 200, { kind: 'local', editing: options.editing ?? 'draft' });
     return;
   }
-  const sources = { render: (page: string) => fetchRenderedPage(options.port, page), sample: catalogs.values };
+  const sources = {
+    render: (page: string) => fetchRenderedPage(options.port, page),
+    sample: catalogs.values,
+    ...(options.ai ? { extensions: options.ai } : {}),
+  };
   if (await features(request, response, url.pathname, sources, () => body(request))) {
     return;
   }

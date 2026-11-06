@@ -18,6 +18,8 @@ export interface ModelConfiguration {
   readonly defaultModel: string;
   /** Reasoning-effort levels per model, in display order. A model without an entry takes no effort setting. */
   readonly efforts: Readonly<Record<string, readonly string[]>>;
+  /** Models that use the provider's native tool calling; the rest use the JSON protocol. */
+  readonly tools: readonly string[];
 }
 // Providers name their effort levels differently (DeepSeek: low/high/max;
 // OpenAI: low/medium/high), so the levels come from configuration rather than
@@ -31,7 +33,7 @@ const EFFORT_LEVEL = /^[a-z][a-z0-9_-]{0,15}$/;
 export const DEFAULT_OUTPUT_TOKENS = 16_384;
 const MIN_OUTPUT_TOKENS = 1024;
 const MAX_OUTPUT_TOKENS = 393_216;
-export function modelConfiguration(model?: string, models?: string, efforts?: string): ModelConfiguration {
+export function modelConfiguration(model?: string, models?: string, efforts?: string, tools?: string): ModelConfiguration {
   const values = [
     ...new Set(
       [model, ...(models ?? '').split(',')]
@@ -43,7 +45,26 @@ export function modelConfiguration(model?: string, models?: string, efforts?: st
   if (values.length > 30) {
     throw new Error('Configure at most 30 AI models');
   }
-  return { models: values, defaultModel: model?.trim() ?? '', efforts: effortConfiguration(efforts, values) };
+  return { models: values, defaultModel: model?.trim() ?? '', efforts: effortConfiguration(efforts, values), tools: toolConfiguration(tools, values) };
+}
+/**
+ * AI_TOOL_MODELS lists the models that get native tool calling: `deepseek-v4-flash, glm-5.2`.
+ * Opt-in, because a provider or proxy that doesn't support the `tools` field rejects the request.
+ */
+export function toolConfiguration(value: string | undefined, models: readonly string[]): readonly string[] {
+  const names = [
+    ...new Set(
+      (value ?? '')
+        .split(',')
+        .map((name) => name.trim())
+        .filter(Boolean),
+    ),
+  ];
+  const unknown = names.find((name) => !models.includes(name));
+  if (unknown !== undefined) {
+    throw new Error(`AI_TOOL_MODELS names a model that is not configured: ${unknown.slice(0, 160)}`);
+  }
+  return names;
 }
 /** AI_EFFORTS lists levels per model: `deepseek-v4-flash=low,high,max; gpt-6-luna=low,medium,high`. */
 export function effortConfiguration(value: string | undefined, models: readonly string[]): ModelConfiguration['efforts'] {
@@ -110,7 +131,18 @@ export function parseModels(value: unknown): ModelConfiguration {
     models,
     defaultModel: string(input['defaultModel'], 160),
     efforts: parseEfforts(input['efforts'], models),
+    tools: parseToolModels(input['tools'], models),
   };
+}
+// Older backends send no tool models; every model then uses the JSON protocol.
+function parseToolModels(value: unknown, models: readonly string[]): readonly string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.some((model) => typeof model !== 'string' || !models.includes(model))) {
+    throw new Error('Invalid model configuration');
+  }
+  return value.filter((model): model is string => typeof model === 'string');
 }
 // Older backends send no efforts; every model then takes no effort setting.
 function parseEfforts(value: unknown, models: readonly string[]): ModelConfiguration['efforts'] {

@@ -2,17 +2,38 @@
 
 The editor's AI panel supports up to 20 local chats, separate drafts and model choices, and three simultaneous requests. Chat history and image previews are saved in IndexedDB on this browser. Each chat retains the latest 40 messages; requests include up to 12 recent messages. Switching editor panels does not stop a request. Reloading interrupts it and displays a recovery message.
 
-Use the chat title menu to switch or delete chats, or the plus button to start another. Enter sends; Shift+Enter inserts a newline. Stop cancels a pending response. Source changes remain proposals until **Apply to draft** is selected, and stale proposals cannot overwrite newer changes. Proposals expire on the server after 15 minutes or a server restart.
+Use the chat title menu to switch or delete chats (arrow keys, Enter and Escape work in it), or the plus button to start another. A dot on the title shows that another chat is working. Enter sends; Shift+Enter inserts a newline. Stop cancels a pending response. Source changes remain proposals until **Apply to draft** is selected, and stale proposals cannot overwrite newer changes. Proposals expire on the server after 15 minutes or a server restart.
+
+## Reading a change
+
+Each proposal shows its files with lines added and removed, and the changed lines with three lines of context. A file whose change can no longer apply shows why, and blocks **Apply to draft**. **Review changes** opens the whole files over the canvas, unified or side by side, with unchanged stretches collapsed; Apply and Discard work there too, and Escape closes it. An applied change keeps its diff under the outcome, and **Review** shows it, next to Undo or Redo.
+
+## What the model sees
+
+Besides the prompt and the current file, each request carries an outline of the text the canvas page renders (so values from a CMS or site settings are visible), what the file's `await call()` data returns, and the selected element's source; the composer shows the selection next to the file name. A site owner can write `.stacki/ai.md` with guidance for this site, such as "the home title comes from the CMS settings; change the layout, not the text". It is the only project file the model takes as instructions, and is read up to 8000 characters.
 
 ## Provider configuration
 
 Set `AI_BASE_URL`, `AI_MODEL`, and optionally `AI_API_KEY` on the local server or hosted Worker. Add a comma-separated `AI_MODELS` value for additional choices on that same provider. The default model is always included. The server and hosted gateway both enforce this allowlist. Keys stay on the server. A model must support the OpenAI-compatible `/chat/completions` interface; image requests require a vision-capable model. Nothing is enabled or billed by default.
+
+`AI_EFFORTS` sets reasoning-effort levels per model (`deepseek-v4-flash=low,high,max; gpt-6-luna=low,medium,high`), offered next to the model and sent as `reasoning_effort`. `AI_TOOL_MODELS` lists the models that use the provider's native tool calling (`deepseek-v4-flash, glm-5.2`). Those models read files, search the source, render any page and sample a page's data through read-only tools, and can be given more tools by the host (below). Other models use a JSON protocol that can only read files. Tool calling is opt-in because a provider or proxy without support for the `tools` field rejects the request.
+
+Every proposal is checked before it is shown. `.astro` files go through the Astro compiler and their frontmatter and expressions through TypeScript's syntax check; scripts, JSON and CSS go through their parsers; and each change must apply exactly once. Problems go back to the model for up to two rounds of fixes, and whatever remains is shown above the proposal. The check reads syntax only, not types or imports.
 
 For example, with your own local model server:
 
 ```sh
 AI_BASE_URL=http://127.0.0.1:11434/v1 AI_MODEL=your-default-model AI_MODELS=your-other-model npm run dev
 ```
+
+## Extending the chat from a host integration
+
+A host that runs Studio's integration itself can pass `studio({ ..., ai: { context, tools } })` (`src/features/ai/aiExtensions.ts`). This is how a CMS adds what Studio can't know, such as its content model or entries, while Studio stays CMS-neutral.
+
+- `context`: functions `({ file, page, signal }) => Promise<{ title, content }[]>`. They are called for every request, and their sections go to the model as data under `host`.
+- `tools`: `{ name, description, parameters, run(input, { signal }) }`, offered to `AI_TOOL_MODELS` models next to the built-in ones. `parameters` is a JSON Schema object, and `run` parses its own input.
+
+Both must be read-only. Each call runs under a 15-second deadline. Results are cut at 50,000 characters for a tool and 8000 for a section, and a failure goes back to the model as an error rather than failing the request. Names and shapes are checked when Studio starts.
 
 ## Images and voice
 
@@ -22,4 +43,4 @@ The microphone uses the browser's Web Speech recognition service and inserts dic
 
 ## Validation
 
-`npm run verify` runs the repository checks. With a draft Studio running, `npx tsx test/ai.browser.ts` checks chat switching, separate drafts, image preparation and removal, browser persistence, and the mobile composer without sending requests to a paid model. Actual model quality, model-specific image support, and live microphone transcription require verification with the deployed provider and browser.
+`npm run verify` runs the repository checks. With a draft Studio running, `npx tsx test/ai.browser.ts` checks chat switching, separate drafts, image preparation and removal, browser persistence, the background-chat dot, the compact diff, the review overlay, and the mobile composer without sending requests to a paid model. Actual model quality, model-specific image support, and live microphone transcription require verification with the deployed provider and browser.

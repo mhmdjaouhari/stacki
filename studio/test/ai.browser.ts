@@ -35,7 +35,7 @@ try {
   await verifyCompactDiff(page);
   assert.deepEqual(errors, []);
   console.log(
-    'Chat drafts, switching, image preparation/removal, reload persistence, single transcript across renders, the chat list by keyboard, the background-chat dot, the compact proposal diff, and mobile composer passed. Live AI and microphone recognition require a configured provider and an interactive microphone.',
+    'Chat drafts, switching, image preparation/removal, reload persistence, single transcript across renders, the chat list by keyboard, the background-chat dot, the compact proposal diff, the review overlay, and mobile composer passed. Live AI and microphone recognition require a configured provider and an interactive microphone.',
   );
 } finally {
   await browser.close();
@@ -207,6 +207,7 @@ async function verifyCompactDiff(page: Page) {
     return { scrolling, wide: transcript.scrollWidth > transcript.clientWidth };
   })()`);
   assert.deepEqual(layout, { scrolling: 0, wide: false });
+  await verifyReview(page);
   await page.getByRole('button', { name: 'Apply to draft', exact: true }).click();
   const applied = page.locator('.chat-applied-diff');
   await applied.waitFor();
@@ -214,6 +215,24 @@ async function verifyCompactDiff(page: Page) {
   await applied.locator('> summary').click();
   assert.equal(await applied.locator('.chat-diff-line.is-added:visible').count(), 2);
   await page.unrouteAll({ behavior: 'ignoreErrors' });
+}
+// The review overlay shows the whole file from the server, unified or side by side, and closes
+// on Escape, leaving the proposal to apply. A route stands in for the whole-file request.
+async function verifyReview(page: Page) {
+  await page.route('**/studio/api/ai/proposals/diff-proposal/files?*', (route) =>
+    route.fulfill({
+      json: { file: 'src/pages/index.astro', previous: '<main>\n  <h1>Welcome</h1>\n</main>\n', next: '<main>\n  <h1>Hello there</h1>\n</main>\n' },
+    }),
+  );
+  await page.getByRole('button', { name: 'Review changes', exact: true }).click();
+  const review = page.getByRole('dialog', { name: 'Proposed changes' });
+  await review.locator('.cm-editor').waitFor();
+  assert.match((await review.locator('.cm-content').textContent()) ?? '', /Hello there/);
+  assert.equal(await review.getByRole('button', { name: 'Apply to draft', exact: true }).count(), 1);
+  await review.getByRole('button', { name: 'Side by side', exact: true }).click();
+  assert.equal(await review.locator('.cm-mergeView .cm-editor').count(), 2);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.getByRole('dialog').count(), 0);
 }
 // Send is disabled until the chat's model is in the loaded list, and Enter before then is
 // ignored. On a server with a provider, the chat may have saved the server's model before the
