@@ -7,6 +7,7 @@ import { boundedJSON, EXTENSION_LIMITS, withDeadline, type AiTool } from './aiEx
 import { checkProposal } from './proposalSources';
 import { completion, parseProposal, toolCallMessage, type Message, type Options, type Proposal, type ToolDefinition } from './completions';
 import { parseAnswer, type ToolCall } from './replies';
+import { checkLabel, fileList, type Progress } from './progress';
 import type { Problem } from './checks';
 
 // The agent with native tool calling. The model reads what it needs through
@@ -34,6 +35,7 @@ export interface ToolLoopInput {
   readonly read: Set<string>;
   readonly sources: ContextSources | undefined;
   readonly signal: AbortSignal | undefined;
+  readonly progress: Progress;
 }
 
 export const BUILT_IN_TOOLS: readonly ToolDefinition[] = [
@@ -70,6 +72,7 @@ export async function proposeWithTools(options: Options, messages: Message[], in
   let calls = 0;
   let fixRounds = 0;
   for (let round = 0; round < TOOL_LOOP_LIMITS.roundsMax; round++) {
+    input.progress(round ? 'Thinking' : 'Thinking about the request');
     const turn = await completion(options, messages, input.signal, definitions);
     if (turn.kind === 'reply') {
       // No tool call: an answer in prose, or a proposal written as JSON by a model that ignored the tool.
@@ -97,6 +100,7 @@ export async function proposeWithTools(options: Options, messages: Message[], in
         fixRounds += outcome.kind === 'fix' ? 1 : 0;
         messages.push({ role: 'tool', tool_call_id: call.id, content: outcome.reply });
       } else {
+        input.progress(toolLabel(call));
         messages.push({ role: 'tool', tool_call_id: call.id, content: await runTool(call, input, extensions) });
       }
     }
@@ -116,6 +120,7 @@ async function proposalOutcome(call: ToolCall, input: ToolLoopInput, canFix: boo
     return { kind: 'invalid', reply: JSON.stringify({ accepted: false, error: messageOf(error) }) };
   }
   const problems = await checkProposal(input.root, proposal.changes);
+  input.progress(checkLabel(proposal.changes.length, problems.length, canFix));
   if (problems.length && canFix) {
     const instruction =
       'The proposal was not accepted. Fix these problems (read the files again if they changed) and call propose_changes again with all the changes.';
@@ -207,6 +212,34 @@ async function searchSource(query: string, input: ToolLoopInput) {
     });
   }
   return matches;
+}
+
+// What a tool call is about to do, in the words the chat shows. The arguments are the model's,
+// unvalidated, so only plain strings are read from them, and the label is bounded where it is kept.
+function toolLabel(call: ToolCall): string {
+  let args: Record<string, unknown> = {};
+  try {
+    args = record(JSON.parse(call.arguments));
+  } catch {
+    // The tool itself reports malformed arguments; the label falls back to the tool's name.
+  }
+  const text = (key: string) => (typeof args[key] === 'string' ? args[key] : '');
+  switch (call.name) {
+    case 'read_file':
+      return `Read ${Array.isArray(args['paths']) ? fileList(args['paths'].filter((path): path is string => typeof path === 'string')) : 'files'}`;
+    case 'list_files':
+      return `Listed files${text('prefix') ? ` under ${text('prefix')}` : ''}`;
+    case 'search_source':
+      return `Searched for "${text('query')}"`;
+    case 'render_page':
+      return `Rendered ${text('path')}`;
+    case 'page_data':
+      return `Sampled the data of ${text('file').replace(/^src\//, '')}`;
+    case 'check_changes':
+      return 'Checked candidate changes';
+    default:
+      return `Asked ${call.name}`;
+  }
 }
 
 function problemsField(problems: readonly Problem[]): Pick<Proposal, 'problems'> {

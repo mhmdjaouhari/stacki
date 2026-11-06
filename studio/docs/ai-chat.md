@@ -4,6 +4,8 @@ The editor's AI panel supports up to 20 local chats, separate drafts and model c
 
 Use the chat title menu to switch or delete chats (arrow keys, Enter and Escape work in it), or the plus button to start another. A dot on the title shows that another chat is working. Enter sends; Shift+Enter inserts a newline. Stop cancels a pending response. Source changes remain proposals until **Apply to draft** is selected, and stale proposals cannot overwrite newer changes. Proposals expire on the server after 15 minutes or a server restart.
 
+While a reply runs, the chat shows the step it is on ("Rendered /", "Read Hero.astro", "Thinking", "Checked the proposal") and how long it has taken. The steps stream from the server as server-sent events on the same request, with a heartbeat every 15 seconds so proxies keep the stream open; proxies must pass `text/event-stream` through unbuffered. Under each reply, a collapsed line gives the model, effort and duration, and opens on the list of steps.
+
 ## Reading a change
 
 Each proposal shows its files with lines added and removed, and the changed lines with three lines of context. A file whose change can no longer apply shows why, and blocks **Apply to draft**. **Review changes** opens the whole files over the canvas, unified or side by side, with unchanged stretches collapsed; Apply and Discard work there too, and Escape closes it. An applied change keeps its diff under the outcome, and **Review** shows it, next to Undo or Redo.

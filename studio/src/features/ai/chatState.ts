@@ -30,6 +30,18 @@ export interface ChatMessage {
   readonly applied?: AppliedChange;
   /** The applied proposal's diffs, kept so the change can still be read after applying. */
   readonly diffs?: readonly FileDiff[];
+  /** How an assistant reply was made: its steps, and the model, effort and time it took. */
+  readonly steps?: readonly ReplyStep[];
+  readonly meta?: ReplyMeta;
+}
+export interface ReplyStep {
+  readonly label: string;
+  readonly atMs: number;
+}
+export interface ReplyMeta {
+  readonly model: string;
+  readonly effort?: string;
+  readonly durationMs: number;
 }
 export interface AppliedChange {
   readonly changes: readonly ReversibleChange[];
@@ -46,6 +58,8 @@ export interface ChatThread {
   readonly messages: readonly ChatMessage[];
   readonly status: 'idle' | 'working' | 'applying';
   readonly error: string;
+  /** The latest step of the reply in progress; not kept across reloads. */
+  readonly progress?: { readonly label: string; readonly startedAt: number };
 }
 interface ChatState {
   readonly threads: readonly ChatThread[];
@@ -217,7 +231,36 @@ function parseMessage(value: unknown): ChatMessage {
     ...(message['outcome'] ? { outcome: string(message['outcome'], 300) } : {}),
     ...(message['applied'] ? { applied: parseApplied(message['applied']) } : {}),
     ...(message['diffs'] ? { diffs: parseFileDiffs(message['diffs']) } : {}),
+    ...parseReplyRecord(message),
   };
+}
+/** The steps and metadata a reply carries, when it carries them (older servers and chats don't). */
+export function parseReplyRecord(input: Record<string, unknown>): Pick<ChatMessage, 'steps' | 'meta'> {
+  const steps = input['steps'];
+  const meta = input['meta'];
+  if (steps !== undefined && (!Array.isArray(steps) || steps.length > 60)) {
+    throw new Error('Invalid reply steps');
+  }
+  return {
+    ...(Array.isArray(steps) ? { steps: steps.map(parseStep) } : {}),
+    ...(meta === undefined ? {} : { meta: parseMeta(meta) }),
+  };
+}
+export function parseStep(value: unknown): ReplyStep {
+  const step = record(value);
+  const atMs = step['atMs'];
+  if (typeof atMs !== 'number' || !Number.isSafeInteger(atMs) || atMs < 0) {
+    throw new Error('Invalid reply step');
+  }
+  return { label: string(step['label'], 200), atMs };
+}
+function parseMeta(value: unknown): ReplyMeta {
+  const meta = record(value);
+  const durationMs = meta['durationMs'];
+  if (typeof durationMs !== 'number' || !Number.isSafeInteger(durationMs) || durationMs < 0) {
+    throw new Error('Invalid reply metadata');
+  }
+  return { model: string(meta['model'], 160), ...(meta['effort'] === undefined ? {} : { effort: string(meta['effort'], 16) }), durationMs };
 }
 export function parseApplied(value: unknown): AppliedChange {
   const input = record(value);

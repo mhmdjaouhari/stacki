@@ -1,6 +1,16 @@
-import { request } from '../project/projectClient';
-import { chatState, updateChat, parseProposal, parseApplied, type AppliedChange, type ChatThread, type ChatMessage } from './chatState';
-import { record } from '../../shared/validation';
+import { request, requestEvents } from '../project/projectClient';
+import {
+  chatState,
+  updateChat,
+  parseProposal,
+  parseApplied,
+  parseReplyRecord,
+  parseStep,
+  type AppliedChange,
+  type ChatThread,
+  type ChatMessage,
+} from './chatState';
+import { record, string } from '../../shared/validation';
 import type { Direction } from './reversible';
 import type { ChatContext } from './chatContracts';
 import type { ChatRequestContext } from './chatRequestContext';
@@ -47,7 +57,9 @@ export async function sendChat(id: string, file: string, effort: string, context
     messages: [...thread.messages, message].slice(-39),
   }));
   try {
-    const proposal = await generateReply(chat, { file, effort, context }, controller.signal);
+    const { proposal, record: replyRecord } = await generateReply(chat, { file, effort, context }, controller.signal, (label) =>
+      updateChat(id, (thread) => ({ ...thread, progress: { label, startedAt: thread.progress?.startedAt ?? Date.now() } })),
+    );
     if (controller.signal.aborted) {
       return;
     }
@@ -61,6 +73,7 @@ export async function sendChat(id: string, file: string, effort: string, context
           content: proposal.summary,
           images: [],
           ...(proposal.changes.length ? { proposal } : {}),
+          ...replyRecord,
         },
       ].slice(-40),
     }));
@@ -73,7 +86,7 @@ export async function sendChat(id: string, file: string, effort: string, context
     }));
   } finally {
     running.delete(id);
-    updateChat(id, (thread) => ({ ...thread, status: 'idle' }));
+    updateChat(id, ({ progress: _progress, ...thread }) => ({ ...thread, status: 'idle' }));
   }
 }
 export function stopChat(id: string) {
@@ -139,13 +152,16 @@ interface ReplyRequest {
   readonly effort: string;
   readonly context: ChatRequestContext;
 }
-async function generateReply(chat: ChatThread, { file, effort, context: editor }: ReplyRequest, signal: AbortSignal) {
-  return parseProposal(
-    await request('/studio/api/ai/propose', {
+// The reply streams as server-sent events: each step as it happens, then the reply (aiRoutes.ts).
+async function generateReply(chat: ChatThread, { file, effort, context: editor }: ReplyRequest, signal: AbortSignal, onStep: (label: string) => void) {
+  let reply: unknown;
+  await requestEvents(
+    '/studio/api/ai/propose',
+    {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // Up to six completions of up to three minutes each (agent.ts), plus file reads.
-      signal: AbortSignal.any([signal, AbortSignal.timeout(1_200_000)]),
+      // Up to ten rounds of up to three minutes each (agentTools.ts), plus reads and checks.
+      signal: AbortSignal.any([signal, AbortSignal.timeout(2_400_000)]),
       body: JSON.stringify({
         file,
         ...editor,
@@ -157,8 +173,26 @@ async function generateReply(chat: ChatThread, { file, effort, context: editor }
           : ([...chat.messages].reverse().find((message) => message.role === 'user' && message.images.length)?.images ?? []),
         history: context(chat),
       }),
-    }),
+    },
+    (event, data) => {
+      switch (event) {
+        case 'step':
+          onStep(parseStep(data).label);
+          break;
+        case 'result':
+          reply = data;
+          break;
+        case 'error':
+          throw new Error(string(record(data)['error'], 2000));
+        default:
+          break; // Events a newer server adds are ignored.
+      }
+    },
   );
+  if (reply === undefined) {
+    throw new Error('The reply ended before it was complete. Try again.');
+  }
+  return { proposal: parseProposal(reply), record: parseReplyRecord(record(reply)) };
 }
 
 /** Undo an applied change, or redo an undone one. A conflict in any file changes nothing. */

@@ -3,7 +3,8 @@ import { effortLevels, parseChatInput } from './chatContracts';
 import { randomUUID } from 'node:crypto';
 import { aiConfiguration, creatable, optionalSource, propose, proposedSource, validatedSource, type Proposal, type ProposedChange } from './agent';
 import { proposalDiffs, type DiffSource } from './lineDiff';
-import { gatherContext, ownerInstructions, parseContextRequest, type ContextSources } from './aiContext';
+import { gatherContext, ownerInstructions, parseContextRequest, type ContextSources, type PromptContext } from './aiContext';
+import { stepRecorder, type Step } from './progress';
 import { parseDirection, parseReversibleChanges, reversibleChange, reversibleChanges, revertStep } from './reversible';
 import type { FileChange } from '../project/changeFiles';
 import type { createRooms } from '../collaboration/rooms';
@@ -24,19 +25,23 @@ export class ProposalStore {
     readonly rooms: ReturnType<typeof createRooms>,
   ) {}
   private active = 0;
-  /** `sources` render and sample through the dev server; without them the model gets source code only. */
-  async create(value: unknown, signal?: AbortSignal, sources?: ContextSources) {
+  /**
+   * `sources` render and sample through the dev server; without them the model gets source code only.
+   * `onStep` receives each step as it happens, for a client that streams them.
+   */
+  async create(value: unknown, signal?: AbortSignal, sources?: ContextSources, onStep?: (step: Step) => void) {
     if (this.active >= 3) {
       throw new Error('Three chats are already working. Wait for one to finish.');
     }
     this.active++;
     try {
-      return await this.generate(value, signal, sources);
+      return await this.generate(value, signal, sources, stepRecorder(Date.now(), onStep));
     } finally {
       this.active--;
     }
   }
-  private async generate(value: unknown, signal: AbortSignal | undefined, sources: ContextSources | undefined) {
+  private async generate(value: unknown, signal: AbortSignal | undefined, sources: ContextSources | undefined, recorder: ReturnType<typeof stepRecorder>) {
+    const startedAtMs = Date.now();
     const config = aiConfiguration();
     if (!config) {
       throw new Error('Set AI_BASE_URL and AI_MODEL on the server to connect an AI provider. AI_API_KEY is optional for local providers.');
@@ -62,7 +67,14 @@ export class ProposalStore {
     const file = sourcePath(input['file']);
     const chat = parseChatInput(input);
     const contextRequest = parseContextRequest(input);
+    if (sources) {
+      recorder.progress(contextRequest.page ? `Rendering ${contextRequest.page}` : 'Gathering context');
+    }
     const [context, guidance] = await Promise.all([gatherContext(this.root, file, contextRequest, sources, signal), ownerInstructions(this.root)]);
+    const gathered = contextLabel(context, guidance);
+    if (gathered) {
+      recorder.progress(gathered);
+    }
     const tools = models.tools.includes(model);
     const proposal = await propose(
       this.root,
@@ -71,6 +83,7 @@ export class ProposalStore {
       { ...config, model, ...(effort ? { effort } : {}), ...(tools ? { tools } : {}) },
       { ...chat, context, ...(guidance ? { guidance } : {}), ...(sources ? { sources } : {}) },
       signal,
+      recorder.progress,
     );
     signal?.throwIfAborted();
     const id = randomUUID();
@@ -84,6 +97,8 @@ export class ProposalStore {
       changes: proposal.changes,
       diffs: proposalDiffs(await Promise.all(proposal.changes.map((change) => diffSource(this.root, change)))),
       ...(proposal.problems ? { problems: proposal.problems } : {}),
+      steps: recorder.steps(),
+      meta: { model, ...(effort ? { effort } : {}), durationMs: Date.now() - startedAtMs },
     };
   }
   async apply(value: unknown) {
@@ -180,6 +195,22 @@ async function diffSource(root: string, change: ProposedChange): Promise<DiffSou
   } catch (error) {
     return { file: change.file, failure: error instanceof Error ? error.message : 'This change cannot be applied.' };
   }
+}
+
+// One step for what the request carries besides the source: "Context: the rendered page, 2 data calls, ...".
+function contextLabel(context: PromptContext, guidance: string | undefined): string | undefined {
+  const parts = [
+    context.page
+      ? 'outline' in context.page
+        ? `the rendered page ${context.page.path}`
+        : `no render of ${context.page.path} (${context.page.unavailable})`
+      : '',
+    context.selection ? `the selected ${context.selection.label}` : '',
+    context.data?.length ? `${context.data.length} data call${context.data.length === 1 ? '' : 's'}` : '',
+    context.host?.length ? context.host.map((section) => section.title).join(', ') : '',
+    guidance ? 'the owner guidance' : '',
+  ].filter(Boolean);
+  return parts.length ? `Context: ${parts.join(', ')}` : undefined;
 }
 
 async function isValid(file: string, source: string): Promise<boolean> {

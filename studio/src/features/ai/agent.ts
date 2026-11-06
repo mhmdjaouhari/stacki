@@ -6,6 +6,7 @@ import { parseAnswer } from './replies';
 import { completion, parseProposal, type Content, type Message, type Options, type Proposal } from './completions';
 import { checkProposal } from './proposalSources';
 import { proposeWithTools, TOOL_LOOP_LIMITS } from './agentTools';
+import { checkLabel, fileList, ignoreProgress, type Progress } from './progress';
 import type { ContextSources, PromptContext } from './aiContext';
 
 export { creatable, optionalSource, proposedSource, validatedSource, type ProposedChange } from './proposalSources';
@@ -66,6 +67,7 @@ export async function propose(
   options: Options,
   input: ProposeInput = { images: [], history: [] },
   signal?: AbortSignal,
+  progress: Progress = ignoreProgress,
 ): Promise<Proposal> {
   sourcePath(file);
   string(prompt, 12_000);
@@ -90,26 +92,26 @@ export async function propose(
   ];
   const read = new Set([file]);
   if (options.tools) {
-    return proposeWithTools(options, messages, { root, files, read, sources: input.sources, signal });
+    return proposeWithTools(options, messages, { root, files, read, sources: input.sources, signal, progress });
   }
-  return proposeWithJSON(options, messages, { root, files, read, signal });
+  return proposeWithJSON(options, messages, { root, files, read, signal, progress });
 }
 
-async function proposeWithJSON(
-  options: Options,
-  messages: Message[],
-  {
-    root,
-    files,
-    read,
-    signal,
-  }: { readonly root: string; readonly files: readonly string[]; readonly read: Set<string>; readonly signal: AbortSignal | undefined },
-): Promise<Proposal> {
+interface JSONLoopInput {
+  readonly root: string;
+  readonly files: readonly string[];
+  readonly read: Set<string>;
+  readonly signal: AbortSignal | undefined;
+  readonly progress: Progress;
+}
+
+async function proposeWithJSON(options: Options, messages: Message[], { root, files, read, signal, progress }: JSONLoopInput): Promise<Proposal> {
   // One repair round: a model that wrapped its JSON in something unparsable
   // usually complies when told so; a second failure means it can't.
   let repaired = false;
   let fixRounds = 0;
   for (let round = 0; round < READ_ROUNDS_MAX + TOOL_LOOP_LIMITS.fixRoundsMax; round++) {
+    progress(round ? 'Thinking' : 'Thinking about the request');
     const turn = await completion(options, messages, signal);
     const content = turn.content;
     const parsed = parseAnswer(content);
@@ -118,6 +120,7 @@ async function proposeWithJSON(
         throw new Error('The model did not reply with valid JSON. Try again, or choose another model.');
       }
       repaired = true;
+      progress('The reply was not valid JSON; asked again');
       messages.push({ role: 'assistant', content }, { role: 'user', content: REPAIR });
       continue;
     }
@@ -125,6 +128,7 @@ async function proposeWithJSON(
     if (!Array.isArray(answer['read'])) {
       const proposal = parseProposal(answer, files, read);
       const problems = await checkProposal(root, proposal.changes);
+      progress(checkLabel(proposal.changes.length, problems.length, fixRounds < TOOL_LOOP_LIMITS.fixRoundsMax));
       if (!problems.length) {
         return proposal;
       }
@@ -139,10 +143,9 @@ async function proposeWithJSON(
     if (round >= READ_ROUNDS_MAX - 1) {
       break;
     }
-    messages.push(
-      { role: 'assistant', content },
-      { role: 'user', content: JSON.stringify({ files: await readRequested(answer['read'], root, files, read), remainingReads: READ_ROUNDS_MAX - 2 - round }) },
-    );
+    const requested = await readRequested(answer['read'], root, files, read);
+    progress(`Read ${fileList(requested.map((entry) => entry.file))}`);
+    messages.push({ role: 'assistant', content }, { role: 'user', content: JSON.stringify({ files: requested, remainingReads: READ_ROUNDS_MAX - 2 - round }) });
   }
   throw new Error('AI read limit reached. Try a more focused request.');
 }

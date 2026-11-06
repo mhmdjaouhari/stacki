@@ -24,7 +24,11 @@ export async function aiRoute(
     const cancel = () => controller.abort();
     response.once('close', cancel);
     try {
-      response.end(JSON.stringify(await proposals.create(JSON.parse(await readBody()), controller.signal, sources)));
+      if (request.headers.accept?.includes('text/event-stream')) {
+        await streamProposal(proposals, sources, response, controller.signal, readBody);
+      } else {
+        response.end(JSON.stringify(await proposals.create(JSON.parse(await readBody()), controller.signal, sources)));
+      }
     } finally {
       response.off('close', cancel);
     }
@@ -49,4 +53,46 @@ export async function aiRoute(
     return true;
   }
   return false;
+}
+
+// Keeps proxies from closing a quiet stream while the model thinks for minutes.
+const HEARTBEAT_MS = 15_000;
+
+/**
+ * The proposal as server-sent events: a `step` event per step while the agent works, then one
+ * `result` event with the same reply the JSON route sends, or one `error` event. The headers go
+ * out first, so a failure is an event, not a status code.
+ */
+async function streamProposal(
+  proposals: ProposalStore,
+  sources: ContextSources | undefined,
+  response: ServerResponse,
+  signal: AbortSignal,
+  readBody: () => Promise<string>,
+) {
+  response.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    // Nginx and similar proxies buffer responses unless told not to.
+    'X-Accel-Buffering': 'no',
+  });
+  const send = (event: 'step' | 'result' | 'error', data: unknown) => {
+    if (!response.writableEnded) {
+      response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    }
+  };
+  response.write(': stream\n\n');
+  const heartbeat = setInterval(() => {
+    if (!response.writableEnded) {
+      response.write(': keepalive\n\n');
+    }
+  }, HEARTBEAT_MS);
+  try {
+    send('result', await proposals.create(JSON.parse(await readBody()), signal, sources, (step) => send('step', step)));
+  } catch (error) {
+    send('error', { error: error instanceof Error ? error.message : 'Could not generate a reply.' });
+  } finally {
+    clearInterval(heartbeat);
+    response.end();
+  }
 }

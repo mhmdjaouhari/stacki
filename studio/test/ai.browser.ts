@@ -33,9 +33,10 @@ try {
   await verifySingleTranscript(page);
   await verifyBackgroundDot(page);
   await verifyCompactDiff(page);
+  await verifyStreamedReply(page);
   assert.deepEqual(errors, []);
   console.log(
-    'Chat drafts, switching, image preparation/removal, reload persistence, single transcript across renders, the chat list by keyboard, the background-chat dot, the compact proposal diff, the review overlay, and mobile composer passed. Live AI and microphone recognition require a configured provider and an interactive microphone.',
+    'Chat drafts, switching, image preparation/removal, reload persistence, single transcript across renders, the chat list by keyboard, the background-chat dot, the compact proposal diff, the review overlay, a streamed reply with its steps, and mobile composer passed. Live AI and microphone recognition require a configured provider and an interactive microphone.',
   );
 } finally {
   await browser.close();
@@ -233,6 +234,38 @@ async function verifyReview(page: Page) {
   assert.equal(await review.locator('.cm-mergeView .cm-editor').count(), 2);
   await page.keyboard.press('Escape');
   assert.equal(await page.getByRole('dialog').count(), 0);
+}
+// A reply streams as server-sent events; its steps and how it was made show under it, collapsed.
+// A route plays back a finished stream; the live label and clock need a real, slow provider.
+async function verifyStreamedReply(page: Page) {
+  const event = (name: string, data: unknown) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`;
+  const steps = [
+    { label: 'Rendered /', atMs: 120 },
+    { label: 'Read pages/index.astro', atMs: 2400 },
+  ];
+  const result = { id: 'streamed', summary: 'The page has one heading.', changes: [], steps, meta: { model: 'test-model', effort: 'high', durationMs: 4200 } };
+  await page.route('**/studio/api/ai/models', (route) => route.fulfill({ json: { models: ['test-model'], defaultModel: 'test-model' } }));
+  await page.route('**/studio/api/ai/propose', (route) =>
+    route.fulfill({
+      headers: { 'content-type': 'text/event-stream' },
+      body: [...steps.map((step) => event('step', step)), event('result', result)].join(''),
+    }),
+  );
+  await page.reload();
+  await page.getByRole('button', { name: 'AI chat', exact: true }).click();
+  await page
+    .getByRole('button', { name: 'New chat', exact: true })
+    .filter({ has: page.locator('svg') })
+    .last()
+    .click();
+  await page.getByLabel('AI prompt', { exact: true }).fill('Describe the page');
+  await sendWhenReady(page);
+  const details = page.locator('.chat-reply-details');
+  await details.waitFor();
+  assert.equal(await details.locator('summary').textContent(), 'test-model · high · 4 s · 2 steps');
+  await details.locator('summary').click();
+  assert.deepEqual(await details.locator('li').allTextContents(), ['0 sRendered /', '2 sRead pages/index.astro']);
+  await page.unrouteAll({ behavior: 'ignoreErrors' });
 }
 // Send is disabled until the chat's model is in the loaded list, and Enter before then is
 // ignored. On a server with a provider, the chat may have saved the server's model before the
