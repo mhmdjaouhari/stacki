@@ -352,7 +352,7 @@ details[open] > .chat-diff-summary::before,
 .chat-diff-line {
   display: grid;
   grid-template-columns: 2.75rem 1fr;
-  code {
+  .chat-diff-code {
     font: inherit;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
@@ -364,7 +364,7 @@ details[open] > .chat-diff-summary::before,
   &.is-removed {
     background: #e39b9b1f;
   }
-  &.is-note code {
+  &.is-note .chat-diff-code {
     color: var(--text-dim);
     font-style: italic;
   }

@@ -13,7 +13,7 @@
 import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { assert } from './assert.mts';
-import { checkFiles, repositoryRoot, stagedFiles } from './checks.mts';
+import { checkFiles, mergeCreatedFiles, repositoryRoot, stagedFiles } from './checks.mts';
 import { commitMessageProblems, describeCommitMessageProblem } from './commitMessage.mts';
 import { readPushedRefs, runPushChecks } from './pushChecks.mts';
 
@@ -27,9 +27,12 @@ function parseHook(name: string | undefined): Hook {
   return hook;
 }
 
+// A merge checks only what it created (checks.mts, mergeCreatedFiles); every
+// staged file still decides whether the Studio program is type-checked.
 function preCommit(root: string): number {
-  const files = stagedFiles(root);
-  const result = checkFiles(root, files, { format: 'check' });
+  const staged = stagedFiles(root);
+  const files = mergeCreatedFiles(root, staged) ?? staged;
+  const result = checkFiles(root, files, { format: 'check', scope: staged });
   if (result.kind === 'pass') {
     return 0;
   }

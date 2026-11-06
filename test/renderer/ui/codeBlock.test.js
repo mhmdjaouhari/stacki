@@ -29,7 +29,11 @@ const STUBS = {
     contents: `export async function readHistoryDiff() { return { ok: true, value: '@@ -1 +1 @@\\n-const before = 1;\\n+const after = "two";\\n' }; }`,
     loader: 'js',
   }),
-  'studio/src/features/ai/chatActions.ts': () => ({ contents: 'export function applyProposal() {} export function discardProposal() {}', loader: 'js' }),
+  'studio/src/features/ai/chatActions.ts': () => ({
+    contents:
+      'export function applyProposal() {} export function discardProposal() {} export function changesAfter() { return []; } export function editFromMessage() {} export function revertChange() {}',
+    loader: 'js',
+  }),
   'studio/src/features/collections/content.ts': () => ({ contents: `export function collectionContent() { throw new Error('Unparsed'); }`, loader: 'js' }),
 };
 
@@ -387,11 +391,13 @@ test('a chat proposal highlights both versions of a file, and a new file says so
   const proposal = (before) => ({ changes: [{ file: 'src/a.css', before, after: '.a { color: red; }' }] });
   const chat = (before) => ({ id: 'c', status: 'idle', messages: [{ id: 'm', role: 'assistant', content: '', images: [], proposal: proposal(before) }] });
   const changed = await mount(create(code.ChatMessages, { chat: chat('.a { margin: 0; }'), refresh: () => {} }));
-  assert.ok(changed.querySelector('pre.diff-before .code-token'));
-  assert.ok(changed.querySelector('pre.diff-after .code-token'));
+  assert.ok(changed.querySelector('.chat-diff-line.is-removed .chat-diff-code .code-token'));
+  assert.ok(changed.querySelector('.chat-diff-line.is-added .chat-diff-code .code-token'));
+  assert.ok(!changed.querySelector('.chat-diff-badge'));
   const created = await mount(create(code.ChatMessages, { chat: chat(''), refresh: () => {} }));
-  assert.equal(created.querySelector('pre.diff-before').textContent, '(new file)');
-  assert.ok(!created.querySelector('pre.diff-before .code-token'));
+  assert.equal(created.querySelector('.chat-diff-badge').textContent, 'new');
+  assert.ok(!created.querySelector('.chat-diff-line.is-removed'));
+  assert.ok(created.querySelector('.chat-diff-line.is-added .chat-diff-code .code-token'));
 });
 
 test('a collection source that does not parse opens in the highlighted editor', async () => {

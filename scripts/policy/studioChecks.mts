@@ -20,12 +20,40 @@ function verifyStudio(root: string): number {
   const dependency = (file: string): string => path.join(cwd, 'node_modules', file);
   const tsx = dependency('tsx/dist/cli.mjs');
   const compiler = dependency('typescript/bin/tsc');
+  // Each tool keeps what it learned between runs, as the root gate's type check
+  // and Prettier do (scripts/gate/runTests.ts): cold, the studio program alone
+  // took a minute and its lint another, on every commit that touched src/.
+  // tsc re-checks every file whose text or dependencies changed, so a warm run
+  // reaches a cold one's verdict. Prettier and ESLint key on content, not
+  // modification times, because assemble rewrites vendor/ and a checkout
+  // rewrites times without changing a byte. CI starts without these caches.
+  const cache = dependency('.cache/studio-checks');
+  const incremental = (name: string): readonly string[] => ['--incremental', '--tsBuildInfoFile', path.join(cache, `${name}.tsbuildinfo`)];
   const commands: readonly (readonly string[])[] = [
     [tsx, 'scripts/assemble.ts'],
-    [compiler, '--noEmit'],
-    [compiler, '-p', 'tsconfig.worker.json'],
-    [dependency('eslint/bin/eslint.js'), '--max-warnings', '0', '.'],
-    [dependency('prettier/bin/prettier.cjs'), process.argv.includes('--write') ? '--write' : '--check', '.'],
+    [compiler, '--noEmit', ...incremental('studio')],
+    [compiler, '-p', 'tsconfig.worker.json', ...incremental('worker')],
+    [
+      dependency('eslint/bin/eslint.js'),
+      '--cache',
+      '--cache-strategy',
+      'content',
+      '--cache-location',
+      path.join(cache, 'eslint') + path.sep,
+      '--max-warnings',
+      '0',
+      '.',
+    ],
+    [
+      dependency('prettier/bin/prettier.cjs'),
+      process.argv.includes('--write') ? '--write' : '--check',
+      '--cache',
+      '--cache-strategy',
+      'content',
+      '--cache-location',
+      path.join(cache, 'prettier.json'),
+      '.',
+    ],
   ];
   const suites = fs
     .readdirSync(path.join(cwd, 'test'))

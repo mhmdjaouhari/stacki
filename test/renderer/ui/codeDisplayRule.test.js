@@ -43,6 +43,7 @@ const CODE_LABELS_ALLOWED = {
   'src/features/style/ProvenanceList.tsx': 'A selector chip.',
   'src/features/style/components/InheritedPropertyLabel.tsx': 'A selector chip.',
   'src/features/style/embed/ResolvedRows.tsx': 'A property name heading a popup.',
+  'studio/src/features/ai/ChatMessages.tsx': 'A file path or page path naming what a check found, and the text a page shows, which is not code.',
   'studio/src/features/ai/ChatText.tsx': 'Inline Markdown code in a chat message: a word in a sentence, with no language to read. Fences take CodeBlock.',
   'studio/src/features/github/SyncNotice.tsx': 'A file path in a list.',
 };

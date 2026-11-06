@@ -11,7 +11,7 @@ a person, for Claude Code, for Codex, and for Pi, because every gate calls the s
 | Agent pre-tool | Before an agent runs a command or edits a file | `scripts/agent/core.mts` verdicts | No: refusals come from the harness |
 | Agent post-tool | After an agent edits a file | Prettier (writes), policy scan, ESLint on the file | No |
 | Agent stop | When an agent tries to finish | Changed-file formatting, scan and lint; all Desktop compiler targets and test source paths | After 3 refusals for the same findings the session may end, and the human is told; new findings start a new round |
-| `pre-commit` | `git commit` | Prettier check, scan, ESLint on staged files | `--no-verify`, which agent hooks refuse |
+| `pre-commit` | `git commit` | Prettier check, scan, ESLint on staged files (in a merge, only the files it created: neither parent had their content); Studio static checks when any staged file is under `studio/`, `src/`, `shared/` or `electron/` | `--no-verify`, which agent hooks refuse |
 | `commit-msg` | `git commit` | Typed subject ≤ 72 characters, blank line, body | As above |
 | Local development | `npm run dev` or `npm run check:local` | All Desktop compiler targets, full lint, formatting, policy, test source paths, Studio static checks | Run directly at any time |
 | `pre-push` | `git push` | Full CI gate: clean builds, Desktop and Studio static checks and tests; a pushed version tag (`refs/tags/v<digit>…`) then runs the Linux preflight | As above |
