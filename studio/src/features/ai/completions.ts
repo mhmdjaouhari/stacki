@@ -117,7 +117,10 @@ export function parseProposal(proposal: Record<string, unknown>, files: readonly
     return { file, before: string(change['before']), after: string(change['after']) };
   });
   if (new Set(validated.map((change) => change.file)).size !== validated.length) {
-    throw new Error('AI must return one change per file');
+    const repeated = validated.find((change, index) => validated.findIndex((other) => other.file === change.file) !== index)?.file ?? '';
+    throw new Error(
+      `AI must return one change per file, and ${repeated.slice(0, 200)} has several: make one change whose before runs from the first edited line to the last`,
+    );
   }
   return { summary: string(proposal['summary'], 4000), changes: validated };
 }
