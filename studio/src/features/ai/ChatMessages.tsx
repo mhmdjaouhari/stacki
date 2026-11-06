@@ -2,7 +2,7 @@ import { ErrorToast } from '../../../vendor/stacki/src/ui/ErrorToast';
 import { ChatText } from './ChatText';
 import { useEffect, useRef, useState } from 'react';
 import { applyProposal, changesAfter, discardProposal, editFromMessage, revertChange } from './chatActions';
-import { type ChatThread, type ChatMessage, type ProposalProblem } from './chatState';
+import { updateChat, type ApplyCheck, type BrokenPage, type ChatThread, type ChatMessage, type ProposalProblem } from './chatState';
 import { ChatIcon } from './ChatIcon';
 import { ChatDiff, DiffCounts, diffTotals, substringDiffs } from './ChatDiff';
 import type { FileDiff } from './lineDiff';
@@ -185,6 +185,7 @@ function MessageItem({ chat, message, refresh }: ItemProps) {
       {message.proposal && review && <ProposalCard chat={chat} message={message} diffs={review.diffs} refresh={refresh} review={openReview} />}
       {message.outcome && <p className="chat-outcome">{message.outcome}</p>}
       {message.diffs && <AppliedDiff diffs={message.diffs} review={openReview} />}
+      {message.check?.rendered.length ? <RenderedChanges check={message.check} /> : null}
       {message.applied && <RevertAction chat={chat} message={message} applied={message.applied} refresh={refresh} />}
       {/* A discarded proposal leaves nothing to review, which closes the overlay. */}
       {reviewing && review && (
@@ -249,6 +250,7 @@ function ProposalCard({ chat, message, diffs, refresh, review }: ProposalProps &
         {proposal.changes.length} file{proposal.changes.length === 1 ? '' : 's'} changed
         <DiffCounts {...diffTotals(diffs)} />
       </div>
+      {proposal.broken && <BrokenPages chat={chat} broken={proposal.broken} />}
       {proposal.problems && <ProposalProblems problems={proposal.problems} />}
       <ChatDiff diffs={diffs} numbers={proposal.diffs ? 'file' : 'none'} />
       <div className="chat-proposal-actions">
@@ -257,6 +259,33 @@ function ProposalCard({ chat, message, diffs, refresh, review }: ProposalProps &
           Review changes
         </button>
       </div>
+    </div>
+  );
+}
+
+// Applying rendered the affected pages, one broke, and the change was put back. The error is the
+// model's best clue, so "Ask to fix" writes it into the prompt for the person to send.
+function BrokenPages({ chat, broken }: { readonly chat: ChatThread; readonly broken: readonly BrokenPage[] }) {
+  return (
+    <div className="chat-proposal-problems is-broken" role="alert">
+      <strong>Applying this broke the page, so it was undone.</strong>
+      <ul>
+        {broken.map((page) => (
+          <li key={page.path}>
+            <code>{page.path}</code> {page.error}
+          </li>
+        ))}
+      </ul>
+      <button
+        disabled={chat.status !== 'idle'}
+        onClick={() => {
+          const errors = broken.map((page) => `${page.path}: ${page.error}`).join('\n');
+          updateChat(chat.id, (thread) => ({ ...thread, draft: `Applying your change broke the page, so it was undone:\n${errors}\nFix the proposal.` }));
+          document.querySelector<HTMLTextAreaElement>('.chat-composer textarea')?.focus();
+        }}
+      >
+        Ask to fix
+      </button>
     </div>
   );
 }
@@ -317,6 +346,31 @@ function AppliedDiff({ diffs, review }: { readonly diffs: readonly FileDiff[]; r
         Review
       </button>
     </div>
+  );
+}
+
+// How the rendered pages' text changed: the evidence that the change did what it says.
+function RenderedChanges({ check }: { readonly check: ApplyCheck }) {
+  return (
+    <details className="chat-applied-diff chat-rendered">
+      <summary>
+        Rendered text{' '}
+        <DiffCounts
+          {...check.rendered.reduce((total, page) => ({ added: total.added + page.added, removed: total.removed + page.removed }), { added: 0, removed: 0 })}
+        />
+      </summary>
+      {check.rendered.map((page) => (
+        <div key={page.path} className="chat-rendered-page">
+          <code>{page.path}</code>
+          {page.lines.map((line, index) => (
+            <div key={index} className={`chat-diff-line ${line.startsWith('+') ? 'is-added' : 'is-removed'}`}>
+              <span className="chat-diff-number" data-marker={line.charAt(0)} />
+              <code>{line.slice(1)}</code>
+            </div>
+          ))}
+        </div>
+      ))}
+    </details>
   );
 }
 

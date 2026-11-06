@@ -314,6 +314,39 @@ test('files mentioned with @ are read up front, and may be edited without readin
   }
 });
 
+test('apply and check: a change that breaks a page is put back, one that works reports its render', async () => {
+  const broken = proposal({ file: PAGE, before: '<h1>Welcome</h1>', after: '<h1>Broken</h1>' });
+  const working = proposal({ file: PAGE, before: '<h1>Welcome</h1>', after: '<h1>Hello</h1>' });
+  const setup = await fixture([broken, working]);
+  // The stand-in dev server renders the page from disk, and fails on the word "Broken".
+  const sources = {
+    render: () => Promise.resolve(''),
+    sample: () => Promise.resolve({ value: null }),
+    fetchPage: async () => {
+      const source = (await setup.read(PAGE)) ?? '';
+      return source.includes('Broken') ? { status: 500, html: '<title>Error</title>', error: 'Broken is not allowed' } : { status: 200, html: source };
+    },
+  };
+  try {
+    const first = record(await setup.store.create(request({ model: 'deepseek-v4-flash' })));
+    assert.deepEqual(await setup.store.apply({ id: first['id'], page: '/' }, sources), {
+      applied: false,
+      broken: [{ path: '/', error: 'Status 500: Error: Broken is not allowed' }],
+    });
+    assert.equal(await setup.read(PAGE), '<h1>Welcome</h1>\n<p>Intro</p>\n', 'the files are back');
+    // The proposal stays, for the person to ask for a fix; applying it again fails the same way.
+    assert.equal(record(await setup.store.apply({ id: first['id'], page: '/' }, sources))['applied'], false);
+    const second = record(await setup.store.create(request({ model: 'deepseek-v4-flash' })));
+    const applied = record(await setup.store.apply({ id: second['id'], page: '/' }, sources));
+    assert.equal(applied['applied'], true);
+    assert.deepEqual(applied['checked'], ['/']);
+    assert.deepEqual(applied['rendered'], [{ path: '/', added: 1, removed: 1, lines: ['-h1: Welcome', '+h1: Hello'] }]);
+    await assert.rejects(setup.store.apply({ id: second['id'], page: 'https://example.com/' }, sources), /expired|Invalid page path/);
+  } finally {
+    await setup.close();
+  }
+});
+
 test('a conflict in one file leaves every file untouched', async () => {
   const setup = await fixture([
     { read: [ABOUT] },

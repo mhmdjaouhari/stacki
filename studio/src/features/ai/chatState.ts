@@ -13,6 +13,21 @@ export interface ChatProposal {
   readonly diffs?: readonly FileDiff[];
   /** What the server's check still found after the model's fix rounds. */
   readonly problems?: readonly ProposalProblem[];
+  /** The canvas page when it was asked for: Apply renders it to check the change. */
+  readonly page?: string;
+  /** Pages the change broke when it was applied, after which it was undone. */
+  readonly broken?: readonly BrokenPage[];
+}
+export interface BrokenPage {
+  readonly path: string;
+  readonly error: string;
+}
+/** What the check after applying found: the pages rendered, and how their text changed. */
+export interface ApplyCheck {
+  readonly pages: readonly string[];
+  readonly rendered: readonly { readonly path: string; readonly added: number; readonly removed: number; readonly lines: readonly string[] }[];
+  /** Pages that broke but couldn't be put back, because they were edited meanwhile. */
+  readonly broken?: readonly BrokenPage[];
 }
 export interface ProposalProblem {
   readonly file: string;
@@ -33,6 +48,7 @@ export interface ChatMessage {
   /** How an assistant reply was made: its steps, and the model, effort and time it took. */
   readonly steps?: readonly ReplyStep[];
   readonly meta?: ReplyMeta;
+  readonly check?: ApplyCheck;
 }
 export interface ReplyStep {
   readonly label: string;
@@ -232,6 +248,38 @@ function parseMessage(value: unknown): ChatMessage {
     ...(message['applied'] ? { applied: parseApplied(message['applied']) } : {}),
     ...(message['diffs'] ? { diffs: parseFileDiffs(message['diffs']) } : {}),
     ...parseReplyRecord(message),
+    ...(message['check'] === undefined ? {} : { check: parseApplyCheck(message['check']) }),
+  };
+}
+export function parseBrokenPages(value: unknown): readonly BrokenPage[] {
+  if (!Array.isArray(value) || value.length > 5) {
+    throw new Error('Invalid check');
+  }
+  return value.map((item: unknown) => {
+    const page = record(item);
+    return { path: string(page['path'], 2000), error: string(page['error'], 700) };
+  });
+}
+export function parseApplyCheck(value: unknown): ApplyCheck {
+  const input = record(value);
+  const pages = input['pages'];
+  const rendered = input['rendered'];
+  if (!Array.isArray(pages) || pages.length > 5 || !Array.isArray(rendered) || rendered.length > 5) {
+    throw new Error('Invalid check');
+  }
+  return {
+    pages: pages.map((page) => string(page, 2000)),
+    rendered: rendered.map((item: unknown) => {
+      const change = record(item);
+      const lines = change['lines'];
+      const added = change['added'];
+      const removed = change['removed'];
+      if (!Array.isArray(lines) || lines.length > 60 || typeof added !== 'number' || typeof removed !== 'number') {
+        throw new Error('Invalid check');
+      }
+      return { path: string(change['path'], 2000), added, removed, lines: lines.map((line) => string(line, 400)) };
+    }),
+    ...(input['broken'] === undefined ? {} : { broken: parseBrokenPages(input['broken']) }),
   };
 }
 /** The steps and metadata a reply carries, when it carries them (older servers and chats don't). */
@@ -289,6 +337,8 @@ export function parseProposal(value: unknown): ChatProposal {
     }),
     ...(input['diffs'] === undefined ? {} : { diffs: parseFileDiffs(input['diffs']) }),
     ...(input['problems'] === undefined ? {} : { problems: parseProblems(input['problems']) }),
+    ...(input['page'] === undefined ? {} : { page: string(input['page'], 2000) }),
+    ...(input['broken'] === undefined ? {} : { broken: parseBrokenPages(input['broken']) }),
   };
 }
 function parseProblems(value: unknown): readonly ProposalProblem[] {

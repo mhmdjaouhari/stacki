@@ -789,6 +789,29 @@ details[open] > .chat-diff-summary::before,
     font-family: var(--font-mono, ui-monospace, monospace);
   }
 }
+.chat-proposal-problems.is-broken {
+  color: #e39b9b;
+  background: #e39b9b14;
+  button {
+    margin-top: 0.5rem;
+    border-radius: 0.5rem;
+    padding: 0.25rem 0.625rem;
+    font-size: 0.6875rem;
+  }
+}
+.chat-rendered-page {
+  padding: 0 0 0.375rem;
+  > code {
+    display: block;
+    padding: 0.25rem 0.75rem;
+    color: var(--text-dim);
+    font-size: 0.6875rem;
+  }
+  .chat-diff-line {
+    font-size: 0.6875rem;
+    grid-template-columns: 1.5rem 1fr;
+  }
+}
 .chat-proposal-actions .chat-review-open {
   margin-left: auto;
 }

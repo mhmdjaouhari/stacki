@@ -25,8 +25,9 @@ import { createRooms } from '../features/collaboration/rooms';
 import { safePath, preparePath, readSource } from '../features/project/projectServer';
 import { filePath, sourcePath, string, record, MAX_SOURCE } from '../shared/validation';
 import { featureRoutes } from './featureRoutes';
-import { fetchRenderedPage } from '../features/ai/aiContext';
+import { fetchPageResponse, fetchRenderedPage } from '../features/ai/aiContext';
 import { parseAiExtensions, type AiExtensions } from '../features/ai/aiExtensions';
+import { captureDevErrors, describeDevError, type DevErrors } from '../features/ai/devErrors';
 import { BUILT_IN_TOOL_NAMES } from '../features/ai/agentTools';
 import { saveAsset } from '../features/storage/assetStorage';
 import { interceptBrowserReloads } from '../features/preview/browserReloads';
@@ -43,6 +44,8 @@ interface PreviewOptions extends Options {
   readonly trailingSlash: 'always' | 'never' | 'ignore';
 }
 import type { ViteDevServer, Plugin } from 'vite';
+/** The dev server's catalogs, and the errors it sends to the browser (devErrors.ts). */
+type StudioCatalogs = ReturnType<typeof projectCatalogs> & { readonly devErrors: DevErrors };
 export default function studio(input: Options): AstroIntegration {
   const ai = parseAiExtensions(input.ai, BUILT_IN_TOOL_NAMES);
   const options: Options = { ...input, ...(ai ? { ai } : {}) };
@@ -138,7 +141,7 @@ async function handleRequest(
   options: Options,
   features: ReturnType<typeof featureRoutes>,
   rooms: ReturnType<typeof createRooms>,
-  catalogs: ReturnType<typeof projectCatalogs>,
+  catalogs: StudioCatalogs,
 ) {
   if (!authorized(request, options)) {
     json(response, 403, { error: 'Unauthorized studio request' });
@@ -157,7 +160,7 @@ async function handleRequestInWorkspace(
   options: Options,
   features: ReturnType<typeof featureRoutes>,
   rooms: ReturnType<typeof createRooms>,
-  catalogs: ReturnType<typeof projectCatalogs>,
+  catalogs: StudioCatalogs,
 ) {
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('X-Content-Type-Options', 'nosniff');
@@ -172,6 +175,13 @@ async function handleRequestInWorkspace(
   }
   const sources = {
     render: (page: string) => fetchRenderedPage(options.port, page),
+    fetchPage: async (page: string) => {
+      const startedAtMs = Date.now();
+      const response = await fetchPageResponse(options.port, page);
+      // A failed render's message reaches the browser over HMR, not in the page (devErrors.ts).
+      const error = response.status >= 500 ? await catalogs.devErrors.next(startedAtMs) : undefined;
+      return error ? { ...response, error: describeDevError(error, options.root) } : response;
+    },
     sample: catalogs.values,
     ...(options.ai ? { extensions: options.ai } : {}),
   };
@@ -422,7 +432,7 @@ function configureStudioRequests(
   rooms: ReturnType<typeof createRooms>,
   subscribe: ReturnType<typeof createAstroNotifications>,
 ) {
-  const catalogs = projectCatalogs(server, options.root);
+  const catalogs: StudioCatalogs = { ...projectCatalogs(server, options.root), devErrors: captureDevErrors(server) };
   // Accepted writes invalidate before their reply, independently of watcher timing.
   const stopCatalogs = rooms.onWrite(catalogs.invalidate);
   server.httpServer?.once('close', stopCatalogs);

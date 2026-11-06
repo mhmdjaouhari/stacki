@@ -53,7 +53,7 @@ export async function aiRoute(
     return true;
   }
   if (pathname === '/studio/api/ai/apply' && request.method === 'POST') {
-    response.end(JSON.stringify(await proposals.apply(JSON.parse(await readBody()))));
+    response.end(JSON.stringify(await proposals.apply(JSON.parse(await readBody()), sources)));
     return true;
   }
   return false;
