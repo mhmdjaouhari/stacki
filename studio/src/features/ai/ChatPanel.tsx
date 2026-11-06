@@ -7,9 +7,17 @@ import { ChatComposer } from './ChatComposer';
 import { ChatMessages } from './ChatMessages';
 import { ChatSwitcher } from './ChatSwitcher';
 import { ChatIcon } from './ChatIcon';
+import type { ChatRequestContext } from './chatRequestContext';
 import './chat.css';
 
-export function ChatPanel({ file, refresh }: { readonly file: string; readonly refresh: () => void; readonly error: (error: unknown) => void }) {
+interface ChatPanelProps {
+  readonly file: string;
+  /** The canvas page and selection, sent with each request. */
+  readonly context: ChatRequestContext;
+  readonly refresh: () => void;
+  readonly error: (error: unknown) => void;
+}
+export function ChatPanel({ file, context, refresh }: ChatPanelProps) {
   const state = useChats();
   const { config, error, reload } = useModels();
   const chat = state.threads.find((chat) => chat.id === state.active) ?? state.threads[0];
@@ -60,7 +68,7 @@ export function ChatPanel({ file, refresh }: { readonly file: string; readonly r
       {/* The keys reset each part's local state when the chat changes. They must differ: siblings that share a
           key make React leave an orphaned transcript in the page on every render, in development and production alike. */}
       {chat.messages.length || chat.error ? <ChatMessages key={`messages-${chat.id}`} chat={chat} refresh={refresh} /> : <ChatWelcome chat={chat} />}
-      <ChatComposer key={`composer-${chat.id}`} chat={chat} file={file} config={config} />
+      <ChatComposer key={`composer-${chat.id}`} chat={chat} file={file} context={context} config={config} />
     </section>
   );
 }

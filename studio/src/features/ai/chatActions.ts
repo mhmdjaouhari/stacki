@@ -3,6 +3,7 @@ import { chatState, updateChat, parseProposal, parseApplied, type AppliedChange,
 import { record } from '../../shared/validation';
 import type { Direction } from './reversible';
 import type { ChatContext } from './chatContracts';
+import type { ChatRequestContext } from './chatRequestContext';
 
 const running = new Map<string, AbortController>();
 function context(chat: ChatThread): readonly ChatContext[] {
@@ -15,8 +16,8 @@ function context(chat: ChatThread): readonly ChatContext[] {
   }
   return history;
 }
-/** `effort` is the chat's effort when its model supports it, otherwise empty. */
-export async function sendChat(id: string, file: string, effort: string) {
+/** `effort` is the chat's effort when its model supports it, otherwise empty; `context` is the editor's page and selection. */
+export async function sendChat(id: string, file: string, effort: string, context: ChatRequestContext) {
   const chat = chatState().threads.find((thread) => thread.id === id);
   if (!chat || chat.status !== 'idle' || (!chat.draft.trim() && !chat.images.length) || !chat.model) {
     return;
@@ -46,7 +47,7 @@ export async function sendChat(id: string, file: string, effort: string) {
     messages: [...thread.messages, message].slice(-39),
   }));
   try {
-    const proposal = await generateReply(chat, file, effort, controller.signal);
+    const proposal = await generateReply(chat, { file, effort, context }, controller.signal);
     if (controller.signal.aborted) {
       return;
     }
@@ -79,17 +80,19 @@ export function stopChat(id: string) {
   running.get(id)?.abort();
 }
 export function discardProposal(id: string, messageId: string) {
-  finishProposal(id, messageId, 'Discarded. No changes were applied.');
+  finishProposal(id, messageId, 'Discarded. No changes were applied.', 'nothing');
 }
-function finishProposal(id: string, messageId: string, outcome: string, applied?: AppliedChange) {
+// A discarded proposal leaves only its outcome; an applied one keeps its diffs, so the change can still be read.
+function finishProposal(id: string, messageId: string, outcome: string, kept: 'nothing' | 'diffs', applied?: AppliedChange) {
   updateChat(id, (thread) => ({
     ...thread,
     messages: thread.messages.map((message) => {
       if (message.id !== messageId) {
         return message;
       }
-      const { proposal: _proposal, ...rest } = message;
-      return { ...rest, outcome, ...(applied ? { applied } : {}) };
+      const { proposal, ...rest } = message;
+      const diffs = kept === 'diffs' ? proposal?.diffs : undefined;
+      return { ...rest, outcome, ...(applied ? { applied } : {}), ...(diffs ? { diffs } : {}) };
     }),
   }));
 }
@@ -116,9 +119,9 @@ export async function applyProposal(id: string, messageId: string, refresh: () =
     // A change too large to send back is applied without an undo record.
     const changes = result['changes'];
     if (changes === undefined) {
-      finishProposal(id, messageId, `${APPLIED} It is too large to undo from the chat.`);
+      finishProposal(id, messageId, `${APPLIED} It is too large to undo from the chat.`, 'diffs');
     } else {
-      finishProposal(id, messageId, APPLIED, parseApplied({ changes, state: 'applied' }));
+      finishProposal(id, messageId, APPLIED, 'diffs', parseApplied({ changes, state: 'applied' }));
     }
     refresh();
   } catch (error) {
@@ -131,7 +134,12 @@ export async function applyProposal(id: string, messageId: string, refresh: () =
   }
 }
 
-async function generateReply(chat: ChatThread, file: string, effort: string, signal: AbortSignal) {
+interface ReplyRequest {
+  readonly file: string;
+  readonly effort: string;
+  readonly context: ChatRequestContext;
+}
+async function generateReply(chat: ChatThread, { file, effort, context: editor }: ReplyRequest, signal: AbortSignal) {
   return parseProposal(
     await request('/studio/api/ai/propose', {
       method: 'POST',
@@ -140,6 +148,7 @@ async function generateReply(chat: ChatThread, file: string, effort: string, sig
       signal: AbortSignal.any([signal, AbortSignal.timeout(1_200_000)]),
       body: JSON.stringify({
         file,
+        ...editor,
         model: chat.model,
         ...(effort ? { effort } : {}),
         prompt: chat.draft.trim() || 'Describe these images and how they relate to this page.',

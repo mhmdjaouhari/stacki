@@ -10,6 +10,7 @@ import { metadataRoute } from '../features/settings/projectMetadata';
 import { cmsRoutes } from '../features/cms/cmsServer';
 import { cmsRemoteRoutes } from '../features/cms/cmsRemoteServer';
 import { aiRoute } from '../features/ai/aiRoutes';
+import type { ContextSources } from '../features/ai/aiContext';
 import { publishRoute } from '../features/publishing/publishRoutes';
 import { componentUsageRoute } from '../features/components/componentUsageServer';
 import { propertyRoutes } from '../features/componentProperties/propertyServer';
@@ -35,7 +36,15 @@ export function featureRoutes(root: string, rooms: ReturnType<typeof createRooms
   const properties = propertyRoutes(root, rooms);
   const { cleanup, publisher, synchronization, proposals } = featureServices(root, rooms);
   const git = gitWorkspaceRoutes(root, repository, rooms, () => publisher.state.kind === 'building');
-  return async (request: IncomingMessage, response: ServerResponse, pathname: string, readBody: () => Promise<string>): Promise<boolean> => {
+  // `sources` come from the dev server, which exists only after these routes are built; the
+  // request handler that has it passes it per request.
+  return async (
+    request: IncomingMessage,
+    response: ServerResponse,
+    pathname: string,
+    sources: ContextSources | undefined,
+    readBody: () => Promise<string>,
+  ): Promise<boolean> => {
     if (
       (await git(request, response, pathname, readBody)) ||
       (await pageRenameRoute(root, rooms, request, response, pathname, readBody)) ||
@@ -70,7 +79,7 @@ export function featureRoutes(root: string, rooms: ReturnType<typeof createRooms
     if (publishRoute(publisher, request, response, pathname)) {
       return true;
     }
-    if (await aiRoute(proposals, request, response, pathname, readBody)) {
+    if (await aiRoute(proposals, sources, request, response, pathname, readBody)) {
       return true;
     }
     return false;

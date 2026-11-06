@@ -1,7 +1,9 @@
 import { availableModels } from './configuration';
 import { effortLevels, parseChatInput } from './chatContracts';
 import { randomUUID } from 'node:crypto';
-import { aiConfiguration, creatable, optionalSource, propose, proposedSource, validatedSource, type Proposal } from './agent';
+import { aiConfiguration, creatable, optionalSource, propose, proposedSource, validatedSource, type Proposal, type ProposedChange } from './agent';
+import { proposalDiffs, type DiffSource } from './lineDiff';
+import { gatherContext, ownerInstructions, parseContextRequest, type ContextSources } from './aiContext';
 import { parseDirection, parseReversibleChanges, reversibleChange, reversibleChanges, revertStep } from './reversible';
 import type { FileChange } from '../project/changeFiles';
 import type { createRooms } from '../collaboration/rooms';
@@ -15,18 +17,19 @@ export class ProposalStore {
     readonly rooms: ReturnType<typeof createRooms>,
   ) {}
   private active = 0;
-  async create(value: unknown, signal?: AbortSignal) {
+  /** `sources` render and sample through the dev server; without them the model gets source code only. */
+  async create(value: unknown, signal?: AbortSignal, sources?: ContextSources) {
     if (this.active >= 3) {
       throw new Error('Three chats are already working. Wait for one to finish.');
     }
     this.active++;
     try {
-      return await this.generate(value, signal);
+      return await this.generate(value, signal, sources);
     } finally {
       this.active--;
     }
   }
-  private async generate(value: unknown, signal?: AbortSignal) {
+  private async generate(value: unknown, signal: AbortSignal | undefined, sources: ContextSources | undefined) {
     const config = aiConfiguration();
     if (!config) {
       throw new Error('Set AI_BASE_URL and AI_MODEL on the server to connect an AI provider. AI_API_KEY is optional for local providers.');
@@ -49,12 +52,16 @@ export class ProposalStore {
     if (this.proposals.size + this.active > 30) {
       throw new Error('Too many pending AI proposals');
     }
+    const file = sourcePath(input['file']);
+    const chat = parseChatInput(input);
+    const contextRequest = parseContextRequest(input);
+    const [context, guidance] = await Promise.all([gatherContext(this.root, file, contextRequest, sources), ownerInstructions(this.root)]);
     const proposal = await propose(
       this.root,
-      sourcePath(input['file']),
+      file,
       string(input['prompt'], 12_000),
       { ...config, model, ...(effort ? { effort } : {}) },
-      parseChatInput(input),
+      { ...chat, context, ...(guidance ? { guidance } : {}) },
       signal,
     );
     signal?.throwIfAborted();
@@ -67,6 +74,7 @@ export class ProposalStore {
       summary: proposal.summary,
       files: proposal.changes.map((change) => change.file),
       changes: proposal.changes,
+      diffs: proposalDiffs(await Promise.all(proposal.changes.map((change) => diffSource(this.root, change)))),
     };
   }
   async apply(value: unknown) {
@@ -115,6 +123,17 @@ export class ProposalStore {
       await changeFiles(this.root, this.rooms, planned);
       return { reverted: true };
     });
+  }
+}
+
+// The file's source now and with the change applied, for the diff the chat shows. A change that
+// can't apply (its `before` is gone or ambiguous, or the result doesn't parse) is shown with its
+// reason, rather than failing the whole reply: the summary and the other files are still useful.
+async function diffSource(root: string, change: ProposedChange): Promise<DiffSource | { readonly file: string; readonly failure: string }> {
+  try {
+    return { file: change.file, previous: await optionalSource(root, change.file), next: await proposedSource(root, change) };
+  } catch (error) {
+    return { file: change.file, failure: error instanceof Error ? error.message : 'This change cannot be applied.' };
   }
 }
 

@@ -6,13 +6,15 @@ import { updateChat, type ChatThread } from './chatState';
 import { useDictation } from './useDictation';
 import { sendChat, stopChat } from './chatActions';
 import { effortLevels, type ModelConfiguration } from './chatContracts';
+import type { ChatRequestContext } from './chatRequestContext';
 
 interface ComposerProps {
   readonly chat: ChatThread;
   readonly file: string;
+  readonly context: ChatRequestContext;
   readonly config: ModelConfiguration;
 }
-export function ChatComposer({ chat, file, config }: ComposerProps) {
+export function ChatComposer({ chat, file, context, config }: ComposerProps) {
   const { loading, attach } = useChatAttachments(chat.id);
   const [dragging, setDragging] = useState(false);
   const voice = useDictation((text) =>
@@ -26,6 +28,11 @@ export function ChatComposer({ chat, file, config }: ComposerProps) {
       <div className="chat-context" title={file}>
         <ChatIcon name="file" />
         <span>{file.replace(/^src\//, '')}</span>
+        {context.selection && (
+          <span className="chat-selection-label" title="The selected element is sent with your message">
+            {context.selection.label}
+          </span>
+        )}
         <span className="chat-draft-label">Draft</span>
       </div>
       <form
@@ -33,7 +40,7 @@ export function ChatComposer({ chat, file, config }: ComposerProps) {
         onSubmit={(event) => {
           event.preventDefault();
           if (!loading && !voice.listening && config.models.includes(chat.model)) {
-            void sendChat(chat.id, file, supportedEffort(config, chat));
+            void sendChat(chat.id, file, supportedEffort(config, chat), context);
           }
         }}
         onDragOver={(event) => {

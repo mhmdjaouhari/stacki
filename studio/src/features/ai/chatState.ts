@@ -3,11 +3,14 @@ import { record, string } from '../../shared/validation';
 import { parseImages, type ChatImage } from './chatContracts';
 import type { ProposedChange } from './agent';
 import { parseReversibleChanges, type ReversibleChange } from './reversible';
+import { parseFileDiffs, type FileDiff } from './lineDiff';
 
 export interface ChatProposal {
   readonly id: string;
   readonly summary: string;
   readonly changes: readonly ProposedChange[];
+  /** Line diffs from the server; proposals saved before diffs existed have none. */
+  readonly diffs?: readonly FileDiff[];
 }
 export interface ChatMessage {
   readonly id: string;
@@ -18,6 +21,8 @@ export interface ChatMessage {
   readonly outcome?: string;
   /** An applied proposal that the chat can undo, or redo once undone. */
   readonly applied?: AppliedChange;
+  /** The applied proposal's diffs, kept so the change can still be read after applying. */
+  readonly diffs?: readonly FileDiff[];
 }
 export interface AppliedChange {
   readonly changes: readonly ReversibleChange[];
@@ -204,6 +209,7 @@ function parseMessage(value: unknown): ChatMessage {
     ...(message['proposal'] ? { proposal: parseProposal(message['proposal']) } : {}),
     ...(message['outcome'] ? { outcome: string(message['outcome'], 300) } : {}),
     ...(message['applied'] ? { applied: parseApplied(message['applied']) } : {}),
+    ...(message['diffs'] ? { diffs: parseFileDiffs(message['diffs']) } : {}),
   };
 }
 export function parseApplied(value: unknown): AppliedChange {
@@ -231,5 +237,6 @@ export function parseProposal(value: unknown): ChatProposal {
         after: string(change['after']),
       };
     }),
+    ...(input['diffs'] === undefined ? {} : { diffs: parseFileDiffs(input['diffs']) }),
   };
 }
