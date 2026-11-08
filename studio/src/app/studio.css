@@ -10,29 +10,32 @@
 .studio-app {
   height: 100dvh;
 }
+/* The header sits at the start of the canvas toolbar row, before the breadcrumbs
+   (emdash-stacki's fork), instead of a row of its own. */
 .studio-titlebar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-  padding: 0 12px;
-  height: 40px;
-  gap: 12px;
-  -webkit-app-region: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 55%;
+  padding: 0 12px 0 10px;
+  border-inline-end: 1px solid var(--border);
+  align-self: stretch;
 }
 .studio-titlebar-start,
 .studio-titlebar-center,
 .studio-titlebar-end {
   display: flex;
   align-items: center;
-  gap: inherit;
+  gap: 8px;
   min-width: 0;
 }
-.studio-titlebar-center {
-  justify-content: center;
-}
-.studio-titlebar-end {
-  justify-content: flex-end;
+.studio-titlebar-end:empty {
+  display: none;
 }
 .studio-titlebar-start .project-name {
+  max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -510,6 +513,10 @@
   display: none;
 }
 .studio-app[data-editor-layout='collapsed'] .studio-right {
+  display: none;
+}
+/* Docked, the toolbar's panel button can hide the inspector column (emdash-stacki's fork). */
+.studio-app[data-editor-layout='docked'] .studio-right.inspector-hidden {
   display: none;
 }
 /* Below the canvas toolbar, so its panel button stays in reach to close the panel again. */

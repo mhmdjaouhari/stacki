@@ -49,6 +49,8 @@ interface Props {
   readonly device: PreviewDevice;
   readonly onDevice: (device: PreviewDevice) => void;
   readonly inspector: PreviewInspectorActions | undefined;
+  /** Shown at the start of the toolbar row, before the breadcrumbs (Studio's header). */
+  readonly leading?: React.ReactNode;
   readonly openComponent?: ((name: string, id: string, occurrence: number) => void) | undefined;
 }
 export function PreviewCanvas(props: Props) {
@@ -80,6 +82,7 @@ export function PreviewCanvas(props: Props) {
   return (
     <main className="studio-center" data-canvas-interactive={interaction.active}>
       <div className="studio-preview-toolbar">
+        {props.leading}
         <PreviewToolbar
           crumbs={[...(props.pageLabel ? [{ id: undefined, label: props.pageLabel }] : []), ...crumbsFor(props.nodes, props.selected)]}
           onCrumb={(id) => props.select(id ?? 'layout')}

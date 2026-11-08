@@ -11,7 +11,7 @@ import type { FollowTarget } from '../features/collaboration/useCollaborators';
 import type { PreviewDevice } from '../../vendor/stacki/src/features/preview/PreviewToolbar';
 import { StyleSettings } from '../features/settings/StyleSettings';
 import { useIdleSession } from '../features/session/useIdleSession';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { routeFor } from '../features/project/projectClient';
 import { pageForRoute } from '../features/pages/templateRoutes';
 import { canvasRouteFor, chooseTemplateEntry } from '../features/pages/templateEntryStore';
@@ -81,21 +81,14 @@ export function Editor(props: EditorProps) {
   const defaultsCanvas = useStudioDefaultsCanvas(props, model);
   const scopedModel = defaultsSelection(model, defaultsCanvas);
   const titledProps = editorTitleProps(props, model);
-  const layout = useStudioLayout(panel, !model.collection, setMobileSettings);
+  const [inspectorHidden, toggleInspectorHidden] = useInspectorHidden();
+  const layout = useStudioLayout(panel, !model.collection && !inspectorHidden, setMobileSettings);
   if (session.paused) {
     return <PausedEditor resume={session.resume} />;
   }
   return (
     <CodeAccess.Provider value={props.view.role !== 'client'}>
       <div className="app studio-app" data-editor-layout={layout} onKeyDown={interactivePreview.active ? (event) => event.stopPropagation() : undefined}>
-        <EditorHeader
-          closeDefaults={() => void defaultsCanvas.run('done')}
-          defaultsMode={defaultsCanvas.state.kind !== 'idle'}
-          {...titledProps}
-          document={model.document}
-          interactivePreview={interactivePreview}
-          cursorChat={cursorChatFor(model, props.view.device, interactivePreview)}
-        />
         <DefaultsCanvasBar canvas={defaultsCanvas} />
         <CanvasContextMenu props={props} model={scopedModel} defaultsCanvas={defaultsCanvas} />
         <SyncNotice refresh={props.refresh} report={props.report} />
@@ -109,12 +102,53 @@ export function Editor(props: EditorProps) {
             }}
           />
           <Sidebar props={titledProps} model={scopedModel} defaultsCanvas={defaultsCanvas} />
-          <EditorContent props={titledProps} model={scopedModel} mobileSettings={mobileSettings} setMobileSettings={setMobileSettings} />
+          <EditorContent
+            props={titledProps}
+            model={scopedModel}
+            mobileSettings={mobileSettings}
+            setMobileSettings={setMobileSettings}
+            inspectorHidden={inspectorHidden}
+            toggleInspectorHidden={toggleInspectorHidden}
+            header={
+              <EditorHeader
+                closeDefaults={() => void defaultsCanvas.run('done')}
+                defaultsMode={defaultsCanvas.state.kind !== 'idle'}
+                {...titledProps}
+                document={model.document}
+                interactivePreview={interactivePreview}
+                cursorChat={cursorChatFor(model, props.view.device, interactivePreview)}
+              />
+            }
+          />
         </PreviewWorkspace>
       </div>
     </CodeAccess.Provider>
   );
 }
+const INSPECTOR_HIDDEN_KEY = 'stacki.inspector.hidden';
+
+// Whether the docked inspector column is hidden, remembered per browser (emdash-stacki's fork).
+function useInspectorHidden(): readonly [boolean, () => void] {
+  const [hidden, setHidden] = useState(() => {
+    try {
+      return window.localStorage.getItem(INSPECTOR_HIDDEN_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const toggle = useCallback(() => {
+    setHidden((current) => {
+      try {
+        window.localStorage.setItem(INSPECTOR_HIDDEN_KEY, current ? '0' : '1');
+      } catch {
+        // Not remembered; the column still toggles for this visit.
+      }
+      return !current;
+    });
+  }, []);
+  return [hidden, toggle] as const;
+}
+
 function editorTitleProps(props: EditorProps, model: ReturnType<typeof useEditor>): EditorProps {
   return { ...props, project: livePageTitles(props.project, props.file, model) };
 }
@@ -196,11 +230,17 @@ function EditorContent({
   model,
   mobileSettings,
   setMobileSettings,
+  inspectorHidden,
+  toggleInspectorHidden,
+  header,
 }: {
   readonly props: EditorProps;
   readonly model: ReturnType<typeof useEditor>;
   readonly mobileSettings: boolean;
   readonly setMobileSettings: (visible: boolean) => void;
+  readonly inspectorHidden: boolean;
+  readonly toggleInspectorHidden: () => void;
+  readonly header: React.ReactNode;
 }) {
   const { device, setDevice, setPanel } = props.view;
   const mobile = useMobileEditor();
@@ -231,7 +271,9 @@ function EditorContent({
           base: canvasRouteBase(model.preview.url, canvasRouteFor(props.previewFile) ?? routeFor(props.previewFile)),
           routes: props.project.pages.map(routeFor),
         }}
-        inspector={mobile ? { open: mobileSettings && !props.view.pick, toggle: toggleInspector } : undefined}
+        // Docked, the button hides and shows the inspector column; collapsed, it floats it open.
+        inspector={mobile ? { open: mobileSettings && !props.view.pick, toggle: toggleInspector } : { open: !inspectorHidden, toggle: toggleInspectorHidden }}
+        leading={header}
       />
       <Inspector
         props={props}
@@ -239,6 +281,7 @@ function EditorContent({
         openCode={() => model.codeWindow.open()}
         device={device}
         visible={mobileSettings && !props.view.pick}
+        hidden={inspectorHidden}
         close={() => setMobileSettings(false)}
       />
       <CmsWorkspace props={props} document={model.document} />
@@ -258,6 +301,7 @@ function Inspector({
   props,
   model,
   visible,
+  hidden,
   device,
   close,
   openCode,
@@ -265,6 +309,7 @@ function Inspector({
   props: EditorProps;
   model: ReturnType<typeof useEditor>;
   visible: boolean;
+  hidden: boolean;
   device: PreviewDevice;
   openCode: () => void;
   close: () => void;
@@ -280,7 +325,7 @@ function Inspector({
   return (
     <aside
       aria-label="Element inspector"
-      className={`studio-right ${visible ? 'mobile-open' : ''} ${client ? 'client-inspector' : ''}`}
+      className={`studio-right ${visible ? 'mobile-open' : ''} ${hidden ? 'inspector-hidden' : ''} ${client ? 'client-inspector' : ''}`}
       style={{ width: resize.width }}
     >
       {/* The close button shares the tab row, so it takes the tabs' height and centre. */}

@@ -13,7 +13,7 @@ import { useComponentBack } from './useComponentBack';
 import { TemplateEntryPicker } from '../pages/TemplateEntryPicker';
 import { useEditorRole } from '../roles/useEditorRole';
 import { projectPages } from './pageLabels';
-import { PreviewButton, type InteractivePreviewState } from '../preview/InteractivePreview';
+import type { InteractivePreviewState } from '../preview/InteractivePreview';
 interface HeaderProps {
   readonly cursorChat: (() => void) | undefined;
   readonly defaultsMode: boolean;
@@ -57,7 +57,8 @@ export function EditorHeader({
     </>
   );
   return (
-    <header className={`titlebar studio-titlebar ${componentOpen ? 'component-open' : ''}`}>
+    // Inline at the start of the canvas toolbar row (emdash-stacki's fork): Studio has no title bar row.
+    <div className={`studio-titlebar ${componentOpen ? 'component-open' : ''}`}>
       <div className="studio-titlebar-start">
         <AccountMenu saved={!defaultsMode && document?.status === 'Saved'} session={session} cursorChat={cursorChat} />
         <span className="project-name">{project.name}</span>
@@ -72,10 +73,9 @@ export function EditorHeader({
       </div>
       <div className="studio-titlebar-end">
         <Collaborators document={document} session={session} follow={follow} />
-        <PreviewButton preview={interactivePreview} />
         {!direct && <PublishButton report={report} />}
       </div>
-    </header>
+    </div>
   );
 }
 
