@@ -30,8 +30,8 @@
   aspect-ratio: 1 / 1;
   background-color: var(--color-bg-surface-raised);
   background-image:
-    linear-gradient(45deg, rgba(255, 255, 255, 0.06) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.06) 75%),
-    linear-gradient(45deg, rgba(255, 255, 255, 0.06) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.06) 75%);
+    linear-gradient(45deg, rgba(var(--fg-rgb), 0.06) 25%, transparent 25%, transparent 75%, rgba(var(--fg-rgb), 0.06) 75%),
+    linear-gradient(45deg, rgba(var(--fg-rgb), 0.06) 25%, transparent 25%, transparent 75%, rgba(var(--fg-rgb), 0.06) 75%);
   background-position:
     0 0,
     8px 8px;
@@ -322,7 +322,7 @@
 }
 
 .clip-path_control-label.is-inherited {
-  color: #ffb454;
+  color: var(--pastel-ffb454, #ffb454);
   background: color-mix(in srgb, #ffb454 24%, transparent);
   cursor: default;
 }

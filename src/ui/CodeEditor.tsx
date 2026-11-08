@@ -55,7 +55,7 @@ export const appTheme = EditorView.theme(
       backgroundColor: 'var(--selection)',
       color: 'var(--selection-text)',
     },
-    '.cm-activeLine': { backgroundColor: 'rgba(255, 255, 255, 0.03)' },
+    '.cm-activeLine': { backgroundColor: 'rgba(var(--fg-rgb, 255, 255, 255), 0.03)' },
     // Find results. Every hit gets a quiet blue wash; the one you're ON gets
     // amber with an edge, so running through matches is a colour changing
     // places rather than a list of identical highlights to count through.
@@ -87,7 +87,7 @@ export const appTheme = EditorView.theme(
       outline: 'none',
     },
     '.cm-tooltip': {
-      backgroundColor: '#232323',
+      backgroundColor: 'var(--tone-232323, #232323)',
       border: '1px solid var(--border-strong)',
       borderRadius: '6px',
     },

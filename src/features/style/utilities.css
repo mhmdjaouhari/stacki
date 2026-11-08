@@ -198,7 +198,7 @@
   --surface-control: var(--color-bg-surface);
   --surface-control-hover: var(--color-bg-surface-raised);
   --surface-inset: var(--color-bg-inset);
-  --surface-inset-hover: #181818;
+  --surface-inset-hover: var(--tone-181818, #181818);
   --surface-overlay: var(--color-bg-surface-raised);
 }
 .u-surface-surface {
@@ -393,7 +393,7 @@ body.is-scrubbing * {
     box-shadow var(--transition-fast);
 }
 .u-field:hover {
-  background: #181818;
+  background: var(--tone-181818, #181818);
 }
 .u-field:focus-within {
   box-shadow: 0 0 0 var(--border-width-default) var(--color-border-focus);

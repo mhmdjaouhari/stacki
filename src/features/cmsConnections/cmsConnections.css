@@ -4,7 +4,7 @@
   /* The Settings section rhythm (.app-preferences): space, divider, 24px to the next. */
   padding-bottom: 24px;
   margin-bottom: 24px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--line-333333, #333);
 }
 .cms-connections h3 {
   margin: 0 0 8px;
@@ -17,7 +17,7 @@
   line-height: 1.6;
 }
 .cms-connections .cms-connections-alert {
-  color: #ff9b92;
+  color: var(--pastel-ff9b92, #ff9b92);
 }
 .cms-connection-list {
   list-style: none;
@@ -31,7 +31,7 @@
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  border: 1px solid #333;
+  border: 1px solid var(--line-333333, #333);
   border-radius: 8px;
   font-size: 12px;
 }
@@ -65,7 +65,7 @@
 .cms-connect-split > .cms-connect-arrow {
   border-top-left-radius: 0;
   border-bottom-left-radius: 0;
-  border-left: 1px solid #1b1b1b;
+  border-left: 1px solid var(--line-1b1b1b, #1b1b1b);
   width: 24px;
   min-width: 24px;
   padding-inline: 0;
@@ -83,9 +83,9 @@
   gap: 4px;
   padding: 8px;
   min-width: 220px;
-  border: 1px solid var(--border, #444);
+  border: 1px solid var(--border, var(--line-444444, #444));
   border-radius: 8px;
-  background: var(--panel, #242424);
+  background: var(--panel, var(--tone-242424, #242424));
   box-shadow: 0 8px 24px #0004;
 }
 .cms-connect-menu button {

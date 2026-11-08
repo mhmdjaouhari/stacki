@@ -30,15 +30,15 @@
    *   overlay     — top of stack (popovers, dropdowns)
    */
   --color-bg-inset: #000000;
-  --color-bg-page: #1c1c1c;
-  --color-bg-surface: #2b2b2b;
-  --color-bg-surface-raised: #3b3b3b;
-  --color-bg-surface-high: #4a4a4a;
+  --color-bg-page: var(--tone-1c1c1c, #1c1c1c);
+  --color-bg-surface: var(--tone-2b2b2b, #2b2b2b);
+  --color-bg-surface-raised: var(--tone-3b3b3b, #3b3b3b);
+  --color-bg-surface-high: var(--tone-4a4a4a, #4a4a4a);
   /* Popover/menu surface. Aliased to `raised` so the ramp has one fewer near-duplicate
      grey (it was #363636, a hair off raised's #3b3b3b). */
   --color-bg-surface-overlay: var(--color-bg-surface-raised);
-  --color-bg-hover: rgba(255, 255, 255, 0.05);
-  --color-bg-active: rgba(255, 255, 255, 0.08);
+  --color-bg-hover: rgba(var(--fg-rgb), 0.05);
+  --color-bg-active: rgba(var(--fg-rgb), 0.08);
 
   /* ── Surface context ──
    * Controls don't hardcode a surface color; they read these so they lift one
@@ -56,14 +56,14 @@
   --surface-control: var(--color-bg-surface);
   --surface-control-hover: var(--color-bg-surface-raised);
   --surface-inset: var(--color-bg-inset);
-  --surface-inset-hover: #181818;
+  --surface-inset-hover: var(--tone-181818, #181818);
   --surface-overlay: var(--color-bg-surface-raised);
 
   /* Borders — used sparingly. Default look has no border; reserve strokes for
    * focus states, semantic accents (error/success), and explicit dividers. */
-  --color-border-subtle: rgba(255, 255, 255, 0.04);
-  --color-border-default: rgba(255, 255, 255, 0.08);
-  --color-border-strong: rgba(255, 255, 255, 0.16);
+  --color-border-subtle: rgba(var(--fg-rgb), 0.04);
+  --color-border-default: rgba(var(--fg-rgb), 0.08);
+  --color-border-strong: rgba(var(--fg-rgb), 0.16);
   --color-border-focus: var(--color-selection-bg); /* blue focus outline for inputs/controls */
 
   /* Text (high → low emphasis). Secondary and tertiary clear WCAG AA (4.5:1) up
@@ -74,7 +74,7 @@
   --color-text-secondary: #c2c2c2;
   --color-text-tertiary: #a6a6a6;
   --color-text-disabled: #707070;
-  --color-text-inverse: #1c1c1c;
+  --color-text-inverse: var(--tone-1c1c1c, #1c1c1c);
 
   /* Semantic */
   --color-accent: #ffffff;
@@ -205,7 +205,7 @@
   --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
-  --shadow-focus: 0 0 0 3px rgba(255, 255, 255, 0.1);
+  --shadow-focus: 0 0 0 3px rgba(var(--fg-rgb), 0.1);
 
   /* ──────────────────────────── Transitions ──────────────────────────── */
 

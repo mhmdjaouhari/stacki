@@ -536,13 +536,13 @@
 }
 
 .embed-editor_spacing-tri.is-top {
-  fill: color-mix(in srgb, #fff 9%, var(--color-bg-surface));
+  fill: color-mix(in srgb, var(--ink-ffffff, #fff) 9%, var(--color-bg-surface));
 }
 .embed-editor_spacing-tri.is-bottom {
   fill: color-mix(in srgb, #000 16%, var(--color-bg-surface));
 }
 .embed-editor_spacing-tri.is-left {
-  fill: color-mix(in srgb, #fff 3%, var(--color-bg-surface));
+  fill: color-mix(in srgb, var(--ink-ffffff, #fff) 3%, var(--color-bg-surface));
 }
 .embed-editor_spacing-tri.is-right {
   fill: color-mix(in srgb, #000 8%, var(--color-bg-surface));
@@ -552,7 +552,7 @@
    after the per-side fills so it wins at equal specificity. */
 .embed-editor_spacing-tri:hover,
 .embed-editor_spacing-tri:active {
-  fill: color-mix(in srgb, #fff 14%, var(--color-bg-surface));
+  fill: color-mix(in srgb, var(--ink-ffffff, #fff) 14%, var(--color-bg-surface));
 }
 
 /* Centre placeholder — the innermost dark content bar filling the padding hole. */
@@ -683,15 +683,15 @@
    text. This overrides the plain blue/orange fill at equal specificity. */
 .embed-editor_spacing-label.is-overridden,
 .embed-editor_spacing-label.is-overridden:hover:not(:disabled) {
-  color: #ffffff;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13) 0%, rgba(255, 255, 255, 0.11) 100%);
+  color: var(--ink-ffffff, #ffffff);
+  background: linear-gradient(180deg, rgba(var(--fg-rgb), 0.13) 0%, rgba(var(--fg-rgb), 0.11) 100%);
 }
 
 /* Connected spacing values use the variable treatment while keeping the full
    group/name available in the label's hover tooltip. */
 .embed-editor_spacing-label.is-variable,
 .embed-editor_spacing-label.is-variable:hover:not(:disabled) {
-  color: #c4afff;
+  color: var(--pastel-c4afff, #c4afff);
   background: #453b63;
 }
 
@@ -727,7 +727,7 @@
   overflow-wrap: anywhere;
 }
 .embed-editor_spacing-tooltip-meta {
-  color: #c4afff;
+  color: var(--pastel-c4afff, #c4afff);
   font-size: var(--font-size-2xs);
   overflow-wrap: anywhere;
 }
@@ -871,8 +871,8 @@
 .embed-editor_size-label.is-overridden .u-field-label.is-active,
 .embed-editor_prop-label.is-overridden .u-field-label,
 .embed-editor_prop-label.is-overridden .u-field-label.is-active {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13) 0%, rgba(255, 255, 255, 0.11) 100%);
-  color: #ffffff;
+  background: linear-gradient(180deg, rgba(var(--fg-rgb), 0.13) 0%, rgba(var(--fg-rgb), 0.11) 100%);
+  color: var(--ink-ffffff, #ffffff);
 }
 
 .embed-editor_override-note {
@@ -897,7 +897,7 @@
 }
 .embed-editor_override-note-sel:hover {
   /* Just lighten the fill a touch — keep the blue text/background identity. */
-  background-image: linear-gradient(rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.12));
+  background-image: linear-gradient(rgba(var(--fg-rgb), 0.12), rgba(var(--fg-rgb), 0.12));
 }
 
 /* Overflow label + its disclosure toggle for the per-axis (X / Y) rows. */
@@ -1395,7 +1395,7 @@
   /* A filled box, lighter than the panel: the black inset fill with a hairline
      border vanished against the panel's own dark background. */
   border: 0;
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(var(--fg-rgb), 0.18);
   cursor: pointer;
   transition:
     background var(--transition-fast),
@@ -3668,7 +3668,7 @@ textarea.embed-editor_value-input.is-expanded {
 }
 .embed-editor_element-tip-chip.is-attribute {
   background: #453b63;
-  color: #c4afff;
+  color: var(--pastel-c4afff, #c4afff);
 }
 
 /* The source trigger reads as a little tag — green for a component embed, blue
@@ -3725,8 +3725,8 @@ textarea.embed-editor_value-input.is-expanded {
   padding-bottom: var(--space-5);
   margin-bottom: calc(-1 * var(--space-4));
   /* Match the app's side panel rather than the panel-kit's own page tone: this
-     cluster is sticky, so it has to be opaque, and #1c1c1c read as a lighter
-     band sitting on the #111 panel. */
+     cluster is sticky, so it has to be opaque, and var(--tone-1c1c1c, #1c1c1c) read as a lighter
+     band sitting on the var(--tone-111111, #111) panel. */
   background: var(--bg-panel, var(--color-bg-page));
   /* …and correct the surface context to match what's actually painted. The
      rule declares u-surface-surface (#2b2b2b), which it never paints, so
@@ -3741,8 +3741,8 @@ textarea.embed-editor_value-input.is-expanded {
 /* Extend the opaque background up over the scroll container's top padding
    (`.app_body` has padding: --space-5) — otherwise content scrolled up peeks through
    the strip the cluster's own box doesn't reach. Same tone as the cluster itself: the
-   panel-kit's own page tone (#1c1c1c) read as a lighter band above the dropdown on this
-   app's #111 panel. */
+   panel-kit's own page tone (var(--tone-1c1c1c, #1c1c1c)) read as a lighter band above the dropdown on this
+   app's var(--tone-111111, #111) panel. */
 .embed-editor_head::before {
   content: '';
   position: absolute;
@@ -3985,7 +3985,7 @@ textarea.embed-editor_value-input.is-expanded {
 }
 .embed-editor_selector-chip:is(.is-global, .is-inherited).is-active {
   background: var(--color-selector-context-bg-active);
-  color: #fff;
+  color: var(--ink-ffffff, #fff);
 }
 .embed-editor_selector-chip:is(.is-global, .is-inherited).is-active:hover:not(:disabled) {
   background: var(--color-selector-context-bg-active);
@@ -5198,13 +5198,13 @@ textarea.embed-editor_value-input.is-expanded {
   letter-spacing: 0.14em;
 }
 .embed-editor_ease-play-dot {
-  fill: #fff;
+  fill: var(--ink-ffffff, #fff);
   stroke: var(--color-info);
   stroke-width: 1.5;
 }
 /* The right-edge playhead — a light home-plate marker that slides up with progress. */
 .embed-editor_ease-playhead {
-  fill: #d4d4d4;
+  fill: var(--ink-d4d4d4, #d4d4d4);
 }
 .embed-editor_ease-curve {
   width: 100%;
@@ -5217,11 +5217,11 @@ textarea.embed-editor_value-input.is-expanded {
    invisible, so the graph read as solid black). */
 .embed-editor_ease-grid {
   fill: var(--color-bg-inset);
-  stroke: color-mix(in srgb, #fff 22%, transparent);
+  stroke: color-mix(in srgb, var(--ink-ffffff, #fff) 22%, transparent);
   stroke-width: 1;
 }
 .embed-editor_ease-gridline line {
-  stroke: color-mix(in srgb, #fff 15%, transparent);
+  stroke: color-mix(in srgb, var(--ink-ffffff, #fff) 15%, transparent);
   stroke-width: 1;
 }
 .embed-editor_ease-handle-line {
@@ -5230,7 +5230,7 @@ textarea.embed-editor_value-input.is-expanded {
 }
 .embed-editor_ease-path {
   fill: none;
-  stroke: #fff;
+  stroke: var(--ink-ffffff, #fff);
   stroke-width: 2;
 }
 .embed-editor_ease-handle {
@@ -5366,27 +5366,27 @@ textarea.embed-editor_value-input.is-expanded {
    variable's, numbers are the value's own, and everything structural stays quiet.
    Inherited `color` is the fallback for anything untokenised. */
 .cx-num {
-  color: #d6b6ff;
+  color: var(--pastel-d6b6ff, #d6b6ff);
 }
 /* Lighter than the variable purple it echoes so it holds 4.5:1 up to the
    overlay surface (#9d7fd8 was 3.5:1 there). */
 .cx-unit {
-  color: #b29ae0;
+  color: var(--pastel-b29ae0, #b29ae0);
 }
 .cx-fn {
-  color: #7fd1e8;
+  color: var(--pastel-7fd1e8, #7fd1e8);
 }
 .cx-ident {
-  color: var(--color-text-primary, #f5f5f5);
+  color: var(--color-text-primary, var(--ink-f5f5f5, #f5f5f5));
 }
 .cx-string {
-  color: #a8dba8;
+  color: var(--pastel-a8dba8, #a8dba8);
 }
 .cx-hex {
-  color: #a8dba8;
+  color: var(--pastel-a8dba8, #a8dba8);
 }
 .cx-prop {
-  color: #c4afff;
+  color: var(--pastel-c4afff, #c4afff);
 }
 .cx-comment {
   color: var(--color-text-tertiary, #a6a6a6);
@@ -5426,7 +5426,7 @@ textarea.embed-editor_value-input.is-expanded {
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 0 0 5px var(--ee-connect);
-  color: #fff;
+  color: var(--ink-ffffff, #fff);
   cursor: pointer;
   opacity: 0;
   /* Grow from the dot's own center so the small dot and the big purple "+" share
@@ -5549,7 +5549,7 @@ textarea.embed-editor_value-input.is-expanded {
   padding: 1px var(--space-2);
   border-radius: var(--radius-sm);
   background: rgba(124, 92, 255, 0.28);
-  color: #cbbcff;
+  color: var(--pastel-cbbcff, #cbbcff);
   font-family: var(--font-family-sans);
   font-size: var(--font-size-sm);
   line-height: 1.35;
@@ -5691,7 +5691,7 @@ textarea.embed-editor_value-input.is-expanded {
 }
 .embed-editor_varpicker-item.is-selected .embed-editor_varpicker-item-icon,
 .embed-editor_varpicker-item.is-selected .embed-editor_varpicker-item-name {
-  color: #cbbcff;
+  color: var(--pastel-cbbcff, #cbbcff);
 }
 .embed-editor_varpicker-item-check {
   flex: none;

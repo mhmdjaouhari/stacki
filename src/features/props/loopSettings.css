@@ -375,7 +375,7 @@
   z-index: 390;
   padding: 10px;
   border-radius: 10px;
-  background: #232323;
+  background: var(--tone-232323, #232323);
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55);
 }
 .loop-settings-popup .loop-settings-editor {
@@ -599,7 +599,7 @@
 }
 .loop-bind-dot .bind-plus {
   position: absolute;
-  color: #fff;
+  color: var(--ink-ffffff, #fff);
   opacity: 0;
 }
 .loop-bind-dot:hover .bind-dot {
@@ -624,7 +624,7 @@
   padding: 1px 6px;
   border-radius: 4px;
   background: rgba(146, 116, 255, 0.22);
-  color: #d7ccff;
+  color: var(--pastel-d7ccff, #d7ccff);
   font-family: var(--mono);
   font-weight: 400;
   font-size: 11px;
@@ -649,7 +649,7 @@
   background: rgba(255, 90, 90, 0.12);
 }
 .loop-bind-problem {
-  color: #ff8a8a;
+  color: var(--pastel-ff8a8a, #ff8a8a);
   font-size: 11px;
 }
 .loop-bind-note {
@@ -721,7 +721,7 @@
   border: none;
   border-radius: 6px;
   background: rgba(146, 116, 255, 0.28);
-  color: #c9bbff;
+  color: var(--pastel-c9bbff, #c9bbff);
   font: inherit;
   font-size: 12px;
   text-align: left;
@@ -769,7 +769,7 @@
   background: var(--bg-hover);
 }
 .loop-linked-item.accent {
-  color: #b9a6ff;
+  color: var(--pastel-b9a6ff, #b9a6ff);
 }
 .loop-linked-heading {
   margin-top: 6px;
@@ -820,7 +820,7 @@
   margin: 4px -10px -10px;
   padding: 10px;
   border-radius: 0 0 10px 10px;
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(var(--fg-rgb), 0.03);
 }
 .loop-property-default .loop-settings-section,
 .loop-property-default .loop-settings-editor-row {
@@ -937,7 +937,7 @@
   background: rgba(255, 80, 80, 0.12);
 }
 .loop-settings-code-problem {
-  color: #ff8a8a;
+  color: var(--pastel-ff8a8a, #ff8a8a);
   font-size: 11px;
 }
 
@@ -1009,7 +1009,7 @@
   border: none;
   border-radius: 6px;
   background: transparent;
-  color: #b9a6ff;
+  color: var(--pastel-b9a6ff, #b9a6ff);
   font: inherit;
   font-size: 12px;
   text-align: left;
@@ -1036,7 +1036,7 @@
   margin-top: 4px;
   padding: 6px 8px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(var(--fg-rgb), 0.05);
   color: var(--text-dim);
   font-size: 11px;
   line-height: 1.4;
@@ -1053,7 +1053,7 @@
   border: none;
   border-radius: 6px;
   background: rgba(146, 116, 255, 0.28);
-  color: #c9bbff;
+  color: var(--pastel-c9bbff, #c9bbff);
   font: inherit;
   font-size: 11px;
 }

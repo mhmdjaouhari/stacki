@@ -34,31 +34,33 @@ export type CodeLine = readonly CodeToken[];
 
 export type CodeLanguage = 'astro' | 'css' | 'html' | 'javascript' | 'json' | 'markdown' | 'shell' | 'typescript';
 
+// Each colour is a variable with its dark value as the fallback, so a light theme can
+// swap the palette (studio/src/app/theme-light.css in emdash-stacki's fork).
 export const CODE_TOKEN_RULES: readonly { readonly tag: Tag | readonly Tag[]; readonly style: CodeTokenStyle }[] = [
-  { tag: [t.keyword, t.modifier], style: { color: '#c792ea' } },
-  { tag: [t.propertyName], style: { color: '#80cbc4' } },
-  { tag: [t.className, t.tagName], style: { color: '#ffcb6b' } },
-  { tag: [t.string, t.special(t.string)], style: { color: '#c3e88d' } },
-  { tag: [t.number, t.unit, t.bool, t.null, t.atom], style: { color: '#f78c6c' } },
-  { tag: [t.function(t.variableName), t.function(t.propertyName)], style: { color: '#82aaff' } },
-  { tag: [t.variableName, t.definition(t.variableName)], style: { color: '#e0e0e0' } },
+  { tag: [t.keyword, t.modifier], style: { color: 'var(--code-c792ea, #c792ea)' } },
+  { tag: [t.propertyName], style: { color: 'var(--code-80cbc4, #80cbc4)' } },
+  { tag: [t.className, t.tagName], style: { color: 'var(--code-ffcb6b, #ffcb6b)' } },
+  { tag: [t.string, t.special(t.string)], style: { color: 'var(--code-c3e88d, #c3e88d)' } },
+  { tag: [t.number, t.unit, t.bool, t.null, t.atom], style: { color: 'var(--code-f78c6c, #f78c6c)' } },
+  { tag: [t.function(t.variableName), t.function(t.propertyName)], style: { color: 'var(--code-82aaff, #82aaff)' } },
+  { tag: [t.variableName, t.definition(t.variableName)], style: { color: 'var(--code-e0e0e0, #e0e0e0)' } },
   // Comments stay quiet but readable: #8a8a8a holds 5:1 on the panel, where
   // the old #616161 was 3:1.
-  { tag: [t.comment, t.blockComment, t.lineComment], style: { color: '#8a8a8a', fontStyle: 'italic' } },
-  { tag: [t.operator, t.punctuation, t.separator], style: { color: '#89ddff' } },
-  { tag: [t.labelName, t.attributeName], style: { color: '#80cbc4' } },
-  { tag: [t.color, t.constant(t.name), t.standard(t.name)], style: { color: '#f78c6c' } },
+  { tag: [t.comment, t.blockComment, t.lineComment], style: { color: 'var(--code-8a8a8a, #8a8a8a)', fontStyle: 'italic' } },
+  { tag: [t.operator, t.punctuation, t.separator], style: { color: 'var(--code-89ddff, #89ddff)' } },
+  { tag: [t.labelName, t.attributeName], style: { color: 'var(--code-80cbc4, #80cbc4)' } },
+  { tag: [t.color, t.constant(t.name), t.standard(t.name)], style: { color: 'var(--code-f78c6c, #f78c6c)' } },
   // Markdown: the structure of a document rather than of code. Headings
   // lead, code and links pick up the colours their kind already has
   // elsewhere in this theme, and the marks (#, *, `) stay quiet.
-  { tag: [t.heading], style: { color: '#f5f5f5', fontWeight: '600' } },
+  { tag: [t.heading], style: { color: 'var(--code-f5f5f5, #f5f5f5)', fontWeight: '600' } },
   { tag: [t.emphasis], style: { fontStyle: 'italic' } },
-  { tag: [t.strong], style: { fontWeight: '600', color: '#f5f5f5' } },
-  { tag: [t.link, t.url], style: { color: '#82aaff', textDecoration: 'underline' } },
-  { tag: [t.monospace], style: { color: '#c3e88d' } },
-  { tag: [t.quote], style: { color: '#999999', fontStyle: 'italic' } },
-  { tag: [t.list], style: { color: '#89ddff' } },
-  { tag: [t.processingInstruction, t.documentMeta], style: { color: '#8a8a8a' } },
+  { tag: [t.strong], style: { fontWeight: '600', color: 'var(--code-f5f5f5, #f5f5f5)' } },
+  { tag: [t.link, t.url], style: { color: 'var(--code-82aaff, #82aaff)', textDecoration: 'underline' } },
+  { tag: [t.monospace], style: { color: 'var(--code-c3e88d, #c3e88d)' } },
+  { tag: [t.quote], style: { color: 'var(--code-999999, #999999)', fontStyle: 'italic' } },
+  { tag: [t.list], style: { color: 'var(--code-89ddff, #89ddff)' } },
+  { tag: [t.processingInstruction, t.documentMeta], style: { color: 'var(--code-8a8a8a, #8a8a8a)' } },
 ];
 
 // A file extension or a Markdown fence name, and the language it means. Formats

@@ -52,7 +52,7 @@
   display: grid;
   place-items: center;
   flex: 0 0 28px;
-  border-left: 1px solid var(--panel, #242424);
+  border-left: 1px solid var(--panel, var(--line-242424, #242424));
   border-radius: 0 var(--radius) var(--radius) 0;
   background: var(--bg-input);
   color: var(--text-dim);
@@ -116,9 +116,9 @@
   gap: 4px;
   padding: 8px;
   min-width: 240px;
-  border: 1px solid var(--border, #444);
+  border: 1px solid var(--border, var(--line-444444, #444));
   border-radius: 8px;
-  background: var(--panel, #242424);
+  background: var(--panel, var(--tone-242424, #242424));
   box-shadow: 0 8px 24px #0004;
 }
 .stacki-publish-menu button {
@@ -136,7 +136,7 @@
 .stacki-publish-menu hr {
   width: 100%;
   border: 0;
-  border-top: 1px solid var(--border, #444);
+  border-top: 1px solid var(--border, var(--line-444444, #444));
 }
 .modal.publish-settings {
   position: relative;

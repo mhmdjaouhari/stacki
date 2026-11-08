@@ -4,10 +4,10 @@
   width: min(560px, calc(100vw - 48px));
   max-height: calc(100dvh - 48px);
   padding: 0;
-  border: 1px solid #3a3a3a;
+  border: 1px solid var(--line-3a3a3a, #3a3a3a);
   border-radius: 16px;
-  background: #1b1b1b;
-  color: #e8e8e8;
+  background: var(--tone-1b1b1b, #1b1b1b);
+  color: var(--ink-e8e8e8, #e8e8e8);
   box-shadow: 0 24px 90px #0008;
   font: inherit;
 }
@@ -23,7 +23,7 @@
 }
 .app-settings footer {
   justify-content: flex-end;
-  border-top: 1px solid #333;
+  border-top: 1px solid var(--line-333333, #333);
 }
 .app-settings-content {
   overflow-y: auto;
@@ -33,7 +33,7 @@
 .app-preferences {
   padding-bottom: 12px;
   margin-bottom: 24px;
-  border-bottom: 1px solid #333;
+  border-bottom: 1px solid var(--line-333333, #333);
 }
 .app-preference-row {
   min-height: 44px;
@@ -53,7 +53,7 @@
   padding: 0;
   border: 1px solid #666;
   border-radius: 999px;
-  background: #444;
+  background: var(--tone-444444, #444);
 }
 .app-preference-toggle span {
   position: absolute;
@@ -92,5 +92,5 @@
   line-height: 1.6;
 }
 .app-preferences [role='alert'] {
-  color: #ff9b92;
+  color: var(--pastel-ff9b92, #ff9b92);
 }
