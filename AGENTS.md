@@ -57,14 +57,14 @@ it.
 }
 ```
 
-## ESLint (required rules)
+## Lint (required rules)
 
-`eslint.config.mjs` is the source of truth; a copy here would drift from it.
+`oxlint.config.ts` is the source of truth; a copy here would drift from it.
 It holds, at minimum: `no-explicit-any`, the `no-unsafe-*` family, a ban on
 type-assertion syntax outside validated constructors, `prefer-readonly`,
 `switch-exhaustiveness-check`, and `curly: all`.
-The rules below that stock ESLint cannot express live in the local plugin,
-`scripts/eslintPlugin/`.
+The rules below that oxlint's built-in rules cannot express live in the local
+plugin, `tools/oxlint-plugin/`.
 
 Formatting: Prettier with `printWidth: 160`. Prettier wraps what it can; a line it
 cannot wrap (a long string, URL or comment) may run past 160 columns. No check
@@ -73,24 +73,20 @@ holds line width, function length or file length.
 ## Enforcement
 
 These rules are checked by machines wherever a machine can check them, and
-the same checks run for people and for every coding agent (Claude Code, Codex,
-Pi). `docs/enforcement.md` maps each rule to the check that holds it and lists
-the rules that remain for review.
+the same checks run for people, for coding agents and in CI. One command runs
+them all: `pnpm check` (`tools/check.mts`) — Prettier, oxlint with type-aware
+rules and the stacki plugin (`oxlint.config.ts`, `tools/oxlint-plugin/`),
+TypeScript 7, and the Studio build. It takes well under a minute.
 
-- Agent hooks format and check each file you edit, and check every changed
-  file before you finish. Fix what they report; do not work around them.
-- `npm run check:changed` runs the finish check by hand. Run it before you
-  say you are done.
-- `npm run check:local` runs fast repository-wide checks before `npm run dev`.
-  All Desktop compiler targets and test source paths also run at agent finish,
-  because config changes and deleted files can break unchanged callers.
-- Git hooks check staged files, commit messages, and pushes. Never skip them
-  (`--no-verify`); the agent hooks refuse it, and CI runs the same checks.
-- Pushes run the full clean-build and regression gate locally so passing
-  TypeScript alone cannot send a known test failure to GitHub.
-- The files that define the gates (this file, lint and compiler configs,
-  `scripts/{eslintPlugin,policy,agent}/`, hook configs, `shared/core/limits.ts`)
-  change only with a human's approval.
+- Run `pnpm check` before you say you are done; `pnpm check lint` (or
+  `format`, `types`, `build`) runs one step.
+- Git hooks run it too: pre-commit on the staged files, pre-push in full.
+- The root sources (`src/`, `shared/`, `electron/`) compile only inside Studio:
+  `studio/scripts/assemble.ts` copies them into `studio/vendor/stacki`, and the
+  checks run on that copy. A finding is reported against the root file; fix it
+  there, never in the copy.
+- There is no test suite. Behaviour is checked by running Studio
+  (`pnpm dev`) and by the type and lint rules above.
 
 ---
 
@@ -490,13 +486,13 @@ installs; their cost is amplified through everything built on them.
 - **Hand-rolled parsers are canonical** (§2). A schema library (zod/valibot/
   arktype) is justified only when shapes are genuinely large enough that
   hand-rolling is the bigger risk.
-- **One tool per job**: one formatter (Prettier), one linter (ESLint), one test
-  runner. A small standardized toolbox beats an array of specialized
-  instruments, each with a dedicated manual.
-- **Scripts are TypeScript, not shell.** `scripts/*.ts` run with
-  `node --experimental-strip-types` or `tsx` — cross-platform, type-checked,
-  and runnable by everyone on the team instead of hitting Bash/OS-specific
-  issues.
+- **One tool per job**: one package manager (pnpm), one formatter (Prettier),
+  one linter (oxlint), one type checker (TypeScript 7). A small standardized
+  toolbox beats an array of specialized instruments, each with a dedicated
+  manual.
+- **Scripts are TypeScript, not shell.** `tools/*.mts` run under Node's type
+  stripping and `studio/scripts/*.ts` with `tsx` — cross-platform and runnable
+  by everyone instead of hitting Bash/OS-specific issues.
 - **Commit messages are documentation.** Write descriptive messages that inform
   the reader — a PR description is invisible in `git blame` and is not a
   substitute.
@@ -530,42 +526,21 @@ installs; their cost is amplified through everything built on them.
 | shell scripts in the repo | TypeScript scripts |
 | new dependency without justification | platform/stdlib first; written rationale otherwise |
 
-## Testing expectations
+## Contract surface
 
-### Repository contract surface
-
-`shared/` is the only cross-process contract surface. Read
-`docs/contracts.md` before changing page trees, scans, preload methods, IPC
-channels, or renderer bridge modules. Values from IPC, disk, browser messages,
-drag data, and `JSON.parse` stay `unknown` until the matching shared or feature
-boundary parser accepts them. Generated or edited code must pass
-`env -u ELECTRON_RUN_AS_NODE npm test`, which includes strict TypeScript,
-ESLint, production builds, contract tests, and the complete regression suite.
-
-- Type-level behavior is tested too: `expectTypeOf` (vitest) or `tsd` for
-  public API types, exhaustiveness helpers, and brand separation.
-- One parse-test per contract: known-good passes; each known-bad shape fails.
-- **Test the negative space exhaustively** — not only valid data but invalid
-  data, and valid data as it becomes invalid. Bugs live on that boundary (§9).
-- Assertions are tested: violating an invariant throws, and the test pins the
-  message.
-- Runtime tests target the pure, `Result`-returning core; boundary code is thin
-  enough to need only smoke tests.
-- Where a state machine exists, property-based tests (e.g. fast-check) hunt the
-  transitions you didn't think of. A fuzzer proves the presence of bugs, never
-  their absence — the mental model and its assertions come first.
-- When a GitHub release or publishing workflow fails, reproduce the cause locally and add or
-  improve a regression test whenever possible before pushing again. This prevents the same
-  failure from recurring only in GitHub. Follow [publishing failure handling](docs/releases.md).
-  If local reproduction is impractical, document why and the verification that remains remote.
+`shared/` is the contract surface between the editor and its host. Read
+`docs/contracts.md` before changing page trees, scans, host methods or bridge
+modules. Values from the network, disk, browser messages, drag data, and
+`JSON.parse` stay `unknown` until the matching shared or feature boundary
+parser accepts them. Edited code must pass `pnpm check`.
 
 ## Definition of done (checklist)
 
 - [ ] No new `any`, assertions, non-null assertions, or `@ts-ignore` without a
       comment justifying the exception
-- [ ] Every new boundary input has a parser and a test, including bound checks
+- [ ] Every new boundary input has a parser, including bound checks
 - [ ] New state modeled as a discriminated union, not flags
-- [ ] Switches over unions are exhaustive (`never` check / ESLint rule)
+- [ ] Switches over unions are exhaustive (`never` check / lint rule)
 - [ ] Public API signatures are honest (failure and absence in the type)
 - [ ] Expected failures return `Result`; programmer errors assert and crash —
       the channels are never mixed
@@ -576,10 +551,9 @@ ESLint, production builds, contract tests, and the complete regression suite.
 - [ ] Conditions are simple and positive; every `if` has its `else` handled or
       asserted
 - [ ] Names are unabbreviated; units and qualifiers last; one name, one meaning
-- [ ] Comments are sentences that say why; test files open with goal and
-      methodology
+- [ ] Comments are sentences that say why
 - [ ] New dependencies carry a written justification
-- [ ] `npm run check:changed` passes (`tsc`, ESLint, Prettier, policy scan)
+- [ ] `pnpm check` passes (Prettier, oxlint, TypeScript, Studio build)
 
 ## Code display
 

@@ -10,6 +10,7 @@ import type { Environment } from './environment';
 import { internal } from './internalRoutes';
 import { claimLoginAttempt, LoginAttempts } from '../features/auth/loginAttempts';
 import { warmupRequest } from './warmupRequest';
+import { isStudioFont } from '../shared/studioAssets';
 import { cmsConnectionRoute, cmsVault } from './cmsConnectionRoutes';
 import { CmsUnavailable, cmsForwarded } from '../features/cms/cmsConnectionVault';
 
@@ -235,7 +236,7 @@ async function previewURL(url: URL, environment: Environment, identity: Identity
 
 function studioAsset(request: Request, environment: Environment) {
   const asset = new URL(request.url);
-  if (!['/studio', '/studio/', '/studio/studio.js', '/studio/studio.css'].includes(asset.pathname)) {
+  if (!['/studio', '/studio/', '/studio/studio.js', '/studio/studio.css'].includes(asset.pathname) && !isStudioFont(asset.pathname.slice('/studio/'.length))) {
     return undefined;
   }
   asset.pathname = asset.pathname === '/studio' || asset.pathname === '/studio/' ? '/' : asset.pathname.slice('/studio'.length);

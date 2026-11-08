@@ -1,9 +1,0 @@
----
-interface Props {
-  /** @default "left" */
-  align?: 'left' | 'center';
-  undeclared?: string;
-}
-const { align = 'center', extra = 'not in Props' } = Astro.props;
----
-<p class="defaults-mismatch" data-align={align}>{extra}</p>

@@ -1,0 +1,15 @@
+packages:
+  - studio
+
+# Dependency build scripts: allow only what Studio needs; the rest stay off so
+# strictDepBuilds passes. esbuild checks its platform binary (Studio's build
+# bundles with it); workerd is wrangler's local runtime, which the Docker
+# deployment does not use.
+allowBuilds:
+  esbuild: true
+  workerd: false
+
+# Supply-chain hardening, as in emdash-stacki: a day's cooldown on brand-new
+# releases, and no transitive dependencies from outside the registry.
+minimumReleaseAge: 1440
+blockExoticSubdeps: true

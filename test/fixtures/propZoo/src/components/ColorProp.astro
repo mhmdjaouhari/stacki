@@ -1,9 +1,0 @@
----
-interface Props {
-  color?: string;
-  background?: string;
-  opacity?: number;
-}
-const { color = '#ff3366', background = 'transparent', opacity = 1 } = Astro.props;
----
-<div class="color-prop" style={`color:${color};background:${background};opacity:${opacity}`}>Coloured text</div>

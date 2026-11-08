@@ -1,21 +1,18 @@
-# Build output and installs: generated, never hand-edited.
+# Build output, installs and generated copies: never hand-edited.
 node_modules/
 dist/
-release/
-coverage/
-test/.stacki-test/
 **/generated/
+studio/vendor/stacki/
+studio/.studio/
+studio/.studio-image/
+**/.wrangler/
+**/test-results/
 
-# Fixtures and corpora are byte-exact inputs to round-trip tests; formatting
-# them would change what the tests measure.
-test/fixtures/
-test/corpus/
+# Studio's development site is a sample project, kept as it ships.
+studio/dev-site/
 
-# Lockfiles are owned by npm.
-package-lock.json
+# Lockfiles are owned by pnpm.
+pnpm-lock.yaml
 
 # Markdown is prose and tables; its line breaks are authored, not formatted.
 *.md
-
-# Studio runs its own strict checks through the combined gate.
-studio/

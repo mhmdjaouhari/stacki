@@ -1,9 +1,0 @@
----
-interface Props {
-  title: string;
-  level?: number;
-}
-const props = Astro.props;
-const { title, level = 2 } = props;
----
-<p class="destructure-later" data-level={level}>{title}</p>

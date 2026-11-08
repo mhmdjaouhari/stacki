@@ -1,6 +1,0 @@
-{
-  // The Pi extension runs under Pi's TypeScript loader and imports the policy
-  // tooling directly, so it is checked with the tooling's settings.
-  "extends": "../scripts/tsconfig.json",
-  "include": ["**/*.ts"]
-}

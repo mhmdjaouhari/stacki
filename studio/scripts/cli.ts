@@ -51,6 +51,7 @@ if (command === 'check-project') {
     'scripts',
     'vendor',
     'tsconfig.json',
+    'tsconfig.app.json',
     'tsconfig.worker.json',
     'README.md',
     'AGENTS.md',

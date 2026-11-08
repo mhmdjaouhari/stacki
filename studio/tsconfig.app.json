@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["src", "scripts", "vendor/stacki"],
+  "exclude": ["src/cloudflare", "adapters", "dev-site"]
+}

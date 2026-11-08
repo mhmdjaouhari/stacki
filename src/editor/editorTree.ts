@@ -84,7 +84,7 @@ export function findParentList(model: { readonly nodes: readonly PageNode[] }, i
 
 export function isDescendantOf(candidateParent: PageNode, id: string): boolean {
   const children = 'children' in candidateParent ? candidateParent.children : undefined;
-  return candidateParent.id === id || !!findNodeById(children, id);
+  return candidateParent.id === id || !!findNodeById<PageNode>(children, id);
 }
 
 export function nodeAtPath<Node extends TreeNodeLike<Node>>(nodes: readonly Node[] | undefined, trail: readonly number[]): Node | undefined {

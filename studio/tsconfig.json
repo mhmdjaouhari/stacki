@@ -19,6 +19,9 @@
     "noPropertyAccessFromIndexSignature": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["src", "scripts", "test", "vendor/stacki"],
-  "exclude": ["src/cloudflare", "adapters", "test/fixtures"]
+  // A solution: the shared options above (esbuild and tsx read them from here),
+  // and one project per runtime. Type-aware lint finds each file's project
+  // through these references; `tsc -p` checks each project on its own.
+  "files": [],
+  "references": [{ "path": "./tsconfig.app.json" }, { "path": "./tsconfig.worker.json" }]
 }

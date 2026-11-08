@@ -22,7 +22,7 @@ npm --prefix studio ci
 npm --prefix studio run dev
 ```
 
-In an installed release, `npm run dev` from `studio/` opens the parent Astro project. In the canonical Stacki repository, it opens the fixed test fixture instead.
+In an installed release, `npm run dev` from `studio/` opens the parent Astro project. In this repository, `pnpm dev` from the root opens the sample site in `studio/dev-site` instead.
 
 Open <http://localhost:4350/studio>. The editable copy lives in `studio/.studio/workspace` relative to the website root. Local development trusts loopback requests; GitHub login is enforced by the hosted Worker.
 
@@ -106,33 +106,23 @@ requests. A `wrangler deploy` you run yourself is covered in the
 
 ## Install and update
 
-Studio is distributed as a versioned source bundle alongside Stacki desktop releases.
-It has not been published to npm. See [releases and updates](docs/releases.md) for
-installation, project version pinning, customization replacement, and recovery.
-For Cloudflare, read [the deployment guide](docs/cloudflare.md).
+This fork does not publish Studio releases. emdash-stacki builds Studio from a pinned
+commit of this repository (`STACKI_REF` in its `deploy/Dockerfile`). For Cloudflare,
+read [the deployment guide](docs/cloudflare.md).
 
 ## Verification
 
-In the canonical Stacki repository, run these commands from `studio/`. Unit and
-browser tests use `test/fixtures/site`, never a customer's website.
+This fork has no test suite. From the repository root:
 
 ```sh
-npm ci
-npm --prefix test/fixtures/site ci --ignore-scripts
-npm run verify
-npm run dev
-npm run test:browser
+pnpm install
+pnpm check   # Prettier, oxlint (type-aware), TypeScript 7, the build
+pnpm dev     # run Studio against studio/dev-site, never a customer's website
 ```
 
-The browser suite uses installed Chrome on macOS or Playwright Chromium elsewhere
-(`npx playwright install chromium`). Set `CHROME_PATH` for another installation,
-and `STUDIO_URL` to override the local address. It exercises two independent browser
-sessions, preview morphing, drag sorting and undo, class suggestions, and mobile
-layout. Screenshots go into `test-results/`.
-
-Installed source releases include build and type checks; the full development test
-suite stays in the canonical repository. Cloudflare deployment, GitHub authorization,
-and release publishing still require verification in the destination account.
+Then check the edited behaviour by hand in the running draft. Cloudflare deployment,
+GitHub authorization, and release publishing still require verification in the
+destination account.
 
 ### Project insertion defaults
 

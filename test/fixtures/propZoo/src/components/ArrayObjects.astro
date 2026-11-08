@@ -1,9 +1,0 @@
----
-interface Props {
-  links: { label: string; href: string }[];
-}
-const { links } = Astro.props;
----
-<nav class="array-objects">
-  {links.map((link) => <a href={link.href}>{link.label}</a>)}
-</nav>

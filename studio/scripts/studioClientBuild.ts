@@ -23,5 +23,8 @@ export const studioClientOptions: BuildOptions = {
   jsx: 'automatic',
   target: [...STUDIO_BROWSER_TARGET],
   define: { 'process.env.NODE_ENV': '"production"' },
+  // The UI fonts (main.tsx) ship beside the bundle's CSS, in fonts/.
+  loader: { '.woff2': 'file', '.woff': 'file' },
+  assetNames: 'fonts/[name]-[hash]',
   plugins: [browserBoundary],
 };

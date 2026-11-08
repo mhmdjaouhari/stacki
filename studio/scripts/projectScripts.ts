@@ -5,7 +5,7 @@ export const projectScripts = {
   prebuild: 'npm run assemble',
   build: 'tsx scripts/build.ts',
   precheck: 'npm run assemble',
-  check: 'tsc --noEmit && tsc -p tsconfig.worker.json',
+  check: 'tsc -p tsconfig.app.json && tsc -p tsconfig.worker.json',
   // Keep output and shutdown attached to the terminal that owns the preview.
   dev: 'npm run build && node dist/cli.mjs dev ..',
 };

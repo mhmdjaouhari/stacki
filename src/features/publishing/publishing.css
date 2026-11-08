@@ -536,7 +536,7 @@
 }
 .publish-account-code {
   text-align: center;
-  font-family: monospace;
+  font-family: var(--mono);
   font-size: 20px;
   letter-spacing: 0.15em;
 }
