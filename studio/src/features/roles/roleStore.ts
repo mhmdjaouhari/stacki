@@ -33,5 +33,5 @@ export function subscribeRole(listener: () => void) {
   };
 }
 export function clientPanel(panel: string | undefined) {
-  return !['code', 'variables', 'properties', 'ai'].includes(panel ?? '');
+  return !['code', 'variables', 'properties'].includes(panel ?? '');
 }

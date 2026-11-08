@@ -7,7 +7,7 @@ MIT licensed, like upstream.
 
 ## Layout
 
-- `studio/` — Studio: the server, the browser app, collaboration and the AI chat. Its own
+- `studio/` — Studio: the server, the browser app and collaboration. Its own
   `README.md` and `docs/` describe it.
 - `src/`, `shared/`, `electron/` — the editor Studio is built on. Studio's
   `scripts/assemble.ts` copies these into `studio/vendor/stacki` (listed in

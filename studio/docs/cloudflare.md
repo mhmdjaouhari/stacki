@@ -114,8 +114,6 @@ npx wrangler secret put CONTAINER_TOKEN --config cloudflare/wrangler.jsonc
 
 Use independent cryptographically random values of at least 32 bytes for the final two secrets. The App private key may contain actual newlines or escaped `\n` sequences. Never put these credentials in the Astro site's public environment variables.
 
-Optional AI configuration: set `AI_BASE_URL` and `AI_MODEL` in Worker vars; use a secret for `AI_API_KEY` if your provider requires one. `AI_BASE_URL` is the OpenAI-compatible base URL, typically ending in `/v1`; the gateway appends `/chat/completions`. Without a provider, the AI panel explains the missing configuration. The endpoint must use HTTPS and be reachable from the Worker. A local model on your laptop is only usable in local development unless you intentionally host an authenticated reachable endpoint.
-
 ## CMS connections
 
 Editors connect a site's Sanity project from the CMS panel's **Connect a CMS** row by pasting
@@ -157,12 +155,6 @@ Before inviting clients, verify GitHub login and denied access for an uninvited 
 Do not enable public access to the preview Container directly. The Worker is its authentication and origin boundary. The internal storage/AI/GitHub routes require the Container token.
 
 ## Local server configuration
-
-For an optional local AI server:
-
-```sh
-AI_BASE_URL=http://127.0.0.1:11434/v1 AI_MODEL=YOUR_MODEL npm run dev
-```
 
 For local GitHub publishing, supply `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_REPOSITORY`, and optionally `GITHUB_BRANCH` in the server environment. The starting local checkout's Git HEAD becomes the baseline. Use a clean checkout corresponding to that repository and branch. No credentials are required for the ordinary local editor demo.
 

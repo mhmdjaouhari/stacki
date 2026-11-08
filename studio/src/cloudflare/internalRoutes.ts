@@ -1,5 +1,4 @@
 import { draftKey, readCloudGitWorkspace, gitWorkspaceRoute, gitBundleRoute } from './gitWorkspaceRoutes';
-import { modelConfiguration } from '../features/ai/chatContracts';
 import { parseAssetState, emptyAssetState } from '../features/assets/assetStateTypes';
 import { authorizeConnection } from '../features/auth/connectionAuthorization';
 import { storageInventory, storageBaseline, removeStoredAsset } from './storageRoutes';
@@ -16,8 +15,6 @@ export async function internal(request: Request, environment: Environment): Prom
   return handler ? handler(request, environment, url) : new Response('Not found', { status: 404 });
 }
 const routes: Readonly<Record<string, (request: Request, environment: Environment, url: URL) => Promise<Response>>> = {
-  '/studio/internal/ai/models': async (_request, environment) =>
-    Response.json(modelConfiguration(environment.AI_BASE_URL ? environment.AI_MODEL : undefined, environment.AI_BASE_URL ? environment.AI_MODELS : undefined)),
   '/studio/internal/authorize': authorizeConnection,
   '/studio/internal/storage': storageInventory,
   '/studio/internal/storage-baseline': storageBaseline,
@@ -26,7 +23,6 @@ const routes: Readonly<Record<string, (request: Request, environment: Environmen
   '/studio/internal/git-bundle': gitBundleRoute,
   '/studio/internal/base': internalBase,
   '/studio/internal/incoming': internalIncoming,
-  '/studio/internal/chat/completions': internalCompletions,
   '/studio/internal/assets': internalAssets,
   '/studio/internal/asset-state': internalAssetState,
   '/studio/internal/asset': internalAsset,
@@ -65,38 +61,6 @@ async function internalIncoming(request: Request, environment: Environment, url:
     } catch (error) {
       return Response.json({ error: error instanceof Error ? error.message : 'GitHub sync failed' }, { status: 409 });
     }
-  }
-  return new Response('Not found', { status: 404 });
-}
-
-async function internalCompletions(request: Request, environment: Environment, url: URL): Promise<Response> {
-  if (url.pathname === '/studio/internal/chat/completions' && request.method === 'POST') {
-    if (!environment.AI_BASE_URL || !environment.AI_MODEL) {
-      return new Response('Configure AI_BASE_URL and AI_MODEL', { status: 503 });
-    }
-    const endpoint = new URL(environment.AI_BASE_URL.replace(/\/$/, '') + '/chat/completions');
-    if (endpoint.protocol !== 'https:') {
-      throw new Error('Hosted AI requires HTTPS');
-    }
-    const input = record(await request.json());
-    const models = modelConfiguration(environment.AI_MODEL, environment.AI_MODELS);
-    const model = string(input['model'], 160);
-    if (!models.models.includes(model)) {
-      throw new Error('Model is not configured');
-    }
-    const messages = input['messages'];
-    if (!Array.isArray(messages) || messages.length > 26 || JSON.stringify(messages).length > 1_500_000) {
-      throw new Error('Invalid AI context');
-    }
-    return fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(environment.AI_API_KEY ? { Authorization: 'Bearer ' + environment.AI_API_KEY } : {}),
-      },
-      body: JSON.stringify({ model, max_tokens: 6000, messages }),
-      signal: AbortSignal.any([request.signal, AbortSignal.timeout(60_000)]),
-    });
   }
   return new Response('Not found', { status: 404 });
 }

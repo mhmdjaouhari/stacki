@@ -10,7 +10,6 @@ import type { Panel } from './EditorRail';
 // One layout per page: the shell, its panels and the selection handler all read it, and
 // the editor writes it from the width of its rail and its open panels.
 const RAIL_WIDTH_PX = 44; // .rail in Desktop's styles.css.
-const CHAT_WIDTH_PX_MIN = 320; // .studio-left:has(.chat-panel) min-width in chat.css.
 // The shell, both panels, the selection handler and the toolbar subscribe; more is a leak.
 const LAYOUT_LISTENERS_MAX = 64;
 
@@ -62,9 +61,6 @@ function leftPanelWidthPx(panel: Panel | undefined, widths: PanelWidths): number
   }
   if (panel === 'code') {
     return widths.code;
-  }
-  if (panel === 'ai') {
-    return Math.max(widths.left, CHAT_WIDTH_PX_MIN);
   }
   return widths.left;
 }

@@ -141,9 +141,6 @@
 .rail-spacer {
   flex: 1;
 }
-.ai-icon {
-  font-size: 24px;
-}
 /* Like Desktop's .panel, the side panels do not clip: each panel body scrolls itself,
    and the shared resize handle reaches 4px past the panel edge. */
 .studio-left {
@@ -633,19 +630,6 @@
   gap: 16px;
   line-height: 1.6;
 }
-.ai-proposal {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 12px;
-  background: var(--bg-panel-2);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-.ai-proposal code {
-  font-size: 10px;
-  overflow-wrap: anywhere;
-}
 .sync-notice {
   background: #352e20;
   border-bottom: 1px solid #706044;
@@ -659,20 +643,6 @@
 }
 .sync-notice code {
   display: block;
-}
-.ai-proposal pre {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 11px;
-  max-height: 220px;
-  overflow: auto;
-  padding: 8px;
-}
-.diff-before {
-  background: #42282c;
-}
-.diff-after {
-  background: #233c2d;
 }
 .value-fields,
 .value-list {

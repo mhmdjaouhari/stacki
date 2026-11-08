@@ -7,7 +7,6 @@ import { PUBLISH_NOTE } from './publish';
 const REFRESH_FRAME_MAX = 1;
 
 export const REASONS = {
-  ai: 'AI chat runs in the full Stacki app.',
   defaults: 'Component defaults change every page, so they are in the full Stacki app.',
   paste: 'Paste is in the full Stacki app.',
   wrap: 'Wrapping uses a component, which needs Astro to render it.',
@@ -23,7 +22,6 @@ interface ControlRule {
 
 export const CONTROL_RULES: readonly ControlRule[] = [
   { selector: '.rail-btn[aria-label="Git"]' },
-  { selector: '.rail-btn.ai-icon' },
   { selector: '.collaborators' },
   // The visitor's own badge on their page row: one person, so it tells them nothing.
   { selector: '.page-presence' },

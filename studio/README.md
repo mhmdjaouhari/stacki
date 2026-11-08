@@ -82,7 +82,6 @@ The runner supports `astro.config.ts`, `.mts`, `.cts`, `.js`, `.mjs`, or `.cjs`,
 - Shared draft asset uploads, copied into the GitHub publish snapshot.
 - GitHub source updates arrive automatically every 15 seconds while editors are connected. Three-way merges preserve draft edits on conflicting lines and bring in unrelated GitHub changes. Runtime/dependency and binary changes still require a fresh container revision.
 - Publish refreshes GitHub first, validates a captured snapshot using the site's build script, then commits to the configured branch. A confirmed competing commit triggers a fresh merge/build (at most three attempts); uncertain network failures are not retried. Everyone sees the same progress, including after reconnecting. Connect the branch to your Cloudflare build/deploy pipeline.
-- Codex-style AI panel with saved parallel chats, per-chat model selection, browser dictation, image upload/paste/drop, and stop controls. Configurable OpenAI-compatible service with bounded context, reviewable replacements, stale-edit checks, and an explicit apply action. See [AI chat configuration](docs/ai-chat.md).
 - Cloudflare Worker/GitHub login, repository collaborator access, verified GitHub profile pictures, an account/sign-out menu, an isolated preview host, a single shared Container, and R2 persistence for draft recovery.
 
 ## Privacy
@@ -98,7 +97,6 @@ Studio still contacts third parties to do what you ask of it:
 - YouTube, Vimeo, Loom, Wistia or Dailymotion, when you link one of their videos in a CMS
   field and Studio fetches its preview.
 - GitHub's release feed, when you check for a Studio update.
-- Your browser's speech service, if you use dictation in the AI panel.
 
 Your website's own code, scripts and embeds also run in the preview and make their own
 requests. A `wrangler deploy` you run yourself is covered in the

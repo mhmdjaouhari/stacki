@@ -41,6 +41,9 @@ const GONE: readonly (readonly [RegExp, string])[] = [
   [/^\.claude\/settings\.json$/, 'agent hooks for the deleted gate'],
   // It runs scripts/policy/gitHooks.mts, and as CommonJS it fails under the fork's "type": "module".
   [/^\.githooks\/commit-msg$/, 'commit-msg hook for the deleted gate'],
+  // emdash-stacki embeds an agent harness beside Studio instead of Studio's chat.
+  [/^studio\/src\/features\/ai\//, 'AI chat (replaced by an agent beside Studio)'],
+  [/^studio\/docs\/ai-chat\.md$/, 'AI chat (replaced by an agent beside Studio)'],
   [/^docs\/(?:enforcement|releases|create-stacki|desktop-runtime|build-failure-audit|file-limit-proposal)\.md$/, 'docs for removed tooling'],
   [/^docs\/archive\//, 'docs for removed tooling'],
   [/^studio\/docs\/releases\.md$/, 'docs for removed tooling'],

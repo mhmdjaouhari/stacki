@@ -9,7 +9,6 @@ import { discoveryRoute } from '../features/publishing/discoveryRoutes';
 import { metadataRoute } from '../features/settings/projectMetadata';
 import { cmsRoutes } from '../features/cms/cmsServer';
 import { cmsRemoteRoutes } from '../features/cms/cmsRemoteServer';
-import { aiRoute } from '../features/ai/aiRoutes';
 import { publishRoute } from '../features/publishing/publishRoutes';
 import { componentUsageRoute } from '../features/components/componentUsageServer';
 import { propertyRoutes } from '../features/componentProperties/propertyServer';
@@ -17,8 +16,6 @@ import { variableRoutes } from '../features/variables/variableServer';
 import { StorageCleanup } from '../features/storage/cleanup';
 import { styleFiles, saveSource } from '../features/settings/styleRoutes';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { aiConfiguration } from '../features/ai/agent';
-import { ProposalStore } from '../features/ai/proposalStore';
 import { Publisher, githubFromEnvironment } from '../features/publishing/publish';
 import type { createRooms } from '../features/collaboration/rooms';
 import { automaticSync } from '../features/github/automaticSync';
@@ -33,7 +30,7 @@ export function featureRoutes(root: string, rooms: ReturnType<typeof createRooms
   const cmsRemote = cmsRemoteRoutes(root);
   const variables = variableRoutes(root, rooms);
   const properties = propertyRoutes(root, rooms);
-  const { cleanup, publisher, synchronization, proposals } = featureServices(root, rooms);
+  const { cleanup, publisher, synchronization } = featureServices(root, rooms);
   const git = gitWorkspaceRoutes(root, repository, rooms, () => publisher.state.kind === 'building');
   return async (request: IncomingMessage, response: ServerResponse, pathname: string, readBody: () => Promise<string>): Promise<boolean> => {
     if (
@@ -70,9 +67,6 @@ export function featureRoutes(root: string, rooms: ReturnType<typeof createRooms
     if (publishRoute(publisher, request, response, pathname)) {
       return true;
     }
-    if (await aiRoute(proposals, request, response, pathname, readBody)) {
-      return true;
-    }
     return false;
   };
 }
@@ -93,7 +87,6 @@ function featureServices(root: string, rooms: ReturnType<typeof createRooms>) {
     publisher,
     synchronization,
     automatic,
-    proposals: new ProposalStore(root, rooms),
   };
 }
 
@@ -150,7 +143,6 @@ async function synchronizationRoute(
     respond(response, {
       publishing: publisher.state,
       github: !!publisher.github,
-      ai: !!aiConfiguration(),
       synchronization: synchronization.state,
     });
     return true;

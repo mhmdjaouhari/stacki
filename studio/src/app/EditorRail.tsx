@@ -24,7 +24,7 @@ const panels = [
   { id: 'code', label: 'Code', shortcut: 'C', Icon: CodeIcon },
   { id: 'history', label: 'Git', shortcut: '⌥H', Icon: HistoryIcon },
 ] as const;
-export type Panel = (typeof panels)[number]['id'] | 'ai';
+export type Panel = (typeof panels)[number]['id'];
 interface Props {
   readonly componentOpen: boolean;
   readonly panel: Panel | undefined;
@@ -76,17 +76,6 @@ export function EditorRail({ panel, toggle, componentOpen }: Props) {
           </button>
         ))}
       <div className="rail-spacer" />
-      {role !== 'client' && (
-        <button
-          className={`rail-btn ai-icon ${panel === 'ai' ? 'on' : ''}`}
-          aria-label="AI chat"
-          aria-pressed={panel === 'ai'}
-          title="AI chat"
-          onClick={() => select('ai')}
-        >
-          ✦
-        </button>
-      )}
       {tip && (
         <div role="tooltip" className="rail-tooltip" style={{ left: tip.left, top: tip.top }}>
           {tip.label}
