@@ -977,7 +977,7 @@ html[data-platform='win32'] .titlebar {
 }
 .link-note code {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 13px;
   background: rgba(var(--fg-rgb), 0.08);
   padding: 1px 4px;
   border-radius: 4px;
@@ -1113,7 +1113,7 @@ html[data-platform='win32'] .titlebar {
 .props-code-row-type,
 .props-code-row-value {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2271,7 +2271,7 @@ html[data-platform='win32'] .titlebar {
   overflow: hidden;
   color: var(--text-faint);
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2282,7 +2282,7 @@ html[data-platform='win32'] .titlebar {
   background: var(--bg-active);
   color: var(--text-dim);
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 13px;
 }
 .code-panel-editor,
 .code-panel-editor .cm-host,
@@ -2700,7 +2700,7 @@ body > .embed-editor_provenance {
   background: rgba(146, 116, 255, 0.28);
   color: var(--pastel-c4afff, #c4afff);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
   cursor: pointer;
   user-select: none;
@@ -2772,7 +2772,7 @@ body > .embed-editor_provenance {
   pointer-events: none;
 }
 .bind-input .expr-chip {
-  font-size: 11px;
+  font-size: 13px;
   padding: 1px 5px;
 }
 
@@ -2924,7 +2924,7 @@ body > .embed-editor_provenance {
 }
 .dp-key {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
@@ -4156,7 +4156,7 @@ body > .embed-editor_provenance {
 }
 .rich-content code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   background: rgba(var(--fg-rgb), 0.09);
   padding: 1px 4px;
   border-radius: 4px;
@@ -4453,7 +4453,7 @@ body > .embed-editor_provenance {
 }
 .offline-meta {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: 13px;
   color: var(--text-faint);
   user-select: text;
 }
@@ -4769,7 +4769,7 @@ body > .embed-editor_provenance {
 }
 .hint-text code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   padding: 1px 4px;
   border-radius: 4px;
   background: rgba(var(--fg-rgb), 0.08);
@@ -4833,7 +4833,7 @@ body > .embed-editor_provenance {
   border-radius: 6px;
   background: var(--bg-input);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.7;
   color: var(--text-dim);
 }
@@ -4945,7 +4945,7 @@ body > .embed-editor_provenance {
   width: min(560px, 92vw);
 }
 .new-project-dir {
-  font-size: 11px;
+  font-size: 13px;
   font-family: var(--mono);
   color: var(--text-faint);
   background: var(--bg-input);
@@ -5032,7 +5032,7 @@ body > .embed-editor_provenance {
   border-radius: 8px;
   padding: 10px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
   color: var(--text-dim);
   white-space: pre-wrap;
@@ -6019,7 +6019,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
 }
 .cms-detail-path {
   margin-left: auto;
-  font-size: 10.5px;
+  font-size: 13px;
   color: var(--text-faint);
   font-family: var(--mono);
 }
@@ -7116,7 +7116,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
 }
 
 .content-id {
-  font-size: 10.5px;
+  font-size: 13px;
   color: var(--text-faint);
   font-family: var(--mono, ui-monospace, monospace);
   padding: 2px 6px;
@@ -7641,7 +7641,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
   height: 26px;
   padding: 0 8px;
   text-align: left;
-  font-size: 11.5px;
+  font-size: 13px;
   font-family: var(--mono, ui-monospace, monospace);
   background: transparent;
   border-color: transparent;
@@ -8039,7 +8039,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
 .history-row-hash {
   color: var(--text-faint);
   font-family: var(--mono);
-  font-size: 9px;
+  font-size: 13px;
 }
 .history-subject-line {
   display: flex;
@@ -8126,7 +8126,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
 .history-file-summary {
   display: flex;
   gap: 6px;
-  font: 12px var(--mono, ui-monospace, monospace);
+  font: 13px var(--mono, ui-monospace, monospace);
 }
 .history-count-added {
   color: var(--green);
@@ -8496,7 +8496,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
 .history-diff-lines {
   width: max-content;
   min-width: 100%;
-  font: 12px / 20px var(--mono, ui-monospace, monospace);
+  font: 13px / 20px var(--mono, ui-monospace, monospace);
   tab-size: 2;
 }
 .history-diff-line {
@@ -8620,7 +8620,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
   margin-bottom: 8px;
 }
 .var-custom-name {
-  font-size: 10.5px;
+  font-size: 13px;
   font-weight: 400;
   color: var(--text-faint);
   font-family: var(--mono, ui-monospace, monospace);
@@ -8630,7 +8630,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
   width: 100%;
   min-height: 92px;
   padding: 8px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
   font-family: var(--mono, ui-monospace, monospace);
   resize: vertical;
@@ -8700,7 +8700,7 @@ textarea::selection {
 }
 /* The part of the name the group has already decided — typed names follow it. */
 .vars-add-stem {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-faint);
   font-family: var(--mono, ui-monospace, monospace);
 }
@@ -8709,7 +8709,7 @@ textarea::selection {
   min-width: 0;
   height: 22px;
   padding: 0 6px;
-  font-size: 11.5px;
+  font-size: 13px;
   font-family: var(--mono, ui-monospace, monospace);
 }
 
@@ -8869,7 +8869,7 @@ textarea::selection {
 }
 .starter-note code {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim);
 }
 
@@ -8938,7 +8938,7 @@ textarea::selection {
   background-color: var(--bg-input);
   color: var(--text);
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: 13px;
 }
 .cm-editor .cm-panels .cm-panel.cm-search input[name='search'] {
   padding-left: 28px;
@@ -9175,7 +9175,7 @@ viewBox='0 0 16 16' fill='none' stroke='%23999999' stroke-width='1.5'%3E\
 }
 .term-tab-label {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
 }
 .term-tab-x {
   display: flex;
@@ -9213,7 +9213,7 @@ viewBox='0 0 16 16' fill='none' stroke='%23999999' stroke-width='1.5'%3E\
   height: 24px;
   padding: 0 8px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .term-panes {

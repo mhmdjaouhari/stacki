@@ -61,7 +61,7 @@
 }
 .u-text-style-mono {
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   line-height: var(--line-height-normal);
 }
 
@@ -358,7 +358,7 @@ body.is-scrubbing * {
   padding: var(--space-4) var(--space-5);
   resize: vertical;
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   line-height: var(--line-height-normal);
 }
 
@@ -994,7 +994,7 @@ body.is-scrubbing * {
   background: transparent;
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
 }
 .u-select-custom-input:focus {
   outline: none;
@@ -1624,7 +1624,7 @@ body.is-scrubbing * {
   width: 100%;
   padding: 5px var(--space-2);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
   text-align: center;
 }
 /* The hex field reads from the left, so its text needs room at that edge — 2px

@@ -563,7 +563,7 @@
   height: var(--size-control-lg);
   padding: 0 var(--space-4);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
 }
 
 .clip-path_preset {

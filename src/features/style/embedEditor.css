@@ -26,7 +26,7 @@
 
 .embed-editor_selected-label {
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   color: var(--color-text-primary);
   overflow-wrap: anywhere;
 }
@@ -209,7 +209,7 @@
   padding: 3px var(--space-3);
   border-radius: var(--radius-md);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
   line-height: var(--line-height-tight);
   white-space: nowrap;
   overflow: hidden;
@@ -279,7 +279,7 @@
 
 .embed-editor_spec {
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-2xs);
+  font-size: 13px;
   color: var(--color-text-tertiary);
 }
 
@@ -721,7 +721,7 @@
 .embed-editor_spacing-tooltip-value {
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
   line-height: var(--line-height-normal);
   white-space: normal;
   overflow-wrap: anywhere;
@@ -889,7 +889,7 @@
   background: var(--color-info-border);
   color: var(--color-info);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
   overflow-wrap: anywhere;
@@ -942,7 +942,7 @@
 /* Plain length inputs (no unit dropdown); mono, right-aligned like a value field. */
 .embed-editor_size-input {
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   min-width: 0;
 }
 
@@ -1525,7 +1525,7 @@
 .embed-editor_eff-value {
   width: 100%;
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
 }
 /* Outline Width + Offset: "Width" sits in the shared label column (aligned with
    Outline/Color), and the control column holds [width input | Offset label | offset
@@ -1661,7 +1661,7 @@
 .embed-editor_ratio-input {
   width: 100%;
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   text-align: left;
 }
 .embed-editor_ratio-caption {
@@ -2233,7 +2233,7 @@
   background: var(--color-bg-inset);
   color: var(--color-text-primary);
   font-family: var(--font-family-mono, var(--font-family-sans));
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   line-height: 1.6;
   resize: vertical;
 }
@@ -2259,7 +2259,7 @@
   user-select: none;
   color: var(--color-text-secondary);
   font-family: var(--font-family-mono, var(--font-family-sans));
-  font-size: var(--font-size-xs);
+  font-size: 13px;
   transition:
     background var(--transition-fast),
     color var(--transition-fast);
@@ -2803,7 +2803,7 @@
 .embed-editor_prop-label .u-field-label {
   max-width: 100%;
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   cursor: grab;
   /* Long property names wrap within the column instead of overrunning the value. */
   white-space: normal;
@@ -2817,7 +2817,7 @@
 .embed-editor_prop-input,
 .embed-editor_value-input {
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   min-width: 0;
 }
 
@@ -3127,7 +3127,7 @@ textarea.embed-editor_value-input.is-expanded {
 }
 .embed-editor_direction-footer code {
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
   color: var(--color-text-secondary);
 }
 
@@ -3228,7 +3228,7 @@ textarea.embed-editor_value-input.is-expanded {
   background: transparent;
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
   line-height: var(--line-height-normal);
   text-align: left;
   white-space: nowrap;
@@ -3445,7 +3445,7 @@ textarea.embed-editor_value-input.is-expanded {
   background: var(--color-bg-surface);
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   line-height: var(--line-height-normal);
   /* One declaration per line, as the editor beside it: a long one scrolls. */
   white-space: pre;
@@ -3622,7 +3622,7 @@ textarea.embed-editor_value-input.is-expanded {
    chips below are unaffected. */
 .embed-editor_element-id {
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   line-height: var(--line-height-tight);
   color: var(--color-text-secondary);
   white-space: nowrap;
@@ -3654,7 +3654,7 @@ textarea.embed-editor_value-input.is-expanded {
   padding: 2px var(--space-3);
   border-radius: var(--radius-xs);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
   line-height: var(--line-height-tight);
   overflow-wrap: anywhere;
 }
@@ -3791,7 +3791,7 @@ textarea.embed-editor_value-input.is-expanded {
 .embed-editor_add-query-input {
   width: 100%;
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
 }
 .embed-editor_add-query-controls {
   display: flex;
@@ -3904,7 +3904,7 @@ textarea.embed-editor_value-input.is-expanded {
   background: var(--color-class-tag-bg);
   color: #fff;
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
   line-height: var(--line-height-tight);
   white-space: nowrap;
   overflow: hidden;
@@ -4028,7 +4028,7 @@ textarea.embed-editor_value-input.is-expanded {
   background: transparent;
   border-radius: 0;
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
 }
 .embed-editor_selector-well .embed-editor_selector-add:focus,
 .embed-editor_selector-well .embed-editor_selector-add:hover {
@@ -4087,7 +4087,7 @@ textarea.embed-editor_value-input.is-expanded {
 .embed-editor_suggest-sel {
   min-width: 0;
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4190,7 +4190,7 @@ textarea.embed-editor_value-input.is-expanded {
   border: 0;
   border-radius: var(--radius-sm);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   line-height: var(--line-height-tight);
   color: var(--color-prop-orange);
   background: var(--color-prop-orange-bg);
@@ -4240,7 +4240,7 @@ textarea.embed-editor_value-input.is-expanded {
 }
 .embed-editor_provenance-head code {
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   color: var(--color-text-primary);
 }
 .embed-editor_provenance-list {
@@ -5252,7 +5252,7 @@ textarea.embed-editor_value-input.is-expanded {
   width: 100%;
   text-align: center;
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
 }
 /* Opened over one panel rather than the whole window (see the `frame` prop):
    the backdrop still covers everything, the modal sits over the panel it came
@@ -5737,7 +5737,7 @@ textarea.embed-editor_value-input.is-expanded {
   text-align: left;
   color: var(--color-text-tertiary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 13px;
 }
 
 /* Reveals the selectors that match nearly every element (:target,

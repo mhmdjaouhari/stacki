@@ -137,7 +137,7 @@
 }
 .loop-settings-item-main:disabled .loop-settings-item-rest {
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   color: var(--text-dim);
 }
 
@@ -333,7 +333,7 @@
 .loop-lineage-name {
   color: var(--text);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -627,7 +627,7 @@
   color: var(--pastel-d7ccff, #d7ccff);
   font-family: var(--mono);
   font-weight: 400;
-  font-size: 11px;
+  font-size: 13px;
 }
 .loop-bind-name {
   display: grid;
@@ -1119,7 +1119,7 @@
 .expr-input.property-code {
   min-height: 26px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 13px;
 }
 .expr-input.property-code .cm-content {
   padding: 4px 8px;

@@ -191,7 +191,7 @@
   padding: 10px 14px;
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.28);
-  font: 12.5px/1.6 var(--mono);
+  font: 13px/1.6 var(--mono);
   white-space: pre-wrap;
 }
 .html-content pre code {

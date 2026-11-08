@@ -15,7 +15,7 @@
   background: var(--color-bg-surface);
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-sm);
+  font-size: 13px;
   line-height: var(--line-height-normal);
   flex-grow: 1;
 }

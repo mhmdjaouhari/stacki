@@ -404,7 +404,7 @@
   background: transparent;
   padding: 7px 10px;
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: 13px;
 }
 .collection-editor {
   overflow: auto;
