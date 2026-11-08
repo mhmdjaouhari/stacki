@@ -1,6 +1,6 @@
 {
   "name": "stacki",
-  "version": "1.0.20",
+  "version": "1.0.22",
   "private": true,
   "description": "Stacki Studio, the hosted visual Astro builder: the fork that emdash-stacki deploys.",
   "license": "MIT",
