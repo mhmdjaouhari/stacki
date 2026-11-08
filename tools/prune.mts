@@ -83,7 +83,9 @@ if (doomed.length === 0) {
   const files = doomed.map(({ file }) => file);
   const BATCH = 500;
   for (let start = 0; start < files.length; start += BATCH) {
-    git('rm', '-q', '--', ...files.slice(start, start + BATCH));
+    // Forced: in the middle of a merge, a file upstream added is staged, and plain `git rm`
+    // refuses staged files. Nothing is lost, since the fork never keeps these files.
+    git('rm', '-q', '--force', '--', ...files.slice(start, start + BATCH));
   }
   console.log(`Removed ${files.length} files.`);
 } else {
