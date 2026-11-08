@@ -170,20 +170,23 @@ export function usePropEdits(splitForEditHook: ReturnType<typeof useSplitForEdit
   // commit would double-add. Update-or-add on set; remove every match on clear.
   const onSetProp = useCallback(
     (rule: ParsedRule, prop: string, value: string, important: boolean) => {
-      void applyEdit(rule, () => {
-        const { rule: editRule } = splitForEdit(rule);
-        if (isPaddingProperty(prop)) {
-          setPaddingDeclaration(editRule.node, prop, { value, important });
-          return;
-        }
-        const target = lastDeclFor(editRule, prop);
-        if (target) {
-          target.value = value;
-          target.important = important;
-          return;
-        }
-        return addDeclaration(editRule, prop, { value, important });
-      });
+      const painted = previewOnCanvas(rule, { prop, value, important });
+      void painted.then(() =>
+        applyEdit(rule, () => {
+          const { rule: editRule } = splitForEdit(rule);
+          if (isPaddingProperty(prop)) {
+            setPaddingDeclaration(editRule.node, prop, { value, important });
+            return;
+          }
+          const target = lastDeclFor(editRule, prop);
+          if (target) {
+            target.value = value;
+            target.important = important;
+            return;
+          }
+          return addDeclaration(editRule, prop, { value, important });
+        }),
+      );
     },
     [applyEdit, splitForEdit],
   );
@@ -240,6 +243,7 @@ export function useLiveEdits(
       }[],
     ) => {
       const documents = new Set<EmbedDocument>();
+      let painted: Promise<void> = Promise.resolve();
       for (const { rule, prop, value, important } of writes) {
         // Defer grouped-splittable edits to the blur commit (onSetProp splits first).
         if (isGroupedSplittable(rule)) {
@@ -249,6 +253,7 @@ export function useLiveEdits(
         if (!embedDocument) {
           continue;
         }
+        painted = previewOnCanvas(rule, { prop, value, important });
         const matches = declsFor(rule, prop);
         const target = matches[matches.length - 1];
         if (!liveOriginRef.current.has(prop)) {
@@ -262,13 +267,15 @@ export function useLiveEdits(
         }
         documents.add(embedDocument);
       }
-      for (const embedDocument of documents) {
-        void writeEmbedDocument(embedDocument, true).then((result) => {
-          if (!result.ok && inComponentRef.current && !embedDocument.source.fromComponent) {
-            markPending(embedDocument.source.key);
-          }
-        });
-      }
+      void painted.then(() => {
+        for (const embedDocument of documents) {
+          void writeEmbedDocument(embedDocument, true).then((result) => {
+            if (!result.ok && inComponentRef.current && !embedDocument.source.fromComponent) {
+              markPending(embedDocument.source.key);
+            }
+          });
+        }
+      });
     },
     [documentByKey, markPending, isGroupedSplittable, inComponentRef],
   );
@@ -447,4 +454,34 @@ export function useElementTokens(scanState: ReturnType<typeof useScanState>) {
   // and opening or leaving a component rescans, so it is the memo's whole input.
   const instanceClasses = useMemo(() => selectedInstanceClasses(snapshot?.classList ?? []), [snapshot]);
   return { instanceClasses, model, scan, selectorSuggestions, snapshot, tokens };
+}
+
+// The canvas shows the edit before the save and re-render land (host.previewRule). The
+// canvas is same-origin, so it shares this thread: the save's synchronous work (the AST
+// write, the page document, the panel's re-render) would hold its paint back by up to a
+// tenth of a second. The returned promise resolves once a frame has had the chance to
+// paint, and the caller saves after it; without a preview it resolves at once.
+function previewOnCanvas(rule: ParsedRule, declaration: { readonly prop: string; readonly value: string; readonly important: boolean }): Promise<void> {
+  const previewRule = getHost().previewRule;
+  if (previewRule === undefined) {
+    return Promise.resolve();
+  }
+  previewRule({ selector: rule.selectorText, atContext: rule.atContext, ...declaration });
+  return afterNextPaint();
+}
+
+// A hidden tab never paints, so the wait is capped.
+const PAINT_WAIT_MS_MAX = 50;
+
+function afterNextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    const fallback = window.setTimeout(resolve, PAINT_WAIT_MS_MAX);
+    // A frame callback runs just before the paint; the task queued from it runs after.
+    requestAnimationFrame(() => {
+      window.setTimeout(() => {
+        window.clearTimeout(fallback);
+        resolve();
+      }, 0);
+    });
+  });
 }
