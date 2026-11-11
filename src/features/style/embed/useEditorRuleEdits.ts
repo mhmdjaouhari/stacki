@@ -10,7 +10,7 @@ import { addDeclaration, appendDecl, directDecls, removeRule, removeRuleIfEmpty,
 import { parseSelectorList } from '../model/selectors';
 import { clearPaddingSides, isPaddingProperty, setPaddingDeclaration } from '../model/spacingShorthand';
 import { getHost, type ClassOutcome } from '../model/host';
-import { liveRules, liveRuleTargetOf, type LiveRulePreview } from '../model/liveRuleEdits';
+import { liveRules, liveRuleTargetOf, previewsPainted, type LiveRulePreview } from '../model/liveRuleEdits';
 import type { LiveRuleEdit, LiveRuleTarget } from '../../../../shared/properties/liveRules';
 import { selectedInstanceClasses } from '../model/webflowElement';
 import { type EmbedDocument, navigateToEmbed, writeEmbedDocument } from '../model/webflow';
@@ -202,20 +202,22 @@ export function usePropEdits(splitForEditHook: ReturnType<typeof useSplitForEdit
     (rule: ParsedRule, prop: string, value: string, important: boolean) => {
       const edit: LiveRuleEdit = { kind: 'value', value, important };
       const preview = previewEdit(rule, prop, edit);
-      const saving = applyEdit(rule, () => {
-        const { rule: editRule } = splitForEdit(rule);
-        if (isPaddingProperty(prop)) {
-          setPaddingDeclaration(editRule.node, prop, { value, important });
-          return;
-        }
-        const target = lastDeclFor(editRule, prop);
-        if (target) {
-          target.value = value;
-          target.important = important;
-          return;
-        }
-        return addDeclaration(editRule, prop, { value, important });
-      });
+      const saving = previewsPainted([preview]).then(() =>
+        applyEdit(rule, () => {
+          const { rule: editRule } = splitForEdit(rule);
+          if (isPaddingProperty(prop)) {
+            setPaddingDeclaration(editRule.node, prop, { value, important });
+            return;
+          }
+          const target = lastDeclFor(editRule, prop);
+          if (target) {
+            target.value = value;
+            target.important = important;
+            return;
+          }
+          return addDeclaration(editRule, prop, { value, important });
+        }),
+      );
       settlePreviews(saving, preview === undefined ? [] : [{ preview, edit }]);
     },
     [applyEdit, previewEdit, splitForEdit],
@@ -227,23 +229,25 @@ export function usePropEdits(splitForEditHook: ReturnType<typeof useSplitForEdit
       // property's own declaration is previewed.
       const removed: LiveRuleEdit = { kind: 'removed' };
       const previews = props.filter((name) => !isPaddingProperty(name)).map((name) => previewEdit(rule, name, removed));
-      const saving = applyEdit(rule, () => {
-        const { rule: editRule } = splitForEdit(rule);
-        // A side grouped into `padding` or an axis has no declaration of its own.
-        const clearedPadding = clearPaddingSides(editRule.node, props);
-        const targets: Declaration[] = [];
-        directDecls(editRule.node).forEach((decl) => {
-          if (props.includes(decl.prop)) {
-            targets.push(decl);
+      const saving = previewsPainted(previews).then(() =>
+        applyEdit(rule, () => {
+          const { rule: editRule } = splitForEdit(rule);
+          // A side grouped into `padding` or an axis has no declaration of its own.
+          const clearedPadding = clearPaddingSides(editRule.node, props);
+          const targets: Declaration[] = [];
+          directDecls(editRule.node).forEach((decl) => {
+            if (props.includes(decl.prop)) {
+              targets.push(decl);
+            }
+          });
+          if (!targets.length && !clearedPadding) {
+            return false;
           }
-        });
-        if (!targets.length && !clearedPadding) {
-          return false;
-        }
-        targets.forEach((decl) => decl.remove());
-        removeRuleIfEmpty(editRule);
-        return;
-      });
+          targets.forEach((decl) => decl.remove());
+          removeRuleIfEmpty(editRule);
+          return;
+        }),
+      );
       settlePreviews(
         saving,
         previews.filter((preview) => preview !== undefined).map((preview) => ({ preview, edit: removed })),
@@ -309,13 +313,16 @@ export function useLiveEdits(
         }
         documents.set(embedDocument, previews);
       }
+      const painted = previewsPainted([...documents.values()].flat().map(({ preview }) => preview));
       for (const [embedDocument, previews] of documents) {
-        const saving = writeEmbedDocument(embedDocument, true).then((result) => {
-          if (!result.ok && inComponentRef.current && !embedDocument.source.fromComponent) {
-            markPending(embedDocument.source.key);
-          }
-          return result.ok;
-        });
+        const saving = painted
+          .then(() => writeEmbedDocument(embedDocument, true))
+          .then((result) => {
+            if (!result.ok && inComponentRef.current && !embedDocument.source.fromComponent) {
+              markPending(embedDocument.source.key);
+            }
+            return result.ok;
+          });
         settlePreviews(saving, previews);
       }
     },
@@ -370,12 +377,14 @@ export function useRuleActions(
       } else if (last) {
         last.remove();
       }
-      const saving = writeEmbedDocument(embedDocument, true).then((result) => {
-        if (!result.ok && inComponentRef.current && !embedDocument.source.fromComponent) {
-          markPending(embedDocument.source.key);
-        }
-        return result.ok;
-      });
+      const saving = previewsPainted([preview])
+        .then(() => writeEmbedDocument(embedDocument, true))
+        .then((result) => {
+          if (!result.ok && inComponentRef.current && !embedDocument.source.fromComponent) {
+            markPending(embedDocument.source.key);
+          }
+          return result.ok;
+        });
       settlePreviews(saving, preview === undefined ? [] : [{ preview, edit }]);
     },
     [documentByKey, markPending, inComponentRef, liveOriginRef],

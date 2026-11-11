@@ -26,6 +26,34 @@ export interface LiveRulePreview {
 }
 
 /**
+ * Resolves once a frame has had the chance to paint the previews just sent, or at once when
+ * none was sent. A save starts after it: Studio's canvas is same-origin and shares the panel's
+ * main thread, and a save's synchronous work (the AST write, the page document, the panel's
+ * re-render) would otherwise run in the same task as the edit and hold the preview's paint
+ * back by up to a tenth of a second. Capped, since a hidden tab never paints.
+ */
+export function previewsPainted(previews: readonly (LiveRulePreview | undefined)[]): Promise<void> {
+  assert(previews.length <= LIVE_RULE_LIMITS.entriesMax, 'previewsPainted: no more previews than are held at once');
+  if (!previews.some((preview) => preview !== undefined)) {
+    return Promise.resolve();
+  }
+  const frame: unknown = globalThis.requestAnimationFrame;
+  if (typeof frame !== 'function') {
+    return Promise.resolve(); // No frames to wait for (a test or a worker): nothing paints.
+  }
+  return new Promise((resolve) => {
+    const fallback = setTimeout(resolve, LIVE_RULE_LIMITS.paintWaitMsMax);
+    // A frame callback runs just before the paint; a task queued from it runs after.
+    globalThis.requestAnimationFrame(() => {
+      setTimeout(() => {
+        clearTimeout(fallback);
+        resolve();
+      }, 0);
+    });
+  });
+}
+
+/**
  * The canvas's previews, as the panel drives them. `show` sends an edit; `landed`
  * and `failed` report its save. Only the newest edit of a declaration may settle it:
  * a scrub's earlier saves land while a later value is on screen, and releasing on
