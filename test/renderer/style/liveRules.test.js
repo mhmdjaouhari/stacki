@@ -7,8 +7,9 @@
 // alone; a failed save puts the page's own value back; a landed save keeps the
 // preview until the page's own sheet holds the value, and no longer than the
 // settle window; a sheet over the rule cap is refused loudly rather than half
-// searched; a grouped rule's member is not previewed; and only a declaration's
-// newest edit may settle it.
+// searched; a grouped rule's member is not previewed, nor a rule nested in another
+// style rule, while one inside at-rules is; and only a declaration's newest edit
+// may settle it.
 // Method: the contract is parsed with good input and every bad shape; the frame
 // half runs in jsdom with dev stylesheets shaped like Vite's (`data-vite-dev-id`
 // and Astro's `[data-astro-cid-…]` scope) and a hand-stepped animation frame, so
@@ -29,6 +30,8 @@ const loadRenderer = require('../../helpers/rendererModule');
 
 const contract = loadRenderer('shared/properties/liveRules.ts');
 const edits = loadRenderer('src/features/style/model/liveRuleEdits.ts');
+const parser = loadRenderer('src/features/style/model/css.ts');
+const regions = loadRenderer('src/features/style/model/cssRegions.ts');
 
 const CARD = 'src/components/Card.astro';
 const HERO = 'src/components/Hero.astro';
@@ -326,6 +329,43 @@ test('the panel names a rule by its project-relative file, and skips what the ca
   });
   assert.equal(edits.liveRuleTargetOf({ ...rule, written: { parents: ['.hero'], head: '.title' } }, source, 'font-size', '/Users/me/site'), undefined);
   assert.equal(edits.liveRuleTargetOf(rule, { origin: { kind: 'node', nodeId: 'n1', filePath: undefined } }, 'font-size', '/Users/me/site'), undefined);
+});
+
+test('a rule inside at-rules is previewed with its context, and one nested in a style rule is not', () => {
+  // Parsed by the panel's own parser, which lists a rule's enclosing at-rules among its
+  // written parents, as it does for an enclosing style rule.
+  const css = [
+    '@layer base {',
+    '  .title { font-size: 2rem; }',
+    '  @media (max-width: 767px) { .title { font-size: 1.5rem; } }',
+    '}',
+    '.hero { .title { color: red; } }',
+  ].join('\n');
+  const region = regions.parseRegion({ start: 0, end: css.length, css, root: undefined });
+  const rules = parser.collectRules(region, {
+    embedKey: 'file:/Users/me/site/src/components/Card.astro',
+    embedLabel: 'Card.astro',
+    fromComponent: false,
+    componentName: undefined,
+    regionIndex: 0,
+    idSeed: 'card',
+    order: { n: 0 },
+  });
+  const source = { origin: { kind: 'astro', path: '/Users/me/site/src/components/Card.astro' } };
+  const ruleOf = (selector, depth) => rules.find((rule) => rule.selectorText === selector && rule.atContext.length === depth);
+  const layered = ruleOf('.title', 0);
+  const inMedia = ruleOf('.title', 1);
+  const nested = ruleOf('.hero .title', 0);
+  assert.ok(layered);
+  assert.ok(inMedia);
+  assert.ok(nested);
+  assert.deepEqual(layered.written?.parents, ['@layer base']);
+  assert.deepEqual(inMedia.written?.parents, ['@layer base', '@media (max-width: 767px)']);
+  const targetOf = (rule) => edits.liveRuleTargetOf(rule, source, 'font-size', '/Users/me/site');
+  // The panel leaves layers out of a rule's context, and the frame does not match on them.
+  assert.deepEqual(targetOf(layered), { source: CARD, context: [], selector: '.title', property: 'font-size' });
+  assert.deepEqual(targetOf(inMedia), { source: CARD, context: ['@media (max-width: 767px)'], selector: '.title', property: 'font-size' });
+  assert.equal(targetOf(nested), undefined);
 });
 
 // usePropEdits with stand-in hooks, rendered once on the server: the handlers it returns

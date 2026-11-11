@@ -91,8 +91,10 @@ export const liveRules = createLiveRules((message) => {
  * The save shows those at the old speed.
  */
 export function liveRuleTargetOf(rule: ParsedRule, source: EmbedSource, property: string, projectPath: string | undefined): LiveRuleTarget | undefined {
-  if (rule.written !== undefined && rule.written.parents.length > 0) {
-    return undefined; // Nested source resolves to a selector no compiled rule carries.
+  // A rule nested in another style rule resolves to a selector no compiled rule carries.
+  // Its enclosing at-rules (@media, @layer, …) are levels too, and those the frame matches.
+  if (rule.written !== undefined && rule.written.parents.some((level) => !level.startsWith('@'))) {
+    return undefined;
   }
   const path = sourcePathOf(source);
   if (path === undefined) {
