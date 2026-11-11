@@ -7,8 +7,8 @@
 // alone; a failed save puts the page's own value back; a landed save keeps the
 // preview until the page's own sheet holds the value, and no longer than the
 // settle window; a sheet over the rule cap is refused loudly rather than half
-// searched; a grouped rule's member is not previewed; and only a declaration's
-// newest edit may settle it.
+// searched; a grouped rule's member is not previewed; only a declaration's
+// newest edit may settle it; and a save waits for the frame that paints its preview.
 // Method: the contract is parsed with good input and every bad shape; the frame
 // half runs in jsdom with dev stylesheets shaped like Vite's (`data-vite-dev-id`
 // and Astro's `[data-astro-cid-…]` scope) and a hand-stepped animation frame, so
@@ -328,6 +328,36 @@ test('the panel names a rule by its project-relative file, and skips what the ca
   assert.equal(edits.liveRuleTargetOf(rule, { origin: { kind: 'node', nodeId: 'n1', filePath: undefined } }, 'font-size', '/Users/me/site'), undefined);
 });
 
+test('a save waits for the frame that paints its preview, only when one was sent, and no longer than the cap', async () => {
+  const original = globalThis.requestAnimationFrame;
+  const frames = [];
+  globalThis.requestAnimationFrame = (callback) => frames.push(callback);
+  try {
+    await edits.previewsPainted([undefined]);
+    assert.equal(frames.length, 0, 'nothing previewed: no frame is waited for');
+
+    let painted = false;
+    const waiting = edits.previewsPainted([{ target: TITLE, token: 1 }]).then(() => {
+      painted = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(painted, false, 'the save waits for the frame');
+    assert.equal(frames.length, 1);
+    frames[0](0);
+    await waiting;
+    assert.equal(painted, true, 'and goes once the frame has painted');
+
+    // A hidden tab never runs frame callbacks: the wait ends at the cap.
+    const startedMs = Date.now();
+    await edits.previewsPainted([{ target: TITLE, token: 2 }]);
+    const waitedMs = Date.now() - startedMs;
+    assert.ok(waitedMs >= contract.LIVE_RULE_LIMITS.paintWaitMsMax - 5, `waited ${waitedMs} ms`);
+    assert.ok(waitedMs < 1_000, `waited ${waitedMs} ms`);
+  } finally {
+    globalThis.requestAnimationFrame = original;
+  }
+});
+
 // usePropEdits with stand-in hooks, rendered once on the server: the handlers it returns
 // are the ones the panel calls. The canvas frame is a stand-in that records messages.
 function loadPropEdits() {
@@ -389,14 +419,17 @@ test("the panel previews an edit, settles it by its save, and skips a grouped ru
     fail = () => resolve(false);
   });
   const plain = renderPropEdits(module, { grouped: false, saves: [failing, Promise.resolve(true)] });
+  // A save starts once the frame that paints its preview has had its chance, at most
+  // paintWaitMsMax later; this test's frames never paint, so it waits for the cap.
+  const saveStarted = () => new Promise((resolve) => setTimeout(resolve, contract.LIVE_RULE_LIMITS.paintWaitMsMax + 20));
   plain.onSetProp(rule, 'font-size', '21px', false);
   assert.deepEqual(posted, [set(TITLE, SIZE_21)], 'shown before the save resolves');
   fail();
-  await new Promise((resolve) => setImmediate(resolve));
+  await saveStarted();
   assert.deepEqual(posted.at(-1), drop(TITLE), 'a refused save puts the page value back');
 
   plain.onClearProp(rule, ['font-size', 'padding-top']);
-  await new Promise((resolve) => setImmediate(resolve));
+  await saveStarted();
   assert.deepEqual(posted.slice(-2), [set(TITLE, { kind: 'removed' }), drop(TITLE, { kind: 'removed' })], 'a padding side is left to the save');
 });
 

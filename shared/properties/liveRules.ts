@@ -37,6 +37,8 @@ export const LIVE_RULE_LIMITS = {
   valueCharsMax: 2_000,
   /** How long a released preview waits for the page to agree before the page's own value is put back. */
   settleFramesMax: 180,
+  /** How long a save waits for the frame that paints its preview; a hidden tab never paints. */
+  paintWaitMsMax: 50,
 } as const satisfies Record<string, number>;
 
 /** Which declaration: the rule's source file, its at-rules, its selector and the property. */
