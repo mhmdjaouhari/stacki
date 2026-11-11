@@ -14,6 +14,16 @@ import {
   type PreviewSampleValue,
   type PreviewSlot,
 } from './componentPreviewContext';
+import {
+  componentPreviewRecipe,
+  instanceMarkupNodes,
+  instancePreviewRecipe,
+  previewDefaultsPath,
+  readPreviewDefaults,
+  RECIPE_LIMITS,
+  type PreviewRecipe,
+  type PreviewRecipeNode,
+} from './componentPreviewRecipe';
 
 const PREVIEW_LIMITS = {
   sourceCharsMax: 10 * 1024 * 1024,
@@ -22,19 +32,39 @@ const PREVIEW_LIMITS = {
   rootsMax: 8,
 } as const;
 
+/**
+ * What the route puts in the component's slots. `recipe` is the project's insertion recipe
+ * (componentPreviewRecipe.ts): the component and everything nested in it, rendered by the recipe
+ * node component, and the component files among them, which the route loads before it renders.
+ */
+export type ComponentPreviewSlot =
+  PreviewSlot | { readonly kind: 'recipe'; readonly node: Extract<PreviewRecipeNode, { readonly component: string }>; readonly files: readonly string[] };
+
 export interface ComponentPreviewInputs {
   readonly props: Readonly<Record<string, PreviewSampleValue>>;
   readonly missing: readonly string[];
-  readonly slot: PreviewSlot;
+  readonly slot: ComponentPreviewSlot;
 }
 
-export function componentPreviewInputs(source: unknown, name: unknown, sample?: PreviewSample): ComponentPreviewInputs {
+/**
+ * The props and slot a preview renders the component with. A recipe wins over everything: the
+ * preview shows what inserting the component produces. Without one, a real instance's literal
+ * props and plain children win over invented ones.
+ */
+export function componentPreviewInputs(source: unknown, name: unknown, sample?: PreviewSample, recipe?: PreviewRecipe): ComponentPreviewInputs {
   const text = previewText(source, PREVIEW_LIMITS.sourceCharsMax, 'Component source');
   const label = previewText(name, PREVIEW_LIMITS.nameCharsMax, 'Component name');
   const schema = parsePropSchema(text);
   assert(schema.length <= PREVIEW_LIMITS.fieldsMax, 'Preview prop count exceeds limit');
   const props: Record<string, PreviewSampleValue> = {};
   for (const field of schema) {
+    if (field.name === 'preview' && field.type === 'boolean') {
+      // The project's design-mode switch ("keep open in design mode"), set over its default: with
+      // it, and the `stacki-designer` class the route puts on <html>, a modal, dropdown or tab set
+      // shows what it holds instead of waiting to be opened. Only a preview reads it.
+      props[field.name] = true;
+      continue;
+    }
     // Even false, empty, or expression defaults belong to the component author.
     if (field.default !== undefined || field.defaultExpr) {
       continue;
@@ -42,6 +72,9 @@ export function componentPreviewInputs(source: unknown, name: unknown, sample?: 
     if (field.type === 'string') {
       if (/^(heading|title|label|text|description|caption|summary|content)$/i.test(field.name)) {
         props[field.name] = label;
+      } else if (field.name === 'id') {
+        // A modal or a tab set often renders nothing without an id to be opened by; the preview gives it one.
+        props[field.name] = 'stacki-preview-' + label.replace(/[^\w-]/g, '-');
       }
     } else if (field.name === 'render' && field.type === 'boolean') {
       props[field.name] = true;
@@ -54,7 +87,8 @@ export function componentPreviewInputs(source: unknown, name: unknown, sample?: 
   }
   // A real instance shows the component as the site uses it: its literal props win over
   // invented ones, and its plain children replace the name placeholder in the slot.
-  Object.assign(props, sample?.props ?? {});
+  // The project's recipe is what an insert produces, so it wins over both.
+  Object.assign(props, recipe === undefined ? (sample?.props ?? {}) : recipe.recipe.props);
   // Imported objects and page-scoped values cannot be invented safely. Do not execute
   // a standalone component when its declared required inputs are unavailable.
   const missing = schema
@@ -63,7 +97,28 @@ export function componentPreviewInputs(source: unknown, name: unknown, sample?: 
     .filter((field) => !Object.hasOwn(props, field.name))
     .map((field) => field.name);
   assert(missing.length <= schema.length, 'Missing preview inputs belong to the prop schema');
-  return { props, missing, slot: sample?.slot ?? { kind: 'name' } };
+  return { props, missing, slot: recipe === undefined ? (sample?.slot ?? { kind: 'name' }) : recipeSlot(recipe, props) };
+}
+
+function recipeSlot(recipe: PreviewRecipe, props: Readonly<Record<string, PreviewSampleValue>>): ComponentPreviewSlot {
+  const content = recipe.recipe.content;
+  switch (content.kind) {
+    case 'empty':
+      return { kind: 'none' };
+    case 'text':
+      return { kind: 'html', html: escapeHTML(content.text) };
+    case 'children':
+      // The owner renders with every prop the preview settled on, the recipe's among them.
+      return { kind: 'recipe', node: { ...recipe.node, props }, files: recipe.files };
+    default: {
+      const exhaustive: never = content;
+      return exhaustive;
+    }
+  }
+}
+
+function escapeHTML(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
 }
 
 export function componentPreviewPath(paths: readonly string[], requestedPath: unknown, requestedName: unknown): string | undefined {
@@ -91,6 +146,19 @@ export function componentPreviewPath(paths: readonly string[], requestedPath: un
     return paths.find((candidate) => candidate.endsWith('/' + name + '.astro'));
   }
   return undefined;
+}
+
+/**
+ * How the route lays the component out. `popup` fits a fixed 1200 px stage into the hover card,
+ * centred and scaled to its height. `page` gives the stage the width of the frame, anchored top
+ * left at scale 1 and cut off at the bottom, so the host can scale the whole frame instead.
+ */
+export type ComponentPreviewLayout = 'popup' | 'page';
+
+export function componentPreviewLayout(requested: unknown): ComponentPreviewLayout {
+  // Emitted into the Astro page like componentPreviewPath: self-contained, no outside names.
+  // Anything but the exact word keeps the popup layout the route always had.
+  return requested === 'page' ? 'page' : 'popup';
 }
 
 export function componentPreviewPlugin(projectDirectories: readonly string[], packages: (root: string) => readonly PackagePreviewSource[] = () => []) {
@@ -152,14 +220,40 @@ export function componentPreviewPlugin(projectDirectories: readonly string[], pa
       assert(bytes <= PREVIEW_LIMITS.sourceCharsMax, 'Component source exceeds size limit');
       const source = fs.readFileSync(file, 'utf8');
       const name = path.basename(file, '.astro');
+      // Saving a recipe changes what the preview should show, even before the file exists.
+      addWatchFile(this, previewDefaultsPath(root));
+      const config = readPreviewDefaults(root);
+      const recipe = config === undefined ? undefined : componentPreviewRecipe(root, relative, config);
+      if (recipe !== undefined) {
+        // The owner is this module's own file; the components it nests are watched here.
+        for (const file of recipe.files.filter((candidate) => candidate !== relative)) {
+          addWatchFile(this, path.join(root, file));
+        }
+        return 'export default ' + JSON.stringify(componentPreviewInputs(source, name, undefined, recipe)) + ';';
+      }
       const found = componentPreviewSample(projectIndex(), relative);
       if (found !== undefined) {
         // Editing the sampled instance changes what the preview should show.
         addWatchFile(this, path.join(root, found.host));
+        // Children with components or named slots render through the recipe node component, as the page has them.
+        const instance = instanceRecipe(projectIndex(), relative, found.host, found.sample);
+        if (instance !== undefined) {
+          return 'export default ' + JSON.stringify(componentPreviewInputs(source, name, undefined, instance)) + ';';
+        }
       }
       return 'export default ' + JSON.stringify(componentPreviewInputs(source, name, found?.sample)) + ';';
     },
   };
+}
+
+function instanceRecipe(index: PreviewProjectIndex, relative: string, host: string, sample: PreviewSample): PreviewRecipe | undefined {
+  if (sample.markup === undefined) {
+    return undefined;
+  }
+  const file = [...index.pages, ...index.others].find((candidate) => candidate.relative === host);
+  assert(file !== undefined, 'Preview instance: the sampled host is in the index');
+  const children = instanceMarkupNodes(sample.markup, file.imports);
+  return children === undefined ? undefined : instancePreviewRecipe(relative, sample.props, children);
 }
 
 const PREVIEW_VIRTUAL_MODULES: readonly string[] = [
@@ -182,8 +276,23 @@ function addWatchFile(context: unknown, file: string): void {
   Reflect.apply(watch, context, [file]);
 }
 
+/** The recipe node component, written beside the route's page: the page imports it by this name. */
+export const PREVIEW_RECIPE_FILE = 'stacki-preview-recipe.astro';
+
+export function renderComponentPreviewRecipe(): string {
+  // One slot position per possible group; Astro needs each one written out in the template.
+  const positions = Array.from(
+    { length: RECIPE_LIMITS.slotsMax },
+    (_, index) => `<Fragment slot={slotName(${index})}>{slotNodes(${index}).map((child) => <Astro.self node={child} modules={modules} />)}</Fragment>`,
+  );
+  return PREVIEW_RECIPE_NODE.replace('__STACKI_SLOT_POSITIONS__', () => positions.join('\n      '));
+}
+
 export function renderComponentPreviewPage(): string {
-  return PREVIEW_PAGE.replace('__STACKI_PREVIEW_PATH__', () => componentPreviewPath.toString());
+  return PREVIEW_PAGE.replace('__STACKI_PREVIEW_PATH__', () => componentPreviewPath.toString() + '\n' + componentPreviewLayout.toString()).replace(
+    '__STACKI_PREVIEW_RECIPE__',
+    PREVIEW_RECIPE_FILE,
+  );
 }
 
 interface PackagePreviewSource {
@@ -227,6 +336,7 @@ __STACKI_PREVIEW_PATH__
 import 'virtual:stacki-component-preview-styles';
 import { contextStyles, htmlAttributes, bodyAttributes } from 'virtual:stacki-component-preview-context';
 import { packageModules, packageInputs } from 'virtual:stacki-package-components';
+import RecipeNode from './__STACKI_PREVIEW_RECIPE__';
 const mods = {
   ...import.meta.glob(['/src/components/**/*.astro', '/src/layouts/**/*.astro']), ...packageModules,
 };
@@ -241,21 +351,33 @@ const inputs = { ...import.meta.glob(['/src/components/**/*.astro', '/src/layout
 const selected = componentPreviewPath(
   Object.keys(mods), Astro.url.searchParams.get('p') || '', Astro.url.searchParams.get('c') || '',
 );
+const layout = componentPreviewLayout(Astro.url.searchParams.get('layout'));
 const name = selected ? selected.split('/').pop().replace(/\\.astro$/, '') : '';
 let C = null;
 let props = {};
 let missing = [];
 let slot = { kind: 'name' };
+// The components a recipe nests inside this one, loaded before rendering: the node component renders synchronously.
+const recipeModules = {};
 if (selected) {
   ({ props, missing, slot } = await inputs[selected]());
   if (missing.length === 0) {
     C = (await mods[selected]()).default;
+    if (slot.kind === 'recipe') {
+      for (const file of slot.files.slice(0, 256)) {
+        // The owner is already loaded as C; the components it nests load here.
+        const load = '/' + file === selected ? null : mods['/' + file];
+        if ('/' + file === selected) recipeModules[file] = C;
+        else if (load) recipeModules[file] = (await load()).default;
+      }
+    }
   }
 }
 ---
-{DefaultCanvas ? <DefaultCanvas /> : <html {...htmlAttributes}>
+{DefaultCanvas ? <DefaultCanvas /> : <html {...htmlAttributes} class={[htmlAttributes.class, 'stacki-designer'].filter(Boolean).join(' ')}>
   <head>
     <meta charset="utf-8" />
+    <meta name="avb-layout" content={layout} />
     <style>
       /* Keep authored backgrounds paired with the project's text colors. */
       html, body { margin: 0; height: 100%; overflow: hidden; }
@@ -284,6 +406,7 @@ if (selected) {
   <body {...bodyAttributes}>
     {contextStyles.map((css) => <style is:inline set:html={css}></style>)}
     <div id="avb-stage">{C ? (slot.kind === 'html' ? <C {...props}><Fragment set:html={slot.html} /></C>
+      : slot.kind === 'recipe' ? <RecipeNode node={slot.node} modules={recipeModules} />
       : slot.kind === 'none' ? <C {...props} /> : <C {...props}>{name}</C>) : null}</div>
     <div id="avb-empty">{missing.length > 0
       ? 'Preview needs data for: ' + missing.join(', ') + '. Open an instance on a page.'
@@ -317,23 +440,43 @@ if (selected) {
         }
         var scheduled = false;
         var lastStatus = '';
-        function reportStatus(status) {
+        function reportStatus(status, reason) {
           if (status === lastStatus) return;
           lastStatus = status;
-          window.parent.postMessage({ type: 'avb:component-preview', status: status }, '*');
+          var message = { type: 'avb:component-preview', status: status };
+          if (reason) message.reason = reason;
+          window.parent.postMessage(message, '*');
+        }
+        // A preview shows what a component holds: a closed <dialog> or <details> would measure as
+        // nothing, so the stage opens them (non-modally: the frame is a picture, not a page to trap).
+        function reveal() {
+          var closed = stage.querySelectorAll('dialog:not([open]), details:not([open])');
+          for (var i = 0; i < closed.length && i < 256; i++) closed[i].setAttribute('open', '');
         }
         function fit() {
           scheduled = false;
+          var layoutMeta = document.querySelector('meta[name="avb-layout"]');
+          var page = !!layoutMeta && layoutMeta.getAttribute('content') === 'page';
+          // Measure at the width it will be shown at: the frame's in the page layout, else the CSS 1200 px.
+          stage.style.width = page ? window.innerWidth + 'px' : '';
           stage.style.transform = 'none';
+          reveal();
           unfix();
           var box = bbox(stage);
           if (!box || box.w < 1 || box.h < 1) {
             document.body.classList.add('avb-is-empty');
             stage.style.visibility = 'hidden';
-            reportStatus('empty');
+            var note = document.getElementById('avb-empty');
+            reportStatus('empty', note && note.textContent ? note.textContent.trim() : 'The component rendered nothing.');
             return;
           }
           document.body.classList.remove('avb-is-empty');
+          if (page) {
+            // The page layout: top left, unscaled, cut off at the bottom.
+            stage.style.visibility = 'visible';
+            reportStatus('ready');
+            return;
+          }
           var aw = window.innerWidth - PAD * 2;
           var ah = window.innerHeight - PAD * 2;
           var s = Math.min(1, aw / box.w, ah / box.h);
@@ -370,4 +513,33 @@ if (selected) {
     </script>
   </body>
 </html>}
+`;
+
+// One node of a component's insertion recipe, rendered as the insert would write it: a literal is
+// text, an element is that tag, a component is the project's own (loaded by the page into
+// `modules`). Nested nodes render through `Astro.self`; the recipe resolver bounds the depth, and
+// a child of a component goes to the slot its `slot` prop names.
+const PREVIEW_RECIPE_NODE = `---
+// Generated by Stacki (dev preview only) — do not edit.
+const { node, modules } = Astro.props;
+const { slot: _slot, ...props } = node && node.props ? node.props : {};
+const content = node && node.content ? node.content : { kind: 'empty' };
+const groups = content.kind === 'children' ? content.children : [];
+const children = groups;
+// A component's children come grouped by slot; an unused position gets a name no component declares.
+const slotName = (index) => (groups[index] ? groups[index].name : 'stacki-unused-' + index);
+const slotNodes = (index) => (groups[index] ? groups[index].children : []);
+const Component = node && typeof node.component === 'string' ? modules[node.component] : undefined;
+const Tag = node && typeof node.element === 'string' ? node.element : undefined;
+---
+{node && typeof node.literal === 'string' ? node.literal
+  : Component ? (content.kind === 'text' ? <Component {...props}>{content.text}</Component>
+    : content.kind === 'children' ? <Component {...props}>
+      __STACKI_SLOT_POSITIONS__
+    </Component>
+    : <Component {...props} />)
+  : Tag ? (content.kind === 'text' ? <Tag {...props}>{content.text}</Tag>
+    : content.kind === 'children' ? <Tag {...props}>{children.map((child) => <Astro.self node={child} modules={modules} />)}</Tag>
+    : <Tag {...props} />)
+  : null}
 `;

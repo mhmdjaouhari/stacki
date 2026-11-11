@@ -13,6 +13,8 @@ import { warmupRequest } from './warmupRequest';
 import { isStudioFont } from '../shared/studioAssets';
 import { cmsConnectionRoute, cmsVault } from './cmsConnectionRoutes';
 import { CmsUnavailable, cmsForwarded } from '../features/cms/cmsConnectionVault';
+import { mediaConnectionRoute } from './mediaConnectionRoutes';
+import { mediaForwarded } from '../features/assets/mediaConnectionVault';
 
 export class PreviewContainer extends Container<Environment> {
   private readonly loginAttempts = new LoginAttempts((state, expires) => this.ctx.storage.transaction((storage) => claimLoginAttempt(storage, state, expires)));
@@ -135,8 +137,9 @@ async function workerRoute(request: Request, url: URL, environment: Environment,
   if (url.pathname === '/studio/api/preview-url') {
     return previewURL(url, environment, identity);
   }
-  // CMS connections are kept here, never by the container (cmsConnectionRoutes.ts).
-  return cmsConnectionRoute(request, url, environment, identity);
+  // CMS and media hosting connections are kept here, never by the container
+  // (cmsConnectionRoutes.ts, mediaConnectionRoutes.ts).
+  return (await cmsConnectionRoute(request, url, environment, identity)) ?? mediaConnectionRoute(request, url, environment, identity);
 }
 
 // To the container: never with a client's CMS target, and with ours for a CMS
@@ -144,7 +147,7 @@ async function workerRoute(request: Request, url: URL, environment: Environment,
 async function forward(request: Request, url: URL, environment: Environment, identity: Identity, previewHost: boolean): Promise<Response> {
   let forwarded: Request;
   try {
-    forwarded = await cmsForwarded(request, url, cmsVault(environment));
+    forwarded = await mediaForwarded(await cmsForwarded(request, url, cmsVault(environment)), url, cmsVault(environment));
   } catch (error) {
     if (error instanceof CmsUnavailable) {
       return Response.json({ ok: false, message: error.message });
