@@ -51,7 +51,7 @@
 /* Panels emdash-stacki doesn't use, hidden rather than removed so the code stays upstream's:
    Git (EmDash publishes without git), Apps and the apps pinned to the rail, and the Astro
    content collections row of the Collections panel (the site's content is in EmDash). Their
-   keyboard shortcuts still open them. */
+   keyboard shortcuts still open the panels, which then show nothing but the close button. */
 .studio-rail .rail-btn[aria-label='Git'],
 .studio-rail .rail-btn[aria-label='Apps'],
 .studio-rail .rail-app,
@@ -60,5 +60,16 @@
 }
 .studio-left .cms-collection[title^='Declared in '],
 .studio-left .cms-collection[title='Astro content'] {
+  display: none;
+}
+.studio-left:has(.history-body) > :not(:first-child),
+.studio-left:has(.apps-panel) > :not(:first-child) {
+  display: none;
+}
+/* The insert palette (Ctrl+E): its Apps tab, the last one whenever Studio offers apps, and
+   app and marketplace rows in its results. */
+.insert-tabs .insert-tab:last-of-type,
+.insert-results .insert-app,
+.insert-results .insert-marketplace-entry {
   display: none;
 }
