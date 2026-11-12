@@ -10,7 +10,8 @@
 //    --tone-<hex> (borders and outlines --line-<hex>), near-white text --ink-<hex>, and faint
 //    white overlays rgba(var(--fg-rgb), a).
 // 2. Pastel: a light saturated text colour becomes --pastel-<hex>, darkened for light mode.
-// 3. Monospace: a rule that sets a monospace face below 13px is raised to 13px.
+// 3. Monospace: a hard-coded monospace stack becomes var(--mono), Studio's bundled Iosevka
+//    (fork.css), and a rule that sets a monospace face below 13px is raised to 13px.
 //
 // Each generated variable's light value depends only on its dark colour, so each stylesheet
 // gets its own `:root[data-theme='light']` block at its end, with nothing gathered across
@@ -74,7 +75,8 @@ export function transformForkCss(css: string, from: string): ForkCssResult {
       return;
     }
     const themed = themeValue(declaration, light, original);
-    const pastel = pastelValue(declaration.prop, themed, light);
+    const faced = monospaceFace(declaration.prop, themed);
+    const pastel = pastelValue(declaration.prop, faced, light);
     if (pastel !== declaration.value) {
       declaration.value = pastel;
       changes += 1;
@@ -181,7 +183,8 @@ function onColoredBackground(declaration: Declaration, original: ReadonlyMap<Dec
 // ───────────────────────────── Pastel ─────────────────────────────
 
 const PASTEL_LUMINANCE_MIN = 0.3;
-const PASTEL_LIGHTNESS = 0.36;
+// 0.33 keeps the lightest hues at 4.5:1 on the light panels (#ececec).
+const PASTEL_LIGHTNESS = 0.33;
 // Saturation scaled and capped, so the violets stay readable rather than turning near-black.
 const PASTEL_SATURATION_SCALE = 0.85;
 const PASTEL_SATURATION_MAX = 0.75;
@@ -221,6 +224,18 @@ const SIZE_VARIABLES: ReadonlyMap<string, number> = new Map([
 ]);
 // Monospace by inheritance, so the rule itself names no face.
 const MONOSPACE_SELECTORS: ReadonlySet<string> = new Set(['.bind-input .expr-chip']);
+
+// `font-family: ui-monospace, Menlo, monospace` and the like name the system's face; Studio's
+// is var(--mono). A stack that already goes through a variable is left to it.
+function monospaceFace(property: string, value: string): string {
+  if (property.toLowerCase() !== 'font-family') {
+    return value;
+  }
+  if (value.includes('var(')) {
+    return value;
+  }
+  return /\bmonospace\b/i.test(value) ? 'var(--mono)' : value;
+}
 
 function raiseMonospace(rule: Rule): number {
   const declarations = siblingDeclarations(rule);

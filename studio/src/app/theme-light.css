@@ -29,12 +29,12 @@
   /* Each step clears WCAG AA (4.5:1) on the white and #f7f7f7 surfaces. */
   --text: #1a1a1a;
   --text-dim: #4d4d4d;
-  --text-faint: #6b6b6b;
-  --accent: #0072d6;
-  --accent-soft: rgba(0, 114, 214, 0.12);
-  --green: #1a8a3c;
-  --component-green: #13803d;
-  --component-green-soft: rgba(19, 128, 61, 0.12);
+  --text-faint: #5f5f5f;
+  --accent: #0062b8;
+  --accent-soft: rgba(0, 98, 184, 0.12);
+  --green: #157a34;
+  --component-green: #0f6d33;
+  --component-green-soft: rgba(15, 109, 51, 0.12);
   --collection-purple: #6f4fd0;
   --red: #d42a20;
   --amber: #a87400;
@@ -54,7 +54,7 @@
   --color-border-strong: rgba(0, 0, 0, 0.2);
   --color-text-primary: #1a1a1a;
   --color-text-secondary: #474747;
-  --color-text-tertiary: #636363;
+  --color-text-tertiary: #5c5c5c;
   --color-text-disabled: #9a9a9a;
   --color-text-inverse: #f7f7f7;
   --color-accent: #111111;
@@ -63,12 +63,14 @@
   --color-danger: #c62828;
   --color-warning: #a16207;
   --color-info: #1d4ed8;
-  --color-component-tag: #13803d;
+  --color-component-tag: #0f6d33;
   --color-component-tag-bg: rgba(37, 157, 77, 0.14);
   --color-component-tag-bg-hover: rgba(37, 157, 77, 0.22);
-  --color-prop-orange: #b45309;
+  --color-prop-orange: #9a4507;
   --color-prop-orange-bg: rgba(223, 100, 12, 0.12);
   --color-prop-orange-bg-hover: rgba(223, 100, 12, 0.2);
+  /* The selected context chip: dark text needs a light grey under it (dark: #636363). */
+  --color-selector-context-bg-active: #c8c8c8;
 
   /* Syntax (src/ui/codeHighlight.ts), a light palette with the same roles. */
   --code-c792ea: #8250df;
@@ -82,4 +84,20 @@
   --code-89ddff: #4b5563;
   --code-f5f5f5: #1f2328;
   --code-999999: #6e7781;
+}
+
+/* Rules for what the variables above cannot reach. Each keeps text at 4.5:1 or more on
+   the light surfaces, which a contrast audit of Studio's panels in light mode checks. */
+
+/* The Code panel colours Astro source with Shiki's dark palette, inline, per token
+   (src/ui/astroHighlight.ts). The same hues, darkened, read on a light editor. */
+:root[data-theme='light'] .cm-astro-token,
+:root[data-theme='light'] .cm-astro-token * {
+  color: color-mix(in oklab, var(--astro-token-color) 45%, black) !important;
+}
+
+/* Text dimmed by opacity, which reads on dark surfaces but fades too far on light ones. */
+:root[data-theme='light'] .page-search-path .page-search-rest,
+:root[data-theme='light'] .list-item .page-list-copy .sub {
+  opacity: 0.7;
 }
