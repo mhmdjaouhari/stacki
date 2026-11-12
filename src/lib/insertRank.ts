@@ -1,5 +1,5 @@
-import { assert } from '../../../shared/core/assert';
-import { LIMITS } from '../../../shared/core/limits';
+import { assert } from '../../shared/core/assert';
+import { LIMITS } from '../../shared/core/limits';
 
 export interface SearchItem {
   readonly name?: string;
@@ -135,8 +135,9 @@ export function tagSearchText(tag: string): string {
 
 // Components first, then elements, then everything else — the order the tabs
 // are in, and the order of how much of the project a thing belongs to. A
-// project's own components are its vocabulary; `<form>` is always there.
-const CATEGORY: Readonly<Record<string, number>> = { components: 0, elements: 1, other: 2 };
+// project's own components are its vocabulary; `<form>` is always there. Apps
+// come last: they open a tool rather than insert into the page.
+const CATEGORY: Readonly<Record<string, number>> = { components: 0, elements: 1, other: 2, apps: 3 };
 
 /**
  * The items that match, best first. An empty query keeps the list as it is,
@@ -173,7 +174,7 @@ export function rankInsertItems<T extends SearchItem>(items: readonly T[] | unde
     }
   }
   scored.sort(
-    (left, right) => (CATEGORY[left.item.cat ?? ''] ?? 3) - (CATEGORY[right.item.cat ?? ''] ?? 3) || left.total - right.total || left.index - right.index,
+    (left, right) => (CATEGORY[left.item.cat ?? ''] ?? 4) - (CATEGORY[right.item.cat ?? ''] ?? 4) || left.total - right.total || left.index - right.index,
   );
   return scored.map((entry) => entry.item);
 }

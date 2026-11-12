@@ -1,3 +1,5 @@
+import { centralIcon } from '../../../ui/central/CentralIcon';
+import { add as centralAdd } from '../../../ui/central/centralGeometry';
 import Popup from '../../../ui/Popup';
 // The selector well: the chips a selection is styled by, picking and adding
 // one, and filtering global selectors (EmbedEditor.tsx).
@@ -14,6 +16,8 @@ import { type SegmentedOption } from '../components/SegmentedControl';
 import { CodeInline } from '../../../ui/CodeBlock';
 import { selectorKey, selectorsMatch } from '../model/resolved';
 import { SpinnerIcon } from './EditorBasics';
+import { InlineStyleChip } from './InlineStyleChip';
+import type { InlineChip } from './useInlineTarget';
 import { useHeldSelection } from './heldSelection';
 import { loneTypedClass, usePseudoTarget } from './editorModel';
 import {
@@ -52,6 +56,7 @@ export function SelectorPicker({
   onDeselect,
   onAdd,
   onVisibleSelectorsChange,
+  inline,
 }: SelectorPickerProps) {
   // Another element's chips land in stages; the well draws only the finished list,
   // keeping the last one until then (heldSelection.ts).
@@ -97,9 +102,11 @@ export function SelectorPicker({
               <span className="u-sr-only">Finding the selectors that style this element…</span>
             </div>
           ) : undefined}
-          {view.shownSelectors.length || showInput ? (
+          {view.shownSelectors.length || showInput || inline !== undefined ? (
             <SelectorChips
               entries={view.shownSelectors}
+              // The held chips are the previous element's; so would its inline chip be.
+              inline={held.holding ? undefined : inline}
               activeSelector={held.view.activeSelector}
               busy={busy}
               // The held chips are the previous element's: a click on one would
@@ -542,9 +549,12 @@ export function SelectorChips({
   onSelect,
   onDeselect,
   onRemove,
+  inline,
   children,
 }: {
   entries: readonly ClassifiedSelector[];
+  /** The style attribute's chip, after every selector: it outranks them all. */
+  inline?: InlineChip | undefined;
   activeSelector: string;
   busy: boolean;
   onSelect: (selector: string) => void;
@@ -570,6 +580,7 @@ export function SelectorChips({
           onRemove={onRemove}
         />
       ))}
+      {inline === undefined ? undefined : <InlineStyleChip chip={inline} busy={busy} />}
       {children === undefined ? undefined : <div className="embed-editor_selector-caret-slot">{children}</div>}
     </div>
   );
@@ -681,9 +692,11 @@ export interface ChipState {
 export function chipClassName(entry: ClassifiedSelector, state: ChipState): string {
   return [
     'embed-editor_selector-chip',
+    `is-${entry.kind}`,
     state.active && 'is-active',
     entry.selector.pending && 'is-pending',
-    entry.selector.fromComponent && 'is-component',
+    entry.selector.inComponentMarkup === true && 'is-component',
+    entry.selector.provenancePending === true && 'is-provenance-pending',
     entry.selector.fromInstance === true && 'is-instance',
     entry.global && 'is-global',
     entry.inherited && 'is-inherited',
@@ -881,13 +894,7 @@ export function asQuery(raw: string): string {
 // context key is '' or an `@…` / `bp:…` string, so this can't collide.
 export const ADD_QUERY = '\0add-query';
 
-export function PlusIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
-      <path d="M8 3.5v9M3.5 8h9" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  );
-}
+export const PlusIcon = centralIcon(centralAdd, 12);
 
 export const QUERY_MODES: SegmentedOption<'wrap' | 'nest'>[] = [
   { value: 'wrap', label: 'Wrap', tooltip: 'New block — @query { selector { … } }' },

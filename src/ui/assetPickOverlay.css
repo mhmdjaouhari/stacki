@@ -8,10 +8,10 @@
   display: flex;
   flex-direction: column;
   padding: 0;
-  border: 1px solid var(--line-3a3a3a, #3a3a3a);
+  border: 1px solid #3a3a3a;
   border-radius: 16px;
-  background: var(--tone-1b1b1b, #1b1b1b);
-  color: var(--ink-e8e8e8, #e8e8e8);
+  background: #1b1b1b;
+  color: #e8e8e8;
   box-shadow: 0 24px 90px #0008;
   overflow: hidden;
 }
@@ -20,7 +20,7 @@
   align-items: center;
   justify-content: space-between;
   padding: 16px 20px;
-  border-bottom: 1px solid var(--line-333333, #333);
+  border-bottom: 1px solid #333;
 }
 .asset-pick-overlay h2 {
   font-size: 17px;

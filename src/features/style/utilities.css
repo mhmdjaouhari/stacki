@@ -61,7 +61,7 @@
 }
 .u-text-style-mono {
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
 
@@ -198,7 +198,7 @@
   --surface-control: var(--color-bg-surface);
   --surface-control-hover: var(--color-bg-surface-raised);
   --surface-inset: var(--color-bg-inset);
-  --surface-inset-hover: var(--tone-181818, #181818);
+  --surface-inset-hover: #181818;
   --surface-overlay: var(--color-bg-surface-raised);
 }
 .u-surface-surface {
@@ -358,7 +358,7 @@ body.is-scrubbing * {
   padding: var(--space-4) var(--space-5);
   resize: vertical;
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
 }
 
@@ -393,7 +393,7 @@ body.is-scrubbing * {
     box-shadow var(--transition-fast);
 }
 .u-field:hover {
-  background: var(--tone-181818, #181818);
+  background: #181818;
 }
 .u-field:focus-within {
   box-shadow: 0 0 0 var(--border-width-default) var(--color-border-focus);
@@ -994,7 +994,7 @@ body.is-scrubbing * {
   background: transparent;
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
 }
 .u-select-custom-input:focus {
   outline: none;
@@ -1624,7 +1624,7 @@ body.is-scrubbing * {
   width: 100%;
   padding: 5px var(--space-2);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   text-align: center;
 }
 /* The hex field reads from the left, so its text needs room at that edge — 2px

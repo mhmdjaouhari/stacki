@@ -1,6 +1,9 @@
+import { centralIcon } from '../../../ui/central/CentralIcon';
+import { chevronRight as centralChevronRight } from '../../../ui/central/centralGeometry';
 // The layout section's rows: which properties each section owns, direction
 // and alignment, and the sections a display mode brings (EmbedEditor.tsx).
 
+import type { InlineChip } from './useInlineTarget';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { ClassPlacement } from '../../../editor/classAttr';
@@ -12,7 +15,7 @@ import GapControl from '../GapControl';
 import GridControls from '../GridControls';
 import { GroupLabel } from '../TypographySection';
 import { type MatchedSelector, type ResolvedProp } from '../model/resolved';
-import { selectorDependsOnAncestor } from '../model/selectors';
+import { isGlobalSelector, selectorDependsOnAncestor, selectorKind, type SelectorKind } from '../model/selectors';
 import { getHost, onHostChange } from '../model/host';
 import { type LiveSetProp } from './EditorBasics';
 import { keepImportant } from '../model/styleDisplay';
@@ -145,11 +148,7 @@ export function AlignRow({
   );
 }
 
-export const ChevronRightIcon = () => (
-  <svg viewBox="0 0 16 16" width="14" height="14" fill="none" aria-hidden="true">
-    <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
+export const ChevronRightIcon = centralIcon(centralChevronRight);
 
 // Which layout-mode disclosure a Display value implies. `grid` wins over `inline` for
 // `inline-grid`, `flex` over `inline` for `inline-flex`; a custom value (e.g.
@@ -317,17 +316,12 @@ export const SUGGESTION_KIND_LABEL: Record<SelectorSuggestion['kind'], string> =
   combo: 'combo',
 };
 
-// A selector made only from tags, universal selectors, and pseudos describes a
-// project-wide group rather than this element's identity. A class, id, or attribute
-// anywhere in the selector (including inside `:is(...)`) makes it specific.
-export function isGlobalSelector(text: string): boolean {
-  return !/[.#[]/.test(text);
-}
-
 export type ClassifiedSelector = {
   readonly selector: MatchedSelector;
   readonly global: boolean;
   readonly inherited: boolean;
+  /** The chip's colour family: blue for a class chip, grey for a plain one (selectorKind). */
+  readonly kind: SelectorKind;
 };
 
 export function classifySelector(selector: MatchedSelector): ClassifiedSelector {
@@ -338,6 +332,7 @@ export function classifySelector(selector: MatchedSelector): ClassifiedSelector 
     // definitions overlap, so each reveal control owns a disjoint list.
     global: !inherited && isGlobalSelector(selector.text),
     inherited,
+    kind: selectorKind(selector.text),
   };
 }
 
@@ -349,7 +344,7 @@ export function selectorAccessibleLabel(entry: ClassifiedSelector, label: string
   if (entry.inherited) {
     categories.push('inherited');
   }
-  if (entry.selector.fromComponent) {
+  if (entry.selector.inComponentMarkup === true) {
     categories.push('component');
   }
   if (entry.selector.fromInstance === true) {
@@ -387,4 +382,6 @@ export type SelectorPickerProps = {
    *  element's classes (the caret's gap among the chips, selectorCaret.ts). */
   onAdd: (selector: string, placement: ClassPlacement) => void;
   onVisibleSelectorsChange?: (selectors: readonly string[]) => void;
+  /** The "Inline styles" chip, drawn after the last selector (InlineStyleChip.tsx). */
+  inline?: InlineChip | undefined;
 };

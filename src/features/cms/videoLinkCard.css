@@ -8,7 +8,7 @@
   margin-top: 6px;
   padding: 8px;
   border-radius: 6px;
-  background: var(--bg-input, rgba(var(--fg-rgb), 0.06));
+  background: var(--bg-input, rgba(255, 255, 255, 0.06));
 }
 .video-card-thumb {
   flex: 1 1 180px;
@@ -18,7 +18,7 @@
   overflow: hidden;
   border: 0;
   border-radius: 4px;
-  background: rgba(var(--fg-rgb), 0.06);
+  background: rgba(255, 255, 255, 0.06);
   cursor: pointer;
 }
 .video-card.is-loading .video-card-thumb {
@@ -60,7 +60,7 @@
   cursor: pointer;
 }
 .video-card-open:hover {
-  background: rgba(var(--fg-rgb), 0.1);
+  background: rgba(255, 255, 255, 0.1);
   color: var(--text);
 }
 .video-card-description {
@@ -90,12 +90,12 @@
   padding: 4px 9px;
   border: 0;
   border-radius: 5px;
-  background: rgba(var(--fg-rgb), 0.08);
+  background: rgba(255, 255, 255, 0.08);
   color: var(--text);
   font-size: 11px;
   cursor: pointer;
 }
 .video-card-remove:hover {
   background: rgba(255, 69, 58, 0.85);
-  color: var(--ink-ffffff, #fff);
+  color: #fff;
 }

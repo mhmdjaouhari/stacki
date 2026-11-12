@@ -1,3 +1,5 @@
+import { centralIcon } from '../../ui/central/CentralIcon';
+import { chevronDown as centralChevronDown, chevronUp as centralChevronUp, properties as centralProperties } from '../../ui/central/centralGeometry';
 // The grid controls' glyphs and value lists: flow and density icons, the
 // alignment and content-distribution icons, and their labels
 // (GridControls.tsx).
@@ -258,16 +260,8 @@ export const contentOptions = ({ vertical }: { readonly vertical: boolean }): Re
 };
 
 // Icons.
-export const ChevUp = () => (
-  <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" width="12" height="12">
-    <path d="M4.6 9.4 8 6l3.4 3.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
-export const ChevDown = () => (
-  <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" width="12" height="12">
-    <path d="M4.6 6.6 8 10l3.4-3.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-  </svg>
-);
+export const ChevUp = centralIcon(centralChevronUp, 12);
+export const ChevDown = centralIcon(centralChevronDown, 12);
 export const DENSE_ICON_FIRST_PATH =
   'M14.8535 11.1465 14.1465 11.8535 12.5 10.207V14H11.5v-3.793' + 'L9.85352 11.8535 9.14648 11.1465 12 8.29297 14.8535 11.1465Z';
 export const DENSE_ICON_SECOND_PATH =
@@ -285,27 +279,7 @@ export const DenseIcon = () => (
     <path fillRule="evenodd" clipRule="evenodd" d={DENSE_ICON_FOURTH_PATH} fill="currentColor" />
   </svg>
 );
-export const CUSTOMIZE_ICON_PATH =
-  'M6.99994 3.29289C7.18748 3.10536 7.44183 3 7.70705 3H10.4999' +
-  'C10.7022 3 10.8845 3.12182 10.9619 3.30866C11.0393 3.4955 10.9965 3.71055 10.8535 3.85355' +
-  'L8.99994 5.70711V7H10.2928L12.1464 5.14645C12.2894 5.00345 12.5044 4.96067 12.6913 5.03806' +
-  'C12.8781 5.11545 12.9999 5.29777 12.9999 5.5V8.29289' +
-  'C12.9999 8.55811 12.8946 8.81246 12.707 9L10.9999 10.7071' +
-  'C10.8124 10.8946 10.558 11 10.2928 11H7.70705L4.85349 13.8536' +
-  'C4.65823 14.0488 4.34165 14.0488 4.14639 13.8536L2.14639 11.8536' +
-  'C1.95112 11.6583 1.95112 11.3417 2.14639 11.1464L4.99994 8.29289V5.70711' +
-  'C4.99994 5.44189 5.1053 5.18754 5.29283 5L6.99994 3.29289ZM9.29283 4H7.70705' +
-  'L5.99994 5.70711L5.99994 8.29289C5.99994 8.55811 5.89458 8.81246 5.70705 9L3.20705 11.5' +
-  'L4.49994 12.7929L6.99994 10.2929C7.18748 10.1054 7.44183 10 7.70705 10H10.2928' +
-  'L11.9999 8.29289V6.70711L10.8535 7.85355C10.7597 7.94732 10.6325 8 10.4999 8H8.49994' +
-  'C8.2238 8 7.99994 7.77614 7.99994 7.5V5.5C7.99994 5.36739 8.05262 5.24021 8.14639 5.14645' +
-  'L9.29283 4Z';
-
 // The "customize track sizes" toggle (Webflow's grid gear) — swaps the count
 // steppers for raw grid-template fields so non-uniform tracks (200px 1fr auto…) can
 // be typed instead of only N equal 1fr tracks.
-export const CustomizeIcon = () => (
-  <svg viewBox="0 0 16 16" width="16" height="16" fill="none" aria-hidden="true">
-    <path fillRule="evenodd" clipRule="evenodd" d={CUSTOMIZE_ICON_PATH} fill="currentColor" />
-  </svg>
-);
+export const CustomizeIcon = centralIcon(centralProperties);

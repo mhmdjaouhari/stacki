@@ -8,6 +8,7 @@ import { Navigator } from '../features/navigator/Navigator';
 import { PagesPanel } from '../features/pages/PagesPanel';
 import { AssetsPanel } from '../features/assets/AssetsPanel';
 import { ComponentsPanel } from '../features/components/ComponentsPanel';
+import { StudioAppsPanel } from '../features/apps/StudioApps';
 import type { EditorProps } from './Editor';
 import type { useEditor } from '../features/project/useEditor';
 import type { Panel } from './EditorRail';
@@ -64,6 +65,7 @@ export function EditorSidebar({ panel, close, props, model, openCode, showNaviga
       {panel === 'properties' && document && !file.startsWith('src/pages/') && <ComponentProperties key={file} document={document} refresh={refresh} />}
       {panel === 'variables' && <VariableNavigation view={props.view} file={file} />}
       {panel === 'history' && <HistorySidebar props={props} model={model} />}
+      {panel === 'apps' && <StudioAppsPanel props={props} />}
       {!mobile && resize.handle}
     </aside>
   );

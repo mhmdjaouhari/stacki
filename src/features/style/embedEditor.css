@@ -26,7 +26,7 @@
 
 .embed-editor_selected-label {
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-primary);
   overflow-wrap: anywhere;
 }
@@ -209,7 +209,7 @@
   padding: 3px var(--space-3);
   border-radius: var(--radius-md);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   line-height: var(--line-height-tight);
   white-space: nowrap;
   overflow: hidden;
@@ -279,7 +279,7 @@
 
 .embed-editor_spec {
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-2xs);
   color: var(--color-text-tertiary);
 }
 
@@ -536,13 +536,13 @@
 }
 
 .embed-editor_spacing-tri.is-top {
-  fill: color-mix(in srgb, var(--ink-ffffff, #fff) 9%, var(--color-bg-surface));
+  fill: color-mix(in srgb, #fff 9%, var(--color-bg-surface));
 }
 .embed-editor_spacing-tri.is-bottom {
   fill: color-mix(in srgb, #000 16%, var(--color-bg-surface));
 }
 .embed-editor_spacing-tri.is-left {
-  fill: color-mix(in srgb, var(--ink-ffffff, #fff) 3%, var(--color-bg-surface));
+  fill: color-mix(in srgb, #fff 3%, var(--color-bg-surface));
 }
 .embed-editor_spacing-tri.is-right {
   fill: color-mix(in srgb, #000 8%, var(--color-bg-surface));
@@ -552,7 +552,7 @@
    after the per-side fills so it wins at equal specificity. */
 .embed-editor_spacing-tri:hover,
 .embed-editor_spacing-tri:active {
-  fill: color-mix(in srgb, var(--ink-ffffff, #fff) 14%, var(--color-bg-surface));
+  fill: color-mix(in srgb, #fff 14%, var(--color-bg-surface));
 }
 
 /* Centre placeholder — the innermost dark content bar filling the padding hole. */
@@ -683,15 +683,15 @@
    text. This overrides the plain blue/orange fill at equal specificity. */
 .embed-editor_spacing-label.is-overridden,
 .embed-editor_spacing-label.is-overridden:hover:not(:disabled) {
-  color: var(--ink-ffffff, #ffffff);
-  background: linear-gradient(180deg, rgba(var(--fg-rgb), 0.13) 0%, rgba(var(--fg-rgb), 0.11) 100%);
+  color: #ffffff;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13) 0%, rgba(255, 255, 255, 0.11) 100%);
 }
 
 /* Connected spacing values use the variable treatment while keeping the full
    group/name available in the label's hover tooltip. */
 .embed-editor_spacing-label.is-variable,
 .embed-editor_spacing-label.is-variable:hover:not(:disabled) {
-  color: var(--pastel-c4afff, #c4afff);
+  color: #c4afff;
   background: #453b63;
 }
 
@@ -721,13 +721,13 @@
 .embed-editor_spacing-tooltip-value {
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
   white-space: normal;
   overflow-wrap: anywhere;
 }
 .embed-editor_spacing-tooltip-meta {
-  color: var(--pastel-c4afff, #c4afff);
+  color: #c4afff;
   font-size: var(--font-size-2xs);
   overflow-wrap: anywhere;
 }
@@ -871,8 +871,8 @@
 .embed-editor_size-label.is-overridden .u-field-label.is-active,
 .embed-editor_prop-label.is-overridden .u-field-label,
 .embed-editor_prop-label.is-overridden .u-field-label.is-active {
-  background: linear-gradient(180deg, rgba(var(--fg-rgb), 0.13) 0%, rgba(var(--fg-rgb), 0.11) 100%);
-  color: var(--ink-ffffff, #ffffff);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.13) 0%, rgba(255, 255, 255, 0.11) 100%);
+  color: #ffffff;
 }
 
 .embed-editor_override-note {
@@ -889,7 +889,7 @@
   background: var(--color-info-border);
   color: var(--color-info);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   text-align: left;
   cursor: pointer;
   overflow-wrap: anywhere;
@@ -897,7 +897,7 @@
 }
 .embed-editor_override-note-sel:hover {
   /* Just lighten the fill a touch — keep the blue text/background identity. */
-  background-image: linear-gradient(rgba(var(--fg-rgb), 0.12), rgba(var(--fg-rgb), 0.12));
+  background-image: linear-gradient(rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.12));
 }
 
 /* Overflow label + its disclosure toggle for the per-axis (X / Y) rows. */
@@ -942,7 +942,7 @@
 /* Plain length inputs (no unit dropdown); mono, right-aligned like a value field. */
 .embed-editor_size-input {
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   min-width: 0;
 }
 
@@ -1395,7 +1395,7 @@
   /* A filled box, lighter than the panel: the black inset fill with a hairline
      border vanished against the panel's own dark background. */
   border: 0;
-  background: rgba(var(--fg-rgb), 0.18);
+  background: rgba(255, 255, 255, 0.18);
   cursor: pointer;
   transition:
     background var(--transition-fast),
@@ -1525,7 +1525,7 @@
 .embed-editor_eff-value {
   width: 100%;
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
 }
 /* Outline Width + Offset: "Width" sits in the shared label column (aligned with
    Outline/Color), and the control column holds [width input | Offset label | offset
@@ -1661,7 +1661,7 @@
 .embed-editor_ratio-input {
   width: 100%;
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   text-align: left;
 }
 .embed-editor_ratio-caption {
@@ -2233,7 +2233,7 @@
   background: var(--color-bg-inset);
   color: var(--color-text-primary);
   font-family: var(--font-family-mono, var(--font-family-sans));
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: 1.6;
   resize: vertical;
 }
@@ -2259,7 +2259,7 @@
   user-select: none;
   color: var(--color-text-secondary);
   font-family: var(--font-family-mono, var(--font-family-sans));
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   transition:
     background var(--transition-fast),
     color var(--transition-fast);
@@ -2803,7 +2803,7 @@
 .embed-editor_prop-label .u-field-label {
   max-width: 100%;
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   cursor: grab;
   /* Long property names wrap within the column instead of overrunning the value. */
   white-space: normal;
@@ -2817,7 +2817,7 @@
 .embed-editor_prop-input,
 .embed-editor_value-input {
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   min-width: 0;
 }
 
@@ -3104,7 +3104,7 @@
 }
 .embed-editor_direction-footer code {
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   color: var(--color-text-secondary);
 }
 
@@ -3199,7 +3199,7 @@
   background: transparent;
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
   text-align: left;
   white-space: nowrap;
@@ -3416,7 +3416,7 @@
   background: var(--color-bg-surface);
   color: var(--color-text-primary);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
   /* One declaration per line, as the editor beside it: a long one scrolls. */
   white-space: pre;
@@ -3593,7 +3593,7 @@
    chips below are unaffected. */
 .embed-editor_element-id {
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: var(--line-height-tight);
   color: var(--color-text-secondary);
   white-space: nowrap;
@@ -3625,7 +3625,7 @@
   padding: 2px var(--space-3);
   border-radius: var(--radius-xs);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   line-height: var(--line-height-tight);
   overflow-wrap: anywhere;
 }
@@ -3639,7 +3639,7 @@
 }
 .embed-editor_element-tip-chip.is-attribute {
   background: #453b63;
-  color: var(--pastel-c4afff, #c4afff);
+  color: #c4afff;
 }
 
 /* The source trigger reads as a little tag — green for a component embed, blue
@@ -3696,8 +3696,8 @@
   padding-bottom: var(--space-5);
   margin-bottom: calc(-1 * var(--space-4));
   /* Match the app's side panel rather than the panel-kit's own page tone: this
-     cluster is sticky, so it has to be opaque, and var(--tone-1c1c1c, #1c1c1c) read as a lighter
-     band sitting on the var(--tone-111111, #111) panel. */
+     cluster is sticky, so it has to be opaque, and #1c1c1c read as a lighter
+     band sitting on the #111 panel. */
   background: var(--bg-panel, var(--color-bg-page));
   /* …and correct the surface context to match what's actually painted. The
      rule declares u-surface-surface (#2b2b2b), which it never paints, so
@@ -3712,8 +3712,8 @@
 /* Extend the opaque background up over the scroll container's top padding
    (`.app_body` has padding: --space-5) — otherwise content scrolled up peeks through
    the strip the cluster's own box doesn't reach. Same tone as the cluster itself: the
-   panel-kit's own page tone (var(--tone-1c1c1c, #1c1c1c)) read as a lighter band above the dropdown on this
-   app's var(--tone-111111, #111) panel. */
+   panel-kit's own page tone (#1c1c1c) read as a lighter band above the dropdown on this
+   app's #111 panel. */
 .embed-editor_head::before {
   content: '';
   position: absolute;
@@ -3762,7 +3762,7 @@
 .embed-editor_add-query-input {
   width: 100%;
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
 }
 .embed-editor_add-query-controls {
   display: flex;
@@ -3875,7 +3875,7 @@
   background: var(--color-class-tag-bg);
   color: #fff;
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   line-height: var(--line-height-tight);
   white-space: nowrap;
   overflow: hidden;
@@ -3917,7 +3917,7 @@
 .embed-editor_selector-chip:not(.is-active):not(.is-pending) {
   background: color-mix(in srgb, var(--color-class-tag-bg) 45%, #000);
 }
-.embed-editor_selector-chip:not(.is-active):hover:not(:disabled) {
+.embed-editor_selector-chip:not(.is-active):not(.is-pending):hover:not(:disabled) {
   background: color-mix(in srgb, var(--color-class-tag-bg) 65%, #000);
 }
 .embed-editor_selector-chip.is-active {
@@ -3929,39 +3929,146 @@
 .embed-editor_selector-chip.is-active:hover:not(:disabled) {
   background: var(--color-class-tag-bg);
 }
-.embed-editor_selector-chip.is-component:not(.is-pending) {
-  background: var(--color-component-tag-bg);
-  color: var(--color-component-tag);
-}
-.embed-editor_selector-chip.is-component:not(.is-active):hover:not(:disabled) {
-  background: var(--color-component-tag-bg-hover);
-  color: var(--color-component-tag);
-}
-.embed-editor_selector-chip.is-component.is-active {
-  background: var(--color-component-tag-bg-active);
-  color: #fff;
-}
-.embed-editor_selector-chip.is-component.is-active:hover:not(:disabled) {
-  background: var(--color-component-tag-bg-active);
-}
-/* Global and ancestor-dependent selectors are supporting context, not styles
-   attached directly to the selected element. Neutral grey takes precedence over
-   source provenance (including component green), with distinct hover/active steps. */
-.embed-editor_selector-chip:is(.is-global, .is-inherited):not(.is-pending) {
+/* A plain chip (selectorKind: only tags, `*` and pseudos, such as `img`, `:target`)
+   describes a project-wide group rather than this element, so it is grey, with
+   distinct hover and active steps. A class chip (a class, id or attribute anywhere,
+   nested ones included) keeps the blue above, whether or not it is global or
+   inherited: those filter the well, they do not colour it. Text colour is set in
+   every state, so hovering never changes the colour family. */
+.embed-editor_selector-chip.is-plain:not(.is-pending) {
   background: var(--color-selector-context-bg);
   color: var(--color-text-primary);
 }
-.embed-editor_selector-chip:is(.is-global, .is-inherited):not(.is-active):hover:not(:disabled) {
+.embed-editor_selector-chip.is-plain:not(.is-pending):not(.is-active):hover:not(:disabled) {
   background: var(--color-selector-context-bg-hover);
+  color: var(--color-text-primary);
 }
-.embed-editor_selector-chip:is(.is-global, .is-inherited).is-active {
+.embed-editor_selector-chip.is-plain.is-active:not(.is-pending) {
   background: var(--color-selector-context-bg-active);
-  color: var(--ink-ffffff, #fff);
+  color: #fff;
 }
-.embed-editor_selector-chip:is(.is-global, .is-inherited).is-active:hover:not(:disabled) {
+.embed-editor_selector-chip.is-plain.is-active:not(.is-pending):hover:not(:disabled) {
   background: var(--color-selector-context-bg-active);
+  color: #fff;
 }
-.embed-editor_selector-chip.is-active.is-pending:hover:not(:disabled) {
+/* A chip whose classes and attributes are written in the open component's markup
+   (inComponentMarkup, model/componentMarkup.ts) has a green fill in every state, wherever
+   its CSS lives: at rest and on hover with the white text a blue class chip has,
+   and selected in the stronger green with white text. Each
+   state names its text colour, because a hover rule that set colour where the rest
+   rule did not painted a grey chip's text green on hover only. A pending chip has no
+   rule yet, so no provenance colour applies to it in any state. */
+.embed-editor_selector-chip.is-component:not(.is-pending) {
+  background: var(--color-component-tag-bg);
+  color: #fff;
+}
+.embed-editor_selector-chip.is-component:not(.is-pending):not(.is-active):hover:not(:disabled) {
+  background: var(--color-component-tag-bg-hover);
+  color: #fff;
+}
+.embed-editor_selector-chip.is-component.is-active:not(.is-pending) {
+  background: var(--color-component-tag-bg-active);
+  color: #fff;
+}
+.embed-editor_selector-chip.is-component.is-active:not(.is-pending):hover:not(:disabled) {
+  background: var(--color-component-tag-bg-active);
+  color: #fff;
+}
+/* The property controls' wrapper (StyleCard.tsx): no chrome of its own. Disabled for a
+   style attribute the panel can only show, so it reads as unavailable but stays in view. */
+.embed-editor_controls {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.embed-editor_controls:disabled {
+  opacity: 0.5;
+}
+/* The CSS code section for an inline style written as code (InlineBranchEditor.tsx):
+   the branch picker under the header, a muted line saying where edits go, and each
+   `${prop}` as a purple, atomic token. */
+.embed-editor_inline-branch {
+  margin: 0 var(--space-3) var(--space-2);
+}
+.embed-editor_inline-writes-to {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text-tertiary);
+  font-size: var(--font-size-xs);
+}
+.embed-editor_inline-token {
+  padding: 0 3px;
+  border-radius: var(--radius-xs);
+  background: rgba(168, 85, 247, 0.22);
+  color: #d8b4fe;
+}
+
+/* A chip whose colour is still being read (provenancePending: the selected instance's
+   component file is on its way) is neutral grey in every state, never a blue it may
+   lose to green a moment later. After the component rules, so it outranks them. */
+.embed-editor_selector-chip.is-provenance-pending:not(.is-pending) {
+  background: var(--color-selector-context-bg);
+  color: var(--color-text-secondary);
+}
+.embed-editor_selector-chip.is-provenance-pending:not(.is-pending):not(.is-active):hover:not(:disabled) {
+  background: var(--color-selector-context-bg-hover);
+  color: var(--color-text-secondary);
+}
+.embed-editor_selector-chip.is-provenance-pending.is-active:not(.is-pending),
+.embed-editor_selector-chip.is-provenance-pending.is-active:not(.is-pending):hover:not(:disabled) {
+  background: var(--color-selector-context-bg-active);
+  color: #fff;
+}
+
+/* The "Inline styles" chip (InlineStyleChip.tsx) is amber in every state, with amber
+   text at rest and on hover and white text once picked. Each rule outranks the blue
+   rest, hover and active rules above (same specificity or more, later in the file),
+   and names its text colour, so hovering never changes the family. A chip for an
+   attribute written as code (`is-code`) keeps the family: only its icon differs. */
+.embed-editor_selector-chip.is-inline:not(.is-active) {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: var(--color-inline-tag-bg);
+  color: var(--color-inline-tag);
+}
+.embed-editor_selector-chip.is-inline:not(.is-active):hover:not(:disabled) {
+  background: var(--color-inline-tag-bg-hover);
+  color: var(--color-inline-tag);
+}
+.embed-editor_selector-chip.is-inline.is-active {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  background: var(--color-inline-tag-bg-active);
+  color: #fff;
+}
+.embed-editor_selector-chip.is-inline.is-active:hover:not(:disabled) {
+  background: var(--color-inline-tag-bg-active);
+  color: #fff;
+}
+.embed-editor_inline-chip-icon {
+  flex: none;
+  width: 11px;
+  height: 11px;
+}
+/* The chip's `⋯`: a quiet fill of the same amber, so it reads as the chip's own. */
+.embed-editor_inline-chip-more {
+  min-height: var(--embed-editor_chip-h);
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--color-inline-tag);
+}
+.embed-editor_inline-chip-more:hover:not(:disabled) {
+  background: var(--color-inline-tag-bg);
+  color: var(--color-inline-tag);
+}
+
+/* A pending chip holds its empty fill on hover too, against the app-wide button
+   hover (styles.css): a fill only on hover would claim a colour it does not have. */
+.embed-editor_selector-chip.is-pending:hover:not(:disabled) {
   background: transparent;
 }
 /* Picked but no rule for it yet (freshly added/typed) — dashed outline, no fill. */
@@ -3999,7 +4106,7 @@
   background: transparent;
   border-radius: 0;
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
 }
 .embed-editor_selector-well .embed-editor_selector-add:focus,
 .embed-editor_selector-well .embed-editor_selector-add:hover {
@@ -4058,7 +4165,7 @@
 .embed-editor_suggest-sel {
   min-width: 0;
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4134,13 +4241,6 @@
   height: 11px;
   flex: none;
 }
-.embed-editor_provenance-embed-icon path {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
 .embed-editor_provenance-embed-label {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4161,7 +4261,7 @@
   border: 0;
   border-radius: var(--radius-sm);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   line-height: var(--line-height-tight);
   color: var(--color-prop-orange);
   background: var(--color-prop-orange-bg);
@@ -4211,7 +4311,7 @@
 }
 .embed-editor_provenance-head code {
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-sm);
   color: var(--color-text-primary);
 }
 .embed-editor_provenance-list {
@@ -5169,13 +5269,13 @@
   letter-spacing: 0.14em;
 }
 .embed-editor_ease-play-dot {
-  fill: var(--ink-ffffff, #fff);
+  fill: #fff;
   stroke: var(--color-info);
   stroke-width: 1.5;
 }
 /* The right-edge playhead — a light home-plate marker that slides up with progress. */
 .embed-editor_ease-playhead {
-  fill: var(--ink-d4d4d4, #d4d4d4);
+  fill: #d4d4d4;
 }
 .embed-editor_ease-curve {
   width: 100%;
@@ -5188,11 +5288,11 @@
    invisible, so the graph read as solid black). */
 .embed-editor_ease-grid {
   fill: var(--color-bg-inset);
-  stroke: color-mix(in srgb, var(--ink-ffffff, #fff) 22%, transparent);
+  stroke: color-mix(in srgb, #fff 22%, transparent);
   stroke-width: 1;
 }
 .embed-editor_ease-gridline line {
-  stroke: color-mix(in srgb, var(--ink-ffffff, #fff) 15%, transparent);
+  stroke: color-mix(in srgb, #fff 15%, transparent);
   stroke-width: 1;
 }
 .embed-editor_ease-handle-line {
@@ -5201,7 +5301,7 @@
 }
 .embed-editor_ease-path {
   fill: none;
-  stroke: var(--ink-ffffff, #fff);
+  stroke: #fff;
   stroke-width: 2;
 }
 .embed-editor_ease-handle {
@@ -5223,7 +5323,7 @@
   width: 100%;
   text-align: center;
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
 }
 /* Opened over one panel rather than the whole window (see the `frame` prop):
    the backdrop still covers everything, the modal sits over the panel it came
@@ -5337,27 +5437,27 @@
    variable's, numbers are the value's own, and everything structural stays quiet.
    Inherited `color` is the fallback for anything untokenised. */
 .cx-num {
-  color: var(--pastel-d6b6ff, #d6b6ff);
+  color: #d6b6ff;
 }
 /* Lighter than the variable purple it echoes so it holds 4.5:1 up to the
    overlay surface (#9d7fd8 was 3.5:1 there). */
 .cx-unit {
-  color: var(--pastel-b29ae0, #b29ae0);
+  color: #b29ae0;
 }
 .cx-fn {
-  color: var(--pastel-7fd1e8, #7fd1e8);
+  color: #7fd1e8;
 }
 .cx-ident {
-  color: var(--color-text-primary, var(--ink-f5f5f5, #f5f5f5));
+  color: var(--color-text-primary, #f5f5f5);
 }
 .cx-string {
-  color: var(--pastel-a8dba8, #a8dba8);
+  color: #a8dba8;
 }
 .cx-hex {
-  color: var(--pastel-a8dba8, #a8dba8);
+  color: #a8dba8;
 }
 .cx-prop {
-  color: var(--pastel-c4afff, #c4afff);
+  color: #c4afff;
 }
 .cx-comment {
   color: var(--color-text-tertiary, #a6a6a6);
@@ -5397,7 +5497,7 @@
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 0 0 5px var(--ee-connect);
-  color: var(--ink-ffffff, #fff);
+  color: #fff;
   cursor: pointer;
   opacity: 0;
   /* Grow from the dot's own center so the small dot and the big purple "+" share
@@ -5520,7 +5620,7 @@
   padding: 1px var(--space-2);
   border-radius: var(--radius-sm);
   background: rgba(124, 92, 255, 0.28);
-  color: var(--pastel-cbbcff, #cbbcff);
+  color: #cbbcff;
   font-family: var(--font-family-sans);
   font-size: var(--font-size-sm);
   line-height: 1.35;
@@ -5662,7 +5762,7 @@
 }
 .embed-editor_varpicker-item.is-selected .embed-editor_varpicker-item-icon,
 .embed-editor_varpicker-item.is-selected .embed-editor_varpicker-item-name {
-  color: var(--pastel-cbbcff, #cbbcff);
+  color: #cbbcff;
 }
 .embed-editor_varpicker-item-check {
   flex: none;
@@ -5708,7 +5808,7 @@
   text-align: left;
   color: var(--color-text-tertiary);
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: var(--font-size-xs);
 }
 
 /* Reveals the selectors that match nearly every element (:target,

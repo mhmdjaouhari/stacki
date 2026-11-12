@@ -8,6 +8,7 @@ import { boundedRecursion } from './boundedRecursion.mts';
 import { commentSentence, requireDisableReason } from './comments.mts';
 import { naming } from './naming.mts';
 import { noBooleanParameter } from './noBooleanParameter.mts';
+import { noNativeSelect } from '../../scripts/eslintPlugin/noNativeSelect.mts';
 import { noNull } from './noNull.mts';
 import { restrictedSyntax } from './restrictedSyntax.mts';
 import { sourceLayers } from './sourceLayers.mts';
@@ -23,6 +24,7 @@ export const rules = {
   'no-boolean-parameter': noBooleanParameter,
   'no-compound-assert': noCompoundAssert,
   'no-enum': noEnum,
+  'no-native-select': noNativeSelect,
   'no-null': noNull,
   'no-overloads': noOverloads,
   'no-partial-parameter': noPartialParameter,

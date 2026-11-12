@@ -501,12 +501,12 @@
     color 0.1s;
 }
 .remote-cms-tile-actions button:hover:not(:disabled) {
-  background: rgba(var(--fg-rgb), 0.16);
-  color: var(--ink-ffffff, #fff);
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
 }
 .remote-cms-tile-actions .is-remove:hover:not(:disabled) {
   background: rgba(255, 69, 58, 0.85);
-  color: var(--ink-ffffff, #fff);
+  color: #fff;
 }
 .remote-cms-tile-busy {
   position: absolute;
@@ -514,7 +514,7 @@
   display: grid;
   place-items: center;
   background: rgba(0, 0, 0, 0.55);
-  color: var(--ink-ffffff, #fff);
+  color: #fff;
 }
 
 /* A switch sits under its label at its own width; stretched across the field's
@@ -549,7 +549,7 @@
 }
 /* Until the picture arrives: a quiet shimmer in the box it will fill. */
 .remote-cms-tile.is-loading {
-  background: linear-gradient(100deg, transparent 30%, rgba(var(--fg-rgb), 0.06) 50%, transparent 70%) var(--bg-input);
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.06) 50%, transparent 70%) var(--bg-input);
   background-size: 200% 100%;
   animation: remote-cms-shimmer 1.2s linear infinite;
 }

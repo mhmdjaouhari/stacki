@@ -56,6 +56,11 @@ function reason(file: string): string | undefined {
     }
     return replaced.has(file) ? 'replaced in Studio by an adapter or module' : undefined;
   }
+  // Studio vendors a few files from elsewhere too (an ESLint rule its config loads, under
+  // scripts/): whatever its inventory copies stays, whichever folder the rules below cut.
+  if (vendored.has(file) && !replaced.has(file)) {
+    return undefined;
+  }
   // The dev site keeps its own npm lockfile: Studio installs it with npm ci.
   if (file.startsWith('studio/dev-site/')) {
     return undefined;

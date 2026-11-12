@@ -43,10 +43,10 @@
   width: max-content;
   max-width: min(360px, calc(100vw - 16px));
   padding: 9px 12px;
-  border: 1px solid var(--line-414141, #414141);
+  border: 1px solid #414141;
   border-radius: 8px;
-  background: var(--tone-242424, #242424);
-  color: var(--ink-ededed, #ededed);
+  background: #242424;
+  color: #ededed;
   box-shadow: 0 6px 24px #0006;
   font:
     12px/1.5 system-ui,
