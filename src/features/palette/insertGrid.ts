@@ -21,6 +21,13 @@ export const insertResultsMax = 200;
 export const previewFramesMax = 12;
 
 /**
+ * Most frames kept in all, counting loaded ones scrolled out of view. A card that has answered keeps
+ * its frame when it leaves the view, so scrolling back shows it at once instead of rendering it again
+ * (emdash-stacki's fork). Visible cards come first; loaded ones out of view fill the rest, in grid order.
+ */
+export const previewFramesRetainedMax = 36;
+
+/**
  * Most card frames loading at once. Each one is a full render of a page by the dev server the canvas
  * also uses, so a palette opening on nine visible cards asks for three pages, then the next three as
  * those answer, instead of nine at once. A frame that has answered keeps its place without counting.
@@ -34,9 +41,15 @@ export const frameLoadsMax = 3;
  */
 export function mountedFrameKeys(
   orderedKeys: readonly string[],
-  { visible, settled, framesMax }: { readonly visible: ReadonlySet<string>; readonly settled: ReadonlySet<string>; readonly framesMax: number },
+  {
+    visible,
+    settled,
+    framesMax,
+    retainedMax,
+  }: { readonly visible: ReadonlySet<string>; readonly settled: ReadonlySet<string>; readonly framesMax: number; readonly retainedMax: number },
 ): ReadonlySet<string> {
   assert(framesMax >= 0, 'The frame limit is not negative');
+  assert(retainedMax >= framesMax, 'Kept frames include the visible ones');
   assert(orderedKeys.length <= insertResultsMax, 'Only shown cards are ordered');
   const keys = new Set<string>();
   let loading = 0;
@@ -54,7 +67,17 @@ export function mountedFrameKeys(
       loading += 1;
     }
   }
+  // Loaded cards out of view keep their frames, so scrolling back does not render them again.
+  for (const key of orderedKeys) {
+    if (keys.size >= retainedMax) {
+      break;
+    }
+    if (settled.has(key)) {
+      keys.add(key);
+    }
+  }
   assert(loading <= frameLoadsMax, 'Never more frames loading than the limit');
+  assert(keys.size <= retainedMax, 'Never more frames than the kept limit');
   return keys;
 }
 

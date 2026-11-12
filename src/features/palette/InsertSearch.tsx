@@ -8,7 +8,16 @@ import type { TrailingSlash } from '../../editor/pageState';
 import { rankInsertItems, tagSearchText } from '../../lib/insertRank';
 import { ASTRO_ASSETS } from './astroAssets';
 import { insertFolderOf, type InsertFolderKey } from './insertFolders';
-import { insertResultsMax, insertView, mountedFrameKeys, moveHighlight, previewFramesMax, type GridMove, type InsertTab } from './insertGrid';
+import {
+  insertResultsMax,
+  insertView,
+  mountedFrameKeys,
+  moveHighlight,
+  previewFramesMax,
+  previewFramesRetainedMax,
+  type GridMove,
+  type InsertTab,
+} from './insertGrid';
 import type { InsertItem } from './insertItem';
 import { InsertCard, InsertHints, InsertPills, InsertRow, type InsertPreviewHost } from './InsertCards';
 import { INSERT_TAB_DEFAULT, loadInsertFolder, loadInsertTab, saveInsertFolder, saveInsertTab } from './insertPreferences';
@@ -339,17 +348,9 @@ function useInsertSearch({ components, allowSlot, projectKey, apps }: InsertSear
       assert(next.size <= insertResultsMax, 'Only shown cards can be visible');
       return next;
     });
-    if (!visible) {
-      // A card that leaves the view loses its frame; when it comes back its page loads again, and counts as loading.
-      setSettledKeys((current) => {
-        if (!current.has(key)) {
-          return current;
-        }
-        const next = new Set(current);
-        next.delete(key);
-        return next;
-      });
-    }
+    // A card that leaves the view keeps its frame once loaded (insertGrid.ts, emdash-stacki's fork), so
+    // it stays settled. Past previewFramesRetainedMax a settled card does lose its frame, and on its way
+    // back it reloads without counting against frameLoadsMax: a bound the palette's 36 frames rarely reach.
   }, []);
 
   const reportSettled = useCallback((key: string) => {
@@ -370,7 +371,7 @@ function useInsertSearch({ components, allowSlot, projectKey, apps }: InsertSear
       .filter(isInsertItem)
       .filter((item) => item.card !== undefined && item.preview !== undefined)
       .map(insertItemKey);
-    return mountedFrameKeys(cardKeys, { visible: visibleKeys, settled: settledKeys, framesMax: previewFramesMax });
+    return mountedFrameKeys(cardKeys, { visible: visibleKeys, settled: settledKeys, framesMax: previewFramesMax, retainedMax: previewFramesRetainedMax });
   }, [view.shown, visibleKeys, settledKeys]);
 
   return {

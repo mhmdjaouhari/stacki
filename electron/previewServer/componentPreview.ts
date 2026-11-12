@@ -472,9 +472,15 @@ if (selected) {
         }
         // A preview shows what a component holds: a closed <dialog> or <details> would measure as
         // nothing, so the stage opens them (non-modally: the frame is a picture, not a page to trap).
+        // An exclusive accordion (<details name>) lets one open at a time: opening the next closed
+        // the last, which resized the stage, refit, reopened it and so on, so the card twitched.
+        // Without its name each one stays open.
         function reveal() {
           var closed = stage.querySelectorAll('dialog:not([open]), details:not([open])');
-          for (var i = 0; i < closed.length && i < 256; i++) closed[i].setAttribute('open', '');
+          for (var i = 0; i < closed.length && i < 256; i++) {
+            if (closed[i].tagName === 'DETAILS') closed[i].removeAttribute('name');
+            closed[i].setAttribute('open', '');
+          }
         }
         function fit() {
           scheduled = false;
