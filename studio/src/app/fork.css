@@ -47,3 +47,18 @@
 .studio-app[data-editor-layout='docked'] .studio-right.inspector-hidden {
   display: none;
 }
+
+/* Panels emdash-stacki doesn't use, hidden rather than removed so the code stays upstream's:
+   Git (EmDash publishes without git), Apps and the apps pinned to the rail, and the Astro
+   content collections row of the Collections panel (the site's content is in EmDash). Their
+   keyboard shortcuts still open them. */
+.studio-rail .rail-btn[aria-label='Git'],
+.studio-rail .rail-btn[aria-label='Apps'],
+.studio-rail .rail-app,
+.studio-rail .rail-separator {
+  display: none;
+}
+.studio-left .cms-collection[title^='Declared in '],
+.studio-left .cms-collection[title='Astro content'] {
+  display: none;
+}
