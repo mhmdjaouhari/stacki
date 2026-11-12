@@ -3,6 +3,7 @@
 // bundles cannot drift apart in anything but that module.
 import type { BuildOptions } from 'esbuild';
 import { browserBoundary } from './browserBoundary';
+import { forkCss } from './forkCss';
 
 export const STUDIO_CLIENT_ENTRY = 'src/app/main.tsx';
 
@@ -26,5 +27,6 @@ export const studioClientOptions: BuildOptions = {
   // The UI fonts (main.tsx) ship beside the bundle's CSS, in fonts/.
   loader: { '.woff2': 'file', '.woff': 'file' },
   assetNames: 'fonts/[name]-[hash]',
-  plugins: [browserBoundary],
+  // forkCss: emdash-stacki's fork themes and sizes Studio's stylesheets as they bundle.
+  plugins: [browserBoundary, forkCss],
 };

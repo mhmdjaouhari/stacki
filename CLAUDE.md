@@ -5,7 +5,7 @@
 `mhmdjaouhari/stacki` (remote `fork`), cut down to Stacki Studio for emdash-stacki: no
 desktop app, no tests, pnpm instead of npm, oxlint instead of ESLint, TypeScript 7 for
 checking. `README.md` has the layout and commands. Upstream is `flowtricks/stacki`
-(remote `origin`); `docs/fork/upstream-sync.md` covers merging it in, and contributing back.
+(remote `upstream`); `docs/fork/upstream-sync.md` covers merging it in, and contributing back.
 
 ## Checks
 

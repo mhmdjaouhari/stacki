@@ -1,9 +1,12 @@
 /*
   Studio's light theme (emdash-stacki's fork). The stylesheets keep their dark values;
   every colour that has to change is a variable whose fallback is that dark value
-  (--tone-* surfaces, --line-* borders, --ink-* light text, rgba(var(--fg-rgb), a)
-  overlays, --code-* syntax), so dark mode is unchanged and this file only sets the
-  light values. studio/src/app/theme.ts sets data-theme on the root element.
+  (--tone-* surfaces, --line-* borders, --ink-* light text, --pastel-* coloured text,
+  rgba(var(--fg-rgb), a) overlays, --code-* syntax), so dark mode is unchanged.
+  studio/scripts/forkCss.ts makes those variables while Studio is bundled, and gives
+  each stylesheet the light values of the ones it uses; this file holds the light
+  values written by hand: the named tokens and the syntax palette.
+  studio/src/app/theme.ts sets data-theme on the root element.
 */
 
 :root {
@@ -79,76 +82,4 @@
   --code-89ddff: #4b5563;
   --code-f5f5f5: #1f2328;
   --code-999999: #6e7781;
-
-  /* Pastel text colours, darkened for a light background (generated). */
-  --pastel-68c8a0: #378062;
-  --pastel-69c9d5: #307e88;
-  --pastel-6aa9f0: #1c589c;
-  --pastel-79e09c: #2b8d4c;
-  --pastel-7fd1e8: #267a92;
-  --pastel-8ecbff: #1761a1;
-  --pastel-a78bfa: #3a17a1;
-  --pastel-a8dba8: #3b7c3b;
-  --pastel-b29ae0: #4f3285;
-  --pastel-b9a6ff: #3417a1;
-  --pastel-c49af5: #571c9c;
-  --pastel-c4afff: #3b17a1;
-  --pastel-c9bbff: #3317a1;
-  --pastel-cbbcff: #3617a1;
-  --pastel-d6b6ff: #5317a1;
-  --pastel-d7ccff: #3517a1;
-  --pastel-ddd0ff: #3d17a1;
-  --pastel-e0b341: #947424;
-  --pastel-e58ba7: #8d2a49;
-  --pastel-e5b86a: #936b25;
-  --pastel-e6a03c: #986620;
-  --pastel-f0b429: #a07718;
-  --pastel-ff6161: #a11717;
-  --pastel-ff8a8a: #a11717;
-  --pastel-ff938d: #a11e17;
-  --pastel-ff9b92: #a12217;
-  --pastel-ff9b9b: #a11717;
-  --pastel-ffb0ab: #a11f17;
-  --pastel-ffb454: #a16417;
-  --pastel-ffb4ae: #a12117;
-  --pastel-ffba17: #a17817;
-  --pastel-ffcb6b: #a17017;
-
-  /* Hard-coded dark greys in the stylesheets, as light ones (generated). */
-  --tone-0d0d0d: #eeeeee;
-  --tone-111111: #f0f0f0;
-  --tone-161616: #f1f1f1;
-  --tone-181818: #f2f2f2;
-  --tone-191919: #f2f2f2;
-  --tone-1b1b1b: #f3f3f3;
-  --tone-1c1c1c: #f3f3f3;
-  --tone-1d1d1d: #f3f3f3;
-  --tone-202020: #f4f4f4;
-  --tone-222222: #f5f5f5;
-  --tone-232323: #f5f5f5;
-  --tone-242424: #f6f6f6;
-  --tone-252525: #f6f6f6;
-  --tone-2a2a2a: #f8f8f8;
-  --tone-2b2b2b: #f8f8f8;
-  --tone-2e2e2e: #f9f9f9;
-  --tone-2f2f2f: #f9f9f9;
-  --tone-3a3a3a: #fdfdfd;
-  --tone-3b3b3b: #fdfdfd;
-  --tone-444444: #ffffff;
-  --tone-4a4a4a: #ffffff;
-  --line-111111: #cdcdcd;
-  --line-1b1b1b: #d0d0d0;
-  --line-242424: #d3d3d3;
-  --line-2e2e2e: #d6d6d6;
-  --line-333333: #d7d7d7;
-  --line-373737: #d8d8d8;
-  --line-3a3a3a: #d9d9d9;
-  --line-414141: #dcdcdc;
-  --line-444444: #dcdcdc;
-  --ink-d4d4d4: #4e4e4e;
-  --ink-dddddd: #434343;
-  --ink-e8e8e8: #363636;
-  --ink-ededed: #303030;
-  --ink-f5f5f5: #262626;
-  --ink-ffffff: #1a1a1a;
 }

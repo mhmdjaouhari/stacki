@@ -9,6 +9,7 @@ import '@fontsource/iosevka/600.css';
 import '@fontsource/iosevka/700.css';
 import '../../vendor/stacki/src/app/styles.css';
 import './studio.css';
+import './fork.css';
 import './theme-light.css';
 startTheme();
 const root = document.getElementById('root');

@@ -1,7 +1,7 @@
 # Syncing the fork with upstream Stacki
 
 This fork (`mhmdjaouhari/stacki`, remote `fork`) is cut down from `flowtricks/stacki`
-(remote `origin`) to what emdash-stacki deploys: Studio. The desktop app, every test,
+(remote `upstream`) to what emdash-stacki deploys: Studio. The desktop app, every test,
 the npm lockfiles, ESLint and the gate tooling are gone; pnpm, oxlint and TypeScript 7
 replace them (README.md). emdash-stacki builds Studio from a pinned commit of `main`
 (`STACKI_REF` in its `deploy/Dockerfile`).
@@ -17,9 +17,9 @@ git worktree list
 git status --short
 
 # 2. Merge.
-git fetch origin && git fetch fork
+git fetch upstream && git fetch fork
 git rev-list --left-right --count main...fork/main    # 0 0, or pull first
-git merge origin/main
+git merge upstream/main
 
 # 3. Resolve conflicts (see below), then cut again what upstream brought back.
 node tools/prune.mts            # lists what would go
@@ -40,6 +40,14 @@ want a second run of the same checks before deploying.
 
 ## Conflicts
 
+- **Stylesheets** (`src/**/*.css`, `studio/src/**/*.css`): always upstream's, even when the
+  merge resolved them cleanly: `git checkout upstream/main -- <file>`. The fork never edits
+  them. Its look lives beside them: `studio/scripts/forkCss.ts` makes colours themeable and
+  raises monospace to 13px while Studio bundles (so upstream's new CSS is covered too),
+  `studio/src/app/theme-light.css` holds the hand-written light values, and
+  `studio/src/app/fork.css` the layout overrides (loaded after `studio.css`).
+- **A deleted file Studio now vendors**: assemble stops with `ENOENT` on it. Restore it with
+  `git checkout upstream/main -- <file>`; prune keeps every file the inventory vendors.
 - **Modify/delete** (upstream changed a file the fork deleted: a test, desktop code, a
   gate script, `package-lock.json`): keep it deleted, `git rm <file>`. `tools/prune.mts`
   will also catch any that slipped through.
@@ -53,7 +61,7 @@ want a second run of the same checks before deploying.
   Studio uses, so run `tools/prune.mts` after it is resolved.
 - **Our own pull requests coming back**: upstream merges PRs from this fork, and the same
   lines then conflict with later fork work. If the fork's side already holds the change,
-  `git checkout --ours <file>`; check `git diff $(git merge-base HEAD origin/main) origin/main -- <file>`
+  `git checkout --ours <file>`; check `git diff $(git merge-base HEAD upstream/main) upstream/main -- <file>`
   first to confirm upstream changed nothing else in it.
 - **Deleted or moved upstream modules** break fork files that did not conflict.
   `pnpm check types` finds them.
@@ -69,7 +77,7 @@ Upstream keeps npm, ESLint and its test gate, so prepare a pull request in a sep
 worktree of upstream and delete it afterwards:
 
 ```sh
-git worktree add ../stacki-upstream -b fix/<name> origin/main
+git worktree add ../stacki-upstream -b fix/<name> upstream/main
 cd ../stacki-upstream
 npm ci && npm --prefix studio ci       # upstream's postinstall builds the desktop app
 git cherry-pick <fork commits>          # or redo the change by hand

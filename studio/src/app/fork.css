@@ -1,0 +1,40 @@
+/*
+  emdash-stacki's fork: layout overrides on top of upstream's studio.css, kept in their own
+  file so studio.css stays upstream's and merges cleanly. Loaded after it (main.tsx), so equal
+  selectors win by order.
+*/
+
+/* The header sits at the start of the canvas toolbar row, before the breadcrumbs, instead of
+   a row of its own (EditorHeader rendered as PreviewCanvas's `leading`). */
+.studio-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 55%;
+  height: auto;
+  padding: 0 12px 0 10px;
+  border-inline-end: 1px solid var(--border);
+  align-self: stretch;
+}
+.studio-titlebar-start,
+.studio-titlebar-center,
+.studio-titlebar-end {
+  gap: 8px;
+}
+.studio-titlebar-center,
+.studio-titlebar-end {
+  justify-content: flex-start;
+}
+.studio-titlebar-end:empty {
+  display: none;
+}
+.studio-titlebar-start .project-name {
+  max-width: 160px;
+}
+
+/* Docked, the toolbar's panel button can hide the inspector column. */
+.studio-app[data-editor-layout='docked'] .studio-right.inspector-hidden {
+  display: none;
+}
