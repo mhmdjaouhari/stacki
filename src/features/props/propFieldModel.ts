@@ -3,12 +3,16 @@
 // placeholder (PropField.tsx).
 
 import { PropValuePolicyContext } from './propValuePolicy';
+import { useTranslate } from '../../lib/i18n/useTranslate';
+import { ENGLISH_TRANSLATE } from '../../../shared/properties/i18n/englishTranslator';
+import type { Translator } from '../../../shared/properties/i18n/messageRef';
 import React, { useContext, useEffect, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
 import type { Attr } from '../../../shared/page/pageNode';
 import type { PageText } from '../../../shared/properties/pageText';
 import type { FieldDefinition, PropValues } from './propRules';
 import type { RichContext } from './RichContent';
+import type { ClassListOffer } from './classListProp';
 import type { SourceContext, ValueChange, FieldPosition, FieldPickerAt, InsertAPI } from './propBindings';
 import type { AssetDimensions } from '../../ui/AssetThumb';
 import type { AltPick, PickedAsset } from '../../ui/AssetField';
@@ -18,9 +22,11 @@ import { findImportOf } from '../../editor/dataSuggest';
 import { isHrefName, isMediaName } from '../../editor/fieldNames';
 import { arrayItems, objectFields } from './arrayValue';
 import { optionAttr } from './propKinds';
-import { reportCodeCleared } from './codeCleared';
+import { decideNormalField, planReset, type ResetPlan } from './normalFieldDecision';
+import { reportBindingRemoved } from './codeCleared';
 import { deprecationOf, readPropDocumentation } from '../../editor/propDocumentation';
 import LinkField from './LinkField';
+import { plainTextOf, textValue } from './propLiteral';
 
 export interface AssetContext {
   readonly layoutText?: PageText | undefined;
@@ -64,6 +70,8 @@ export interface PropFieldProps {
   readonly assetContext?: AssetContext | undefined;
   readonly linkContext?: ComponentProps<typeof LinkField>['context'] | undefined;
   readonly dataContext?: SourceContext | undefined;
+  /** The element's class field offers "New Class list property" in its picker (classListProp.ts). */
+  readonly classList?: ClassListOffer | undefined;
   readonly onChange: ValueChange;
 }
 export function attrText(value: Attr | undefined): string | undefined {
@@ -90,22 +98,22 @@ export function assetImportOf(expr: unknown, frontmatter: unknown) {
   return { ident: match[1] ?? '', spec: imported.spec };
 }
 
-export function boundsHint(field: FieldDefinition) {
+export function boundsHint(field: FieldDefinition, translate: Translator = ENGLISH_TRANSLATE) {
   const { min, max, step, minExclusive, maxExclusive } = field;
   const parts = [];
   if (min !== undefined && max !== undefined) {
     parts.push(`${minExclusive ? '>' : ''}${min}–${maxExclusive ? '<' : ''}${max}`);
   } else if (min !== undefined) {
-    parts.push(minExclusive ? `greater than ${min}` : `${min} or more`);
+    parts.push(minExclusive ? translate('props.bounds.greaterThan', { min }) : translate('props.bounds.orMore', { min }));
   } else if (max !== undefined) {
-    parts.push(maxExclusive ? `less than ${max}` : `${max} or less`);
+    parts.push(maxExclusive ? translate('props.bounds.lessThan', { max }) : translate('props.bounds.orLess', { max }));
   }
   if (step === 1) {
-    parts.push('whole numbers');
+    parts.push(translate('props.bounds.wholeNumbers'));
   } else if (step !== undefined) {
-    parts.push(`steps of ${step}`);
+    parts.push(translate('props.bounds.steps', { step }));
   }
-  return parts.length ? `Accepts ${parts.join(', ')}` : undefined;
+  return parts.length ? translate('props.bounds.accepts', { parts: parts.join(', ') }) : undefined;
 }
 
 export function isBoundValue(field: FieldDefinition, value: Attr | undefined) {
@@ -130,20 +138,16 @@ export function isBoundValue(field: FieldDefinition, value: Attr | undefined) {
     return objectFields(source) === undefined;
   }
   if (field.type === 'code') {
-    return arrayItems(source) === undefined;
+    return arrayItems(source, 0, 'bindable') === undefined;
   }
   return true;
 }
 
 export function valueFromExpr(field: FieldDefinition, raw: string): Attr | undefined {
   const source = String(raw ?? '').trim();
-  const quoted = source.match(/^(['"])((?:[^\\]|\\.)*)\1$/);
-  if (quoted) {
-    if (field.type === 'boolean' || field.type === 'number') {
-      return undefined;
-    }
-    const text = (quoted[2] ?? '').replace(/\\n/g, '\n').replace(/\\(['"\\])/g, '$1');
-    return field.type === 'enum' && !(field.options || []).includes(text) ? undefined : { type: 'string', value: text };
+  const text = plainTextOf(source);
+  if (text !== undefined) {
+    return textValue(field, text);
   }
   if (field.type === 'boolean') {
     return /^(true|false)$/.test(source) ? { type: 'expr', value: source } : undefined;
@@ -159,13 +163,14 @@ export function valueFromExpr(field: FieldDefinition, raw: string): Attr | undef
   }
   // An array of plain items survives the trip: the list can show it, so going
   // back to the control keeps the value rather than dropping the prop.
-  if (field.type === 'code' && arrayItems(source)) {
+  if (field.type === 'code' && arrayItems(source, 0, 'bindable')) {
     return { type: 'expr', value: source };
   }
   return undefined;
 }
 
-export function controlWord(field: FieldDefinition) {
+// A stable id for `controlLabel` (which says it in the language on screen).
+export function controlKind(field: FieldDefinition) {
   if (field.type === 'boolean') {
     return 'toggle';
   }
@@ -176,24 +181,58 @@ export function controlWord(field: FieldDefinition) {
     return 'list';
   }
   if (field.type === 'enum' && field.options?.length) {
-    return 'options list';
+    return 'optionsList';
   }
   if (field.type === 'style') {
-    return 'CSS editor';
+    return 'cssEditor';
   }
   if (isMediaName(field.name)) {
-    return 'asset picker';
+    return 'assetPicker';
   }
   if (isHrefName(field.name)) {
-    return 'link settings';
+    return 'linkSettings';
   }
-  return 'normal field';
+  return 'normal';
 }
+/** "Use the toggle", "Use the CSS editor"…: the way back from an expression to the field's own control, in the language `translate` speaks. */
+export function controlLabel(field: FieldDefinition, translate: Translator = ENGLISH_TRANSLATE): string {
+  const word = controlKind(field);
+  switch (word) {
+    case 'toggle':
+      return translate('props.control.toggle');
+    case 'fields':
+      return translate('props.control.fields');
+    case 'list':
+      return translate('props.control.list');
+    case 'optionsList':
+      return translate('props.control.optionsList');
+    case 'cssEditor':
+      return translate('props.control.cssEditor');
+    case 'assetPicker':
+      return translate('props.control.assetPicker');
+    case 'linkSettings':
+      return translate('props.control.linkSettings');
+    case 'normal':
+      return translate('props.control.normal');
+    default: {
+      const exhaustive: never = word;
+      return exhaustive;
+    }
+  }
+}
+
+/** Whether the {} toggle cannot leave this expression: a required prop with no valid empty value to write. */
+export function normalFieldBlocked(input: { readonly field: FieldDefinition; readonly value: Attr | undefined; readonly required: boolean }): boolean {
+  const { field, value, required } = input;
+  return value?.type === 'expr' && decideNormalField({ field, source: value.value, required }).kind === 'blocked';
+}
+
 export function usePropField(props: PropFieldProps) {
   const state = usePropFieldModel(props);
   return { ...state, ...propFieldActions(state) };
 }
 export function usePropFieldModel(props: PropFieldProps) {
+  const translate = useTranslate();
   const policy = useContext(PropValuePolicyContext);
   // Choice controls show the effective fallback while isSet tracks authored values.
   const showsFallback = ['boolean', 'enum'].includes(props.field.type);
@@ -229,21 +268,29 @@ export function usePropFieldModel(props: PropFieldProps) {
     !/^(quality|format|formats|fallbackFormat|densities|widths|sizes)$/i.test(name) || !assetContext?.srcKind
       ? undefined
       : assetContext.srcKind === 'svg'
-        ? 'SVG sources are passed through unoptimized, so this has no effect.'
+        ? translate('props.field.svgNoEffect')
         : assetContext.srcKind === 'public'
-          ? 'Files in public/ are served as-is — import from src/assets to optimize.'
+          ? translate('props.field.publicAsIs')
           : undefined;
   assert(valueText.length <= LIMITS.attrCharsMax, 'PropField: value limit exceeded');
   assert((field.options?.length ?? 0) <= LIMITS.propOptionsMax, 'PropField: option limit exceeded');
   const isExpr = value?.type === 'expr' || (type === 'code' && value?.type !== 'string');
   // An Image prop (its default imports a file, `image = placeholder`) is
   // media whatever it is called; otherwise its name says so.
-  const isMediaAttr = isMediaName(name) || field.defaultAsset !== undefined;
+  // A `@format` that names a kind decides it; the name only speaks when no format does.
+  const format = readPropDocumentation(field.doc).format;
+  const isMediaAttr =
+    format === undefined ? isMediaName(name) || field.defaultAsset !== undefined : MEDIA_FORMATS.has(format) || field.defaultAsset !== undefined;
   // Required and its note are an instance's concern: a defaults recipe or a
   // CMS entry states its own obligations (remoteCms.css marks those).
   const required = policy === 'instance' && isRequiredField(props.field, branchDefault);
   const missingRequired = required && !isSet && !spreadsProps(assetContext?.siblingProps);
   const deprecated = fieldDeprecation(props.field);
+  const normalBlockedText = normalFieldBlocked({ field, value, required }) ? translate('props.control.normalRequired') : undefined;
+  // Reset removes the attribute; for a required prop that leaves the component without what it needs.
+  const resetPlan: ResetPlan = planReset({ field, value, required: required && !spreadsProps(assetContext?.siblingProps) });
+  const resetRefusal =
+    resetPlan.kind !== 'disabled' ? undefined : translate(resetPlan.reason === 'already-default' ? 'props.control.resetAlready' : 'props.control.resetNoEmpty');
   const isColor = isColorField(props.field);
   return {
     ...props,
@@ -264,12 +311,16 @@ export function usePropFieldModel(props: PropFieldProps) {
     shownAsAsset,
     showExpr,
     reason,
+    translate,
     placeholderFor,
     isExpr,
     isMediaAttr,
     required,
     missingRequired,
     deprecated,
+    normalBlockedText,
+    resetPlan,
+    resetRefusal,
     isColor,
   };
 }
@@ -310,6 +361,9 @@ export function fieldDeprecation(field: FieldDefinition): string | undefined {
   return field.deprecated ?? deprecationOf(field.doc);
 }
 
+// The `@format` words of a field that holds a file from the project: an image, a video, any other file.
+const MEDIA_FORMATS: ReadonlySet<string> = new Set(['image', 'video', 'file']);
+
 // A literal colour: hex, a colour function, or a CSS variable (a token).
 const COLOR_HEX = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const COLOR_FUNCTION = /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^()]*\)$/i;
@@ -341,10 +395,14 @@ export function isColorField(field: FieldDefinition): boolean {
   return typeof field.default === 'string' && isColorText(field.default);
 }
 export function propFieldActions(state: ReturnType<typeof usePropFieldModel>) {
-  const { setMenuPosition, onChange, setCustom, value, field, isSet, showExpr } = state;
+  const { translate, setMenuPosition, onChange, setCustom, value, field, isSet, showExpr, required, resetPlan } = state;
   const reset = () => {
     setMenuPosition(undefined);
-    onChange(undefined, true);
+    // Overridden values reset; a required prop gets its valid empty value instead of losing its attribute.
+    if (resetPlan.kind === 'disabled') {
+      return;
+    }
+    onChange(resetPlan.kind === 'write' ? resetPlan.value : undefined, true);
   };
   const fromCustom = () => {
     setMenuPosition(undefined);
@@ -352,22 +410,21 @@ export function propFieldActions(state: ReturnType<typeof usePropFieldModel>) {
       setCustom(false);
       return;
     }
-    const back = valueFromExpr(field, value.value);
-    if (back === undefined && value.value.trim() !== '') {
-      // The control cannot hold this code, and asking for the control means
-      // wanting it: the field is cleared, as one undo step, and a notice says
-      // so with a way to bring the code back where there is no undo (a form).
-      const code = value;
-      setCustom(false);
-      onChange(undefined, true);
-      reportCodeCleared(() => {
+    // One click: a literal becomes the plain value, anything else gives way to
+    // the control's empty value, and an Undo notice brings the code back.
+    const decision = decideNormalField({ field, source: value.value, required });
+    if (decision.kind === 'blocked') {
+      return;
+    }
+    const code = value;
+    setCustom(false);
+    onChange(decision.value, true);
+    if (decision.kind === 'replace') {
+      reportBindingRemoved(translate, () => {
         setCustom(true);
         onChange(code, true);
       });
-      return;
     }
-    setCustom(false);
-    onChange(back, true);
   };
   const onLabelClick = (event: React.MouseEvent<HTMLSpanElement>) => {
     // A field switched to a value has something to offer even before anything
@@ -415,6 +472,12 @@ export function propFieldPlaceholder(field: FieldDefinition, assetContext: Asset
     return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
   };
 
+  // A default computed from other props is this instance's answer (branchDefault,
+  // propRules.ts), never its code: `variant === "play" ? "Play" : "Close"` is not
+  // a label. When only the site could tell, nothing is shown rather than a guess.
+  if (field.computedDefault !== undefined) {
+    return branchDefault === undefined ? '' : String(branchDefault);
+  }
   if (field.default !== undefined) {
     return String(field.default);
   }

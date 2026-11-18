@@ -1,3 +1,4 @@
+import { useTranslate } from '../../vendor/stacki/src/lib/i18n/useTranslate';
 import { assert } from '../../vendor/stacki/shared/core/assert';
 import { can } from '../../vendor/stacki/shared/properties/projectRoles';
 import { dockedWidthPx, isMobileEditor, useEditorLayout, useEditorLayoutSync, useMobileEditor } from './mobileEditor';
@@ -261,6 +262,7 @@ function EditorContent({
   readonly header: React.ReactNode;
 }) {
   const { device, setDevice, setPanel } = props.view;
+  const translate = useTranslate();
   const mobile = useMobileEditor();
   const toggleInspector = () => {
     if (mobileSettings) {
@@ -284,7 +286,7 @@ function EditorContent({
         file={props.file}
         projectName={props.project.name}
         components={props.project.components}
-        pageLabel={projectPageLabel(props.project, props.file)}
+        pageLabel={projectPageLabel(props.project, props.file, translate)}
         editRoute={(route) => editCanvasRoute(props, model, route)}
         sitePages={{
           base: canvasRouteBase(model.preview.url, canvasRouteFor(props.previewFile) ?? routeFor(props.previewFile)),
@@ -334,6 +336,7 @@ function Inspector({
   openCode: () => void;
   close: () => void;
 }) {
+  const translate = useTranslate();
   const { tab, setTab } = props.view;
   // Without the Style panel the inspector shows Settings alone, as Client mode did.
   const client = !can(props.view.studioRole, 'panel:style');
@@ -348,14 +351,14 @@ function Inspector({
   }
   return (
     <aside
-      aria-label="Element inspector"
+      aria-label={translate('studio.inspector.label')}
       className={`studio-right ${visible ? 'mobile-open' : ''} ${hidden ? 'inspector-hidden' : ''} ${client ? 'client-inspector' : ''}`}
       style={{ width: resize.width }}
     >
       {/* The close button shares the tab row, so it takes the tabs' height and centre. */}
       <div className="studio-inspector-head">
         <InspectorTabs client={client} tab={tab} setTab={setTab} />
-        <PanelCloseButton label="Close settings" close={close} />
+        <PanelCloseButton label={translate('studio.inspector.close')} close={close} />
       </div>
       {!client && model.document && (
         <KeptTabPanel shown={tab === 'style'}>
@@ -400,11 +403,12 @@ function InspectorTabs({
   readonly tab: 'style' | 'settings';
   readonly setTab: (tab: 'style' | 'settings') => void;
 }) {
+  const translate = useTranslate();
   return (
     <>
       {' '}
       {client ? (
-        <div className="right-tabs">Settings</div>
+        <div className="right-tabs">{translate('shell.rightTabs.settings')}</div>
       ) : (
         <div className="right-tabs">
           <span
@@ -415,10 +419,10 @@ function InspectorTabs({
             }}
           />
           <button className={tab === 'style' ? 'on' : ''} onClick={() => setTab('style')}>
-            Style
+            {translate('shell.rightTabs.style')}
           </button>
           <button className={tab === 'settings' ? 'on' : ''} onClick={() => setTab('settings')}>
-            Settings
+            {translate('shell.rightTabs.settings')}
           </button>
         </div>
       )}
@@ -426,11 +430,12 @@ function InspectorTabs({
   );
 }
 function PausedEditor({ resume }: { resume: () => void }) {
+  const translate = useTranslate();
   return (
     <div className="boot">
-      <p>Studio paused to save hosting costs.</p>
-      <p>Your saved draft is safe.</p>
-      <button onClick={resume}>Resume editing</button>
+      <p>{translate('studio.paused.title')}</p>
+      <p>{translate('studio.paused.body')}</p>
+      <button onClick={resume}>{translate('studio.paused.resume')}</button>
     </div>
   );
 }

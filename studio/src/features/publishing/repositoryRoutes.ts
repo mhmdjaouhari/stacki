@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { publishingRepositories } from '../../../vendor/stacki/electron/project/publishRepositories';
 import { parseRepositoryRequest, parseRepositoryResult } from '../../../vendor/stacki/shared/ipc/publishRepository';
 import { parseGitHubRepository } from '../../../vendor/stacki/shared/ipc/githubRepository';
+import { described } from '../../../vendor/stacki/shared/properties/i18n/messageRef';
 
 export async function repositoryRoute(
   root: string,
@@ -34,19 +35,21 @@ export async function repositoryRoute(
 function managedRepository(repository: string, action: string) {
   const connected = parseGitHubRepository(repository);
   if (action !== 'list') {
-    return {
-      ok: false,
-      error: 'This Studio deployment is linked to its installed GitHub repository.',
-    };
+    const problem = described('publish.repositories.managedLinked');
+    return { ok: false, error: problem.message, errorRef: problem.messageRef };
   }
+  const notice = described('publish.repositories.managedNotice');
   return parseRepositoryResult({
     ok: true,
     value: {
       connected,
       repositories: [connected],
       mode: 'managed',
+      organizations: [],
+      organizationAccess: 'available',
       revision: createHash('sha256').update(connected).digest('hex'),
-      notice: 'Managed by this Studio deployment.',
+      notice: notice.message,
+      noticeRef: notice.messageRef,
     },
   });
 }

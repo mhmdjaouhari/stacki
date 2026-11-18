@@ -4,12 +4,8 @@ import { record, text } from '../core/boundary';
 
 export const COMPONENT_SOURCE_FILE = '.stacki/component-sources.json';
 export const COMPONENT_SOURCE_LIMITS = {
+  /** Packages one project configures: a hand-written list, not a size of the project. */
   sourcesMax: 16,
-  filesMax: 10000,
-  directoriesMax: 1000,
-  sourceBytesMax: 1024 * 1024,
-  sourceBytesTotalMax: 16 * 1024 * 1024,
-  configBytesMax: 16384,
 } as const;
 
 export interface PackageComponentSource {
@@ -67,6 +63,7 @@ export function parseComponentOrigin(input: unknown): ComponentOrigin {
 }
 
 export function componentSourceRoot(source: PackageComponentSource): string {
+  // i18n-ignore: a file-system path pattern, not interface text.
   return `node_modules/${source.package}/${source.directory}`;
 }
 

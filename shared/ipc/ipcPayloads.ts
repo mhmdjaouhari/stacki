@@ -1,6 +1,8 @@
+import { parseLocaleSet } from './localeChannel';
 import { parseMergeResolution } from './mergeResolution';
 import { parseAccountRequest } from './publishAccount';
-import { parseCmsConnectionDraft, parseConnectionId, parseSanityLoginRequest } from '../properties/cmsConnections';
+import { parseSyncApply, parseSyncRestore, parseSyncScan, parseUsageRequest } from '../properties/breakpointSyncPlan';
+import { parseCmsCheckRequest, parseCmsConnectionDraft, parseConnectionId, parseSanityLoginRequest } from '../properties/cmsConnections';
 import {
   parseRemoteCollectionName,
   parseRemoteColumns,
@@ -39,6 +41,8 @@ import {
   parseMediaName,
   parseMediaOrder,
 } from '../properties/mediaHosting';
+import { parseSecretReadIndex, parseSecretsChange, parseSecretsFileName, parseSecretsIgnorableFile, parseSecretsRevision } from '../properties/secrets';
+import { parseMcpChange, parseMcpCodexChange, parseMcpRevision, parseMcpServerName, parseMcpTextInput } from '../properties/mcp';
 import { parseConnectionKeyCopy, parseDataSampleRequest, parseEnvPayloadName, parsePageTemplateDraft, parseSecretValue } from '../properties/pageTemplate';
 import { parseAstroRemoteEdit, parseAstroRemoteRead } from '../properties/astroContent';
 import { parseRepositoryRequest } from '../ipc/publishRepository';
@@ -47,6 +51,9 @@ import { parseDiscoveryRequest } from '../properties/publishDiscovery';
 import { parsePublishCommitMessage, parsePublishTarget } from '../properties/publishConfig';
 import { metadataKind, parseMetadataWrite } from '../properties/projectMetadata';
 import { parseInstructionFilePath, parseInstructionPath } from '../properties/instructions';
+import { parseComponentOpTarget } from '../properties/componentOps';
+import { parseComponentRenameRequest, parseRenameDirection } from '../properties/componentRename';
+import { parseComponentSubfolder } from '../properties/componentNaming';
 import { parseGitHubLoginQuery } from '../properties/projectRoles';
 import { parseSelectorFileChanges, parseSelectorFileDigests, parseSelectorIds } from '../properties/selectorUsage';
 import { parseCreatePackageManager } from '../properties/packageManager';
@@ -57,10 +64,11 @@ import { parseCommitAvatarRequest } from './commitAvatars';
 import { parsePreferenceName } from './preferences';
 import { parseStudioSource } from './studioSetup';
 import { parseStudioRequestId } from './studioProgress';
-import { parsePropertyChange, propertySource } from '../properties/propertyEditing';
+import { parsePropertyChange, propertyName, propertySource } from '../properties/propertyEditing';
 import { parseEdit, parseEditBatchRequest, parseEditRequest } from '../engine/editRequest';
 import { parsePreviewRender } from '../page/previewToken';
 import { AI_PAYLOADS } from './aiChat';
+import { parseEmDashInstallRequest } from '../properties/emdashInstall';
 // Complete invoke-channel inventory. Every main-process listener receives the
 // parsed shape below; payload field names retain the existing renderer protocol.
 import { object, text, pathText, boolean, count, optional, nullable, list, dictionary, data, digest, record } from '../core/boundary';
@@ -330,8 +338,19 @@ export const IPC_PAYLOADS = {
     imports: optional(list(componentImport)),
     props: optional(list(data)),
     frontmatter: optional(object({ imports: list(componentImport), code: text })),
+    // Below the first component folder; absent or '' is that folder itself (componentNaming.ts says what a folder may be).
+    folder: optional(parseComponentSubfolder),
   }),
-  'component:discard': object({ ...project, path: pathText, checksum: digest, force: maybeFlag }),
+  // The Components panel's "…" menu: a copy of a component or folder, its deletion, and the undo of a deletion (componentOps.ts).
+  // Renaming or moving a component: the plan's summary for the dialog, the rename itself, and its undo and redo (componentRename.ts).
+  'component:planRename': object({ ...project, request: parseComponentRenameRequest }),
+  'component:rename': object({ ...project, request: parseComponentRenameRequest }),
+  'component:revertRename': object({ token: text, direction: parseRenameDirection }),
+  'component:duplicate': object({ ...project, target: parseComponentOpTarget }),
+  'component:remove': object({ ...project, target: parseComponentOpTarget }),
+  'component:restoreRemoved': object({ token: text }),
+  // `folders`: the folders the creation made (its reply), each removed once empty; main removes only folders inside a component folder.
+  'component:discard': object({ ...project, path: pathText, checksum: digest, force: maybeFlag, folders: optional(list(pathText)) }),
   'component:properties': object({ ...project, file: pathText }),
   // Undo of a property batch (step 6): the token its edit returned. Main
   // holds the inverse batch; the renderer can apply only what an edit wrote.
@@ -342,6 +361,8 @@ export const IPC_PAYLOADS = {
     source: propertySource,
     change: parsePropertyChange,
   }),
+  // What deleting a prop would do across the site, for its confirmation; the deletion itself is `component:editProperties`.
+  'component:previewPropertyRemoval': object({ ...project, file: pathText, name: propertyName }),
   'component:usage': object({ ...named, exclude: optional(text) }),
   'content:collections': pathText,
   'content:config': object({ ...project, force: maybeFlag }),
@@ -383,6 +404,10 @@ export const IPC_PAYLOADS = {
   'css:moveHeading': object({ ...project, ...cssRange, selector: text, before: cssTarget }),
   'css:moveVariables': object({ ...project, moves: optional(list(cssMove)) }),
   'css:removeSection': object({ ...project, ...cssRange }),
+  'breakpointSync:scan': parseSyncScan,
+  'breakpointSync:usage': parseUsageRequest,
+  'breakpointSync:apply': parseSyncApply,
+  'breakpointSync:restore': parseSyncRestore,
   'css:renameVariables': object({ ...project, renames: list(object({ from: text, to: text })) }),
   'css:setSectionTitle': object({ ...project, ...cssRange, title: optional(text) }),
   'css:setVariable': object({
@@ -395,6 +420,7 @@ export const IPC_PAYLOADS = {
   }),
   'css:variables': pathText,
   'dev:diagnose': pathText,
+  'dev:inspect': pathText,
   'dev:probe': pathText,
   'dev:start': pathText,
   'dev:stop': nothing,
@@ -433,6 +459,7 @@ export const IPC_PAYLOADS = {
   'cmsConnections:list': object({ ...project }),
   'cmsConnections:save': object({ ...project, draft: parseCmsConnectionDraft }),
   'cmsConnections:remove': object({ ...project, id: parseConnectionId }),
+  'cmsConnections:check': object({ ...project, request: parseCmsCheckRequest }),
   'cmsConnections:sanityLogin': object({ ...project, request: parseSanityLoginRequest }),
   'cmsRemote:collections': object({ ...project, connectionId: parseRemoteConnection }),
   'cmsRemote:documents': object({
@@ -584,6 +611,10 @@ export const IPC_PAYLOADS = {
   'git:status': object({ ...project }),
   'git:unpark': object({ ...project }),
   'git:worktrees': object({ ...project }),
+  'locale:set': parseLocaleSet,
+  'microphone:openSettings': nothing,
+  'microphone:request': nothing,
+  'microphone:status': nothing,
   'native:copy': nothing,
   'native:paste': nothing,
   'native:redo': nothing,
@@ -597,9 +628,31 @@ export const IPC_PAYLOADS = {
   'pageTemplate:plan': object({ ...project, draft: parsePageTemplateDraft }),
   'pageTemplate:sample': object({ ...project, request: parseDataSampleRequest }),
   'project:setEnv': object({ ...project, name: parseEnvPayloadName, value: parseSecretValue }),
+  // The Settings panel's Secrets tab (shared/properties/secrets.ts), one dev env file at a time: names listed, one value read on request, one change applied against a revision.
+  'secrets:list': object({ ...project, file: parseSecretsFileName }),
+  'secrets:read': object({ ...project, file: parseSecretsFileName, revision: parseSecretsRevision, index: parseSecretReadIndex }),
+  'secrets:apply': object({ ...project, file: parseSecretsFileName, revision: parseSecretsRevision, change: parseSecretsChange }),
+  'secrets:ignore': object({ ...project, file: parseSecretsIgnorableFile }),
+  // The Settings panel's MCP tab (shared/properties/mcp.ts): the project's .mcp.json listed, read as text, one server revealed, a change or the whole text saved against a revision, and Codex's file.
+  'mcp:read': object({ ...project }),
+  'mcp:readText': object({ ...project }),
+  'mcp:reveal': object({ ...project, revision: parseMcpRevision, name: parseMcpServerName }),
+  'mcp:apply': object({ ...project, revision: parseMcpRevision, change: parseMcpChange }),
+  'mcp:saveText': object({ ...project, revision: parseMcpRevision, text: parseMcpTextInput }),
+  'mcp:readCodex': object({ ...project }),
+  'mcp:revealCodex': object({ ...project, revision: parseMcpRevision, name: parseMcpServerName }),
+  'mcp:applyCodex': object({ ...project, revision: parseMcpRevision, projectRevision: parseMcpRevision, change: parseMcpCodexChange }),
   'audit:render': object({ ...project, devUrl: loopbackOrigin, route: routePath }),
   'audit:measure': object({ ...project, devUrl: loopbackOrigin, route: routePath }),
   'page:dynamicPaths': object({ ...project, pagePath: pathText, devUrl: maybeText }),
+  // What an EmDash project holds, read from its own files and database (read only).
+  'emdash:project': object({ ...project }),
+  // Adding EmDash to this project: the plan (read only), the run (which names the command the person was shown) and its cancel.
+  'emdash:installPlan': object({ ...project }),
+  'emdash:install': parseEmDashInstallRequest,
+  'emdash:installCancel': object({ ...project }),
+  // The address the project's preview answers on, for the EmDash admin button.
+  'emdash:adminUrl': object({ ...project }),
   // A visual edit in the renderer's terms, authored against the checksum of
   // the page it shows; main turns it into an intent (step 6).
   'page:edit': parseEditRequest,

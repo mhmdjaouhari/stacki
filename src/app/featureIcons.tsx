@@ -15,12 +15,12 @@ import {
   CmsIcon,
   ComponentEditIcon,
   ComponentFillIcon,
-  ComponentPlusIcon,
   DropletIcon,
   FolderIcon,
   GearIcon,
   GitHubIcon,
   HistoryIcon,
+  AllBreakpointsIcon,
   InstructionsIcon,
   LayoutIcon,
   MoreIcon,
@@ -66,6 +66,7 @@ export const FEATURE_ICONS: Readonly<Record<StaticAccessFeature, FeatureIconComp
   'panel:ai': SparkleIcon,
   'panel:instructions': InstructionsIcon,
   'panel:audits': AuditsIcon,
+  'panel:projectSettings': GearIcon,
   // The right panels' tabs are text; these are the closest icons.
   'panel:style': DropletIcon,
   'panel:settings': GearIcon,
@@ -73,7 +74,8 @@ export const FEATURE_ICONS: Readonly<Record<StaticAccessFeature, FeatureIconComp
   'page:delete': TrashIcon,
   'page:rename': PencilIcon,
   'page:layout': LayoutIcon,
-  'component:create': ComponentPlusIcon,
+  // The Components panel's own cube, so the permission reads as that panel's.
+  'component:create': ComponentFillIcon,
   'component:edit': ComponentEditIcon,
   'code:edit': BracesIcon,
   'instructions:edit': PencilIcon,
@@ -90,7 +92,17 @@ export const FEATURE_ICONS: Readonly<Record<StaticAccessFeature, FeatureIconComp
   'settings:studio': StackiMarkIcon,
   'settings:instructions': InstructionsIcon,
   'settings:audits': AuditsIcon,
+  'settings:breakpoints': AllBreakpointsIcon,
   'settings:roles': RolesIcon,
+  // The command line: code brackets for reading and the commands that edit settings, the owning panel's icon for the rest.
+  'cli:read': RailCodeIcon,
+  'cli:config': GearIcon,
+  'cli:guides': GearIcon,
+  'cli:breakpoints': AllBreakpointsIcon,
+  'cli:folders': FolderIcon,
+  'cli:components': ComponentFillIcon,
+  'cli:apps': AppsIcon,
+  'cli:roles': RolesIcon,
 };
 
 /** The rail's More button (RailMore.tsx), shared by Desktop and Studio. */

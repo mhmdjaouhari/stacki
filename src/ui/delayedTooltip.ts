@@ -38,7 +38,52 @@ export function useDelayedTooltip(): {
   return { value, show, hide };
 }
 
+/**
+ * Where a tip is drawn for the control `from`. A modal dialog sits in the browser's top layer, which paints above
+ * every element outside it whatever its z-index, so a tip appended to the body is hidden behind Settings and every
+ * other modal. Inside an open dialog the tip is a child of that dialog instead (Popup does the same for menus). Its
+ * position is `fixed`, and the dialog has no transform, so the viewport coordinates the hooks compute still hold.
+ */
+export function tooltipHost(from: Element | undefined): HTMLElement {
+  return from?.closest<HTMLElement>('dialog[open]') ?? document.body;
+}
+
 // The arrow's point for a tip under `rect`.
 export function tooltipPointBelow(rect: Pick<DOMRect, 'left' | 'width' | 'bottom'>): TooltipPoint {
   return { left: rect.left + rect.width / 2, top: rect.bottom + TOOLTIP_GAP_PX };
+}
+
+/**
+ * The same wait, for a tip that is not drawn under its control: `place` turns the resting element into
+ * whatever the tip needs to be drawn (a side and a point, for the menu's info mark). `showNow` is for
+ * keyboard focus, which needs no wait.
+ */
+export function useDelayedPlacement<T>(place: (element: HTMLElement) => T): {
+  readonly value: T | undefined;
+  readonly show: (element: HTMLElement) => void;
+  readonly showNow: (element: HTMLElement) => void;
+  readonly hide: () => void;
+} {
+  const [value, setValue] = useState<T | undefined>(undefined);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => clearTimeout(timer.current), []);
+  const show = useCallback(
+    (element: HTMLElement): void => {
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => setValue(place(element)), TOOLTIP_DELAY_MS);
+    },
+    [place],
+  );
+  const showNow = useCallback(
+    (element: HTMLElement): void => {
+      clearTimeout(timer.current);
+      setValue(place(element));
+    },
+    [place],
+  );
+  const hide = useCallback((): void => {
+    clearTimeout(timer.current);
+    setValue(undefined);
+  }, []);
+  return { value, show, showNow, hide };
 }

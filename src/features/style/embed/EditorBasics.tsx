@@ -1,9 +1,10 @@
+import { useTranslate } from '../../../lib/i18n/useTranslate';
 import { centralIcon } from '../../../ui/central/CentralIcon';
 import {
+  add as centralAdd,
   check as centralCheck,
   circle as centralCircle,
   code as centralCode,
-  component as centralComponent,
   studioDisplay as centralStudioDisplay,
   edit as centralEdit,
   phone as centralPhone,
@@ -11,6 +12,8 @@ import {
   tablet as centralTablet,
 } from '../../../ui/central/centralGeometry';
 import { ErrorToast } from '../../../ui/ErrorToast';
+import { ComponentFillIcon } from '../../../ui/Icons';
+import type { IconProps } from '../../../ui/IconBase';
 // The style editor's basics: its scan, phase and write types, value and query
 // helpers, the icons it draws, and the save indicator (EmbedEditor.tsx).
 
@@ -35,11 +38,19 @@ export type ScanState = {
   rememberedPageEmbedCount: number;
   errors: Array<{ label: string; message: string }>;
   inComponentContext: boolean;
+  /**
+   * Another element was selected and no settled answer for it has landed yet. Whatever the
+   * panel could draw from the blanked or source-only model is the plain default that the
+   * answer then replaces, so the sections hold placeholders instead. Never set by a rescan of
+   * the element already shown.
+   */
+  awaitingFirstAnswer: boolean;
   /** True once the element's selectors come from a complete resolve the canvas
    *  answered. False from the moment another element is selected until then: the
    *  model is blanked, then filled in steps (source-known first, then the DOM's
-   *  answer). The selector well keeps its last settled chips across those steps
-   *  rather than showing each one (heldSelection.ts). */
+   *  answer). The selector well draws a placeholder across those steps rather than
+   *  showing each one (SelectorPicker.tsx). An element remembered from an earlier
+   *  visit lands settled at once (scanSnapshotCache.ts). */
   settled: boolean;
 };
 
@@ -140,6 +151,8 @@ export const EMBED_ICON_FOURTH_PATH =
   'M13 2C13.5523 2 14 2.44772 14 3V13C14 13.5523 13.5523 14 13 14H3C2.44772 14 2 13.5523 2 13' + 'V3C2 2.44772 2.44772 2 3 2H13ZM3 13H13V3H3V13Z';
 
 export const EmbedIcon = centralIcon(centralCode);
+// The `<style>` tag the page does not have yet ("Create <style>", newStyleTarget.ts): the plus says choosing it makes one.
+export const CreateStyleTagIcon = centralIcon(centralAdd);
 
 export const COMPONENT_ICON_PATH =
   'M8.47885 1.69144C8.18037 1.52863 7.81963 1.52863 7.52115 1.69144L2.52115 4.41871' +
@@ -150,8 +163,12 @@ export const COMPONENT_ICON_PATH =
   'M3 5.84206L3 10.703L7.5 13.1575V8.29661L3 5.84206ZM8.5 13.1575L13 10.703V5.84206' +
   'L8.5 8.29661V13.1575Z';
 
-// Webflow's component glyph — labels a component subheader in the source dropdown.
-export const ComponentIcon = centralIcon(centralComponent);
+// The Components panel's rail icon, so a component reads the same in the source dropdown
+// as in the left rail and one icon change moves both. The rail icon defaults to 20px;
+// the dropdown draws 16px glyphs, so the default is pinned back to 16 here.
+export function ComponentIcon({ size = 16, ...rest }: IconProps) {
+  return <ComponentFillIcon size={size} {...rest} />;
+}
 
 // Header save state: spinner while writing, check when everything is saved, an
 // error mark (with the reason in a toast) if the last write failed, or an unsaved
@@ -161,6 +178,7 @@ export const SpinnerIcon = centralIcon(centralSpinner);
 export const CheckIcon = centralIcon(centralCheck);
 export const UnsavedIcon = centralIcon(centralCircle, 12);
 export function SaveIndicator({ busy, error, pending }: { busy: boolean; error: string | undefined; pending: string | undefined }) {
+  const translate = useTranslate();
   const [target, setTarget] = useState<HTMLElement | undefined>(undefined);
   // Re-acquire the slot every render (no dep array) so the indicator follows it if the
   // selector row remounts; the functional update no-ops when it's unchanged, so there's
@@ -176,12 +194,12 @@ export function SaveIndicator({ busy, error, pending }: { busy: boolean; error: 
   // Native `title` tooltips are unreliable inside the Designer iframe, so we
   // render our own hover/focus tooltip (styled to match the dark UI).
   const state = busy
-    ? { cls: 'is-saving', tip: 'Saving…', icon: <SpinnerIcon /> }
+    ? { cls: 'is-saving', tip: translate('styleModel.embed.save.saving'), icon: <SpinnerIcon /> }
     : error
-      ? { cls: 'is-unsaved', tip: 'Unsaved changes', icon: <UnsavedIcon /> }
+      ? { cls: 'is-unsaved', tip: translate('styleModel.embed.save.unsaved'), icon: <UnsavedIcon /> }
       : pending
         ? { cls: 'is-unsaved', tip: pending, icon: <UnsavedIcon /> }
-        : { cls: 'is-saved', tip: 'All changes saved', icon: <CheckIcon /> };
+        : { cls: 'is-saved', tip: translate('styleModel.embed.save.saved'), icon: <CheckIcon /> };
   const node = (
     <span className={`embed-editor_save ${state.cls}`} tabIndex={0} aria-label={state.tip}>
       {state.icon}

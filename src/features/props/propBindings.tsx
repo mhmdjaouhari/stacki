@@ -1,3 +1,4 @@
+import { useTranslate } from '../../lib/i18n/useTranslate';
 import Popup from '../../ui/Popup';
 import { dataPickerPosition } from './dataPickerPosition';
 import { useEffect, useRef, useState } from 'react';
@@ -10,11 +11,33 @@ import { definedFields } from '../../../shared/core/boundary';
 import { dataTree, scopeChips, scopeCompletions } from '../../editor/dataSuggest';
 import { partsFromValue, resolvePick, templateHoles, valueFromParts, valueModeOf, type PickNeed } from '../../editor/bindings';
 import BindInput from './BindInput';
+import CodeBindInput, { partsHoldHoles } from './CodeBindInput';
+import { attributeLanguageOf, type AttributeLanguage } from '../../ui/attributeLanguage';
 import DataPicker from './DataPicker';
 import { BindOverrideWaiting, pickerPaths, useBindOverride } from './bindOverride';
 import ExprInput from '../../ui/ExprInput';
 import { type FieldPosition, type Chip, type BindFieldProps } from './bindingTypes';
 import { referencedName, symbolTarget, VarSourceEditor } from './BindingEditors';
+export { default as CodeTextField } from './CodeTextField';
+// A prop's Default value set by conditions, in the attribute fields' own editor (ConditionalDefaultField.tsx).
+export { ComputedDefault, ConditionalDefaultField, ConditionalDefaultStart, useDefaultConditionContext } from './ConditionalDefaultField';
+export {
+  conditionalOfDefault,
+  conditionSchema,
+  defaultOfConditional,
+  optionDefaultStart,
+  tooltipConditional,
+  tooltipEntries,
+  type OptionTooltip,
+  tableConditional,
+  tableEntries,
+  type TableDefault,
+} from './conditionalDefault';
+export { stateOf, tooltipCode, visibilityCode, visibilityConditional, visibilityRules, type VisibilityController, type VisibilityProblem } from './visibility';
+export { conditionWords, conditionProps } from './conditionalModel';
+// A prop's Visibility in its settings is the icon choices the Value conditions editor's states are (ValueChoices.tsx).
+export { ValueChoiceSwitch, type ValueChoice } from './ValueChoices';
+export { dataPickerPosition } from './dataPickerPosition';
 export {
   referencedName,
   SourceEditButton,
@@ -122,6 +145,7 @@ function useBindFieldModel(props: BindFieldProps) {
   // which is a string the component then calls .map on. It also cost the field
   // its own editor: a string is text, so the panel showed the array in a plain
   // box with no highlighting, and there was no way to type one that stayed code.
+  const language = useValueLanguage({ name: props.attributeName ?? field?.name, element: props.elementName, text, mode, parts });
   const numeric = !!(field?.type === 'number' || field?.type === 'boolean' || field?.type === 'code' || (field?.type === 'enum' && field?.numeric));
 
   return {
@@ -141,7 +165,30 @@ function useBindFieldModel(props: BindFieldProps) {
     showInput,
     mode,
     numeric,
+    language,
   };
+}
+
+// The language a field's text is coloured in, decided when the field takes an
+// attribute's value and kept while it holds that attribute: the text decides
+// for `data-*` (JSON or a sentence), and a field that swapped its editor as the
+// first `{` was typed would take the caret with it. Code and text that already
+// holds a `${` stay in the editor that can hold them.
+function useValueLanguage(input: {
+  readonly name: string | undefined;
+  readonly element: string | undefined;
+  readonly text: string;
+  readonly mode: 'text' | 'code';
+  readonly parts: ReturnType<typeof partsFromValue>;
+}): AttributeLanguage | undefined {
+  const { name, element, text, mode, parts } = input;
+  const decided = useRef<{ readonly key: string; readonly language: AttributeLanguage | undefined } | undefined>(undefined);
+  const key = `${element ?? ''}.${name ?? ''}`;
+  if (decided.current?.key !== key) {
+    const named = name === undefined || mode !== 'text' || !partsHoldHoles(parts) ? undefined : attributeLanguageOf(name, text, element);
+    decided.current = { key, language: named };
+  }
+  return decided.current.language;
 }
 type BindingState = ReturnType<typeof useBindFieldModel>;
 function useBindFieldActions(state: BindingState) {
@@ -199,7 +246,7 @@ function useBindFieldActions(state: BindingState) {
       onChange({ type: 'expr', value: path }, true);
       return;
     }
-    if (chip && 'getAttribute' in chip) {
+    if (chip) {
       inputRef.current?.replace(chip, path);
     } else {
       inputRef.current?.insert(path);
@@ -290,24 +337,57 @@ function BindFieldSource({ state }: { readonly state: BindingState }) {
   );
 }
 function BindFieldView({ state }: { readonly state: BindingViewState }) {
-  const { showInput, wrapRef, inputRef, parts, placeholder, onChange, numeric, field, mode, open, setEditing, expr, exprApiRef, codeChips, wrapCode } = state;
+  const translate = useTranslate();
+  const {
+    showInput,
+    wrapRef,
+    inputRef,
+    parts,
+    placeholder,
+    onChange,
+    numeric,
+    field,
+    mode,
+    open,
+    setEditing,
+    expr,
+    exprApiRef,
+    codeChips,
+    wrapCode,
+    language,
+  } = state;
   const list = <BindFieldMenu state={state} />;
   const sourceEditor = <BindFieldSource state={state} />;
   if (showInput) {
     return (
       <div className="prop-expr-row bind-row" ref={wrapRef}>
-        <BindInput
-          ref={inputRef}
-          parts={parts}
-          placeholder={placeholder || 'Type, or insert data'}
-          // A code prop's parts join as code: text beside a chip is an
-          // expression with a value in it, not a sentence with one quoted into
-          // it, so `[...items, other]` stays what was typed.
-          onChange={(next) => onChange(valueFromParts(next, { numeric, mode: field?.type === 'code' ? 'code' : mode }))}
-          onChipClick={(chip) => open(chip)}
-          onFocus={() => setEditing(true)}
-          onBlur={() => setEditing(false)}
-        />
+        {language === undefined ? (
+          <BindInput
+            ref={inputRef}
+            parts={parts}
+            placeholder={placeholder || translate('props.attributes.typeOrInsert')}
+            // A code prop's parts join as code: text beside a chip is an
+            // expression with a value in it, not a sentence with one quoted into
+            // it, so `[...items, other]` stays what was typed.
+            onChange={(next) => onChange(valueFromParts(next, { numeric, mode: field?.type === 'code' ? 'code' : mode }))}
+            onChipClick={(chip) => open(chip)}
+            onFocus={() => setEditing(true)}
+            onBlur={() => setEditing(false)}
+          />
+        ) : (
+          // The same field for a value that is code in its own right, in the
+          // code editor so the text is coloured (CodeBindInput.tsx).
+          <CodeBindInput
+            ref={inputRef}
+            parts={parts}
+            language={language}
+            placeholder={placeholder || translate('props.attributes.typeOrInsert')}
+            onChange={(next) => onChange(valueFromParts(next, { numeric, mode: field?.type === 'code' ? 'code' : mode }))}
+            onChipClick={(chip) => open(chip)}
+            onFocus={() => setEditing(true)}
+            onBlur={() => setEditing(false)}
+          />
+        )}
         {list}
         {sourceEditor}
       </div>

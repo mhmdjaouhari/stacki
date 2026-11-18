@@ -4,6 +4,7 @@
 import { parseDeclarations, type ImportLike, parseDestructures, looksCallable, collectionCallIn } from './dataSource';
 import type { ImportedValue } from './importedValues';
 import type { TreeNode } from './dataSample';
+import type { LoopCopy } from './loopSelection';
 
 // Numbered names tried for a collection's entries before settling on `…X`: a
 // page reads a handful of collections, never dozens under one name.
@@ -110,6 +111,17 @@ export interface DataContext {
   readonly collections?: readonly { readonly name: string; readonly count?: number }[];
   readonly itemIndex?: Record<string, number>;
   /**
+   * The copy of the selected node the canvas named. The loop items the picker
+   * reads follow it, except where `itemIndex` (the pager) says otherwise.
+   */
+  readonly selectedCopy?: LoopCopy | undefined;
+  /**
+   * The item of each loop in `ancestorHeads` (same order) the canvas says the
+   * selected node is in, read from the passes the preview marks; undefined
+   * where a loop marked none or could not say. It outranks `selectedCopy`.
+   */
+  readonly selectedItems?: readonly (number | undefined)[] | undefined;
+  /**
    * What a value the file computes by calling an import returned, sampled by
    * the dev server — `campusPastors` for `await getCampusPastors()`. Keyed by
    * the value's name.
@@ -130,6 +142,8 @@ export interface DataContext {
    * after the project's collections.
    */
   readonly projectSources?: readonly TreeNode[];
+  /** The data file exports the file already imports, by local name (`NAV` -> `src/consts.ts`). */
+  readonly projectModules?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -147,13 +161,23 @@ export interface CollectionReader {
   readonly keysOf: (value: string) => readonly string[] | undefined;
 }
 
+/** A member of a prop's object (or of each item of its list); nested members carry their own. */
+export interface ShapeMember {
+  readonly name: string;
+  readonly type?: string;
+  readonly format?: string;
+  readonly options?: readonly string[];
+  readonly shape?: readonly ShapeMember[];
+  readonly shapeIsList?: boolean;
+}
+
 export interface SchemaField {
   readonly name: string;
   readonly type?: string;
   /** The values a choice prop (`type: 'enum'`) takes, as its schema lists them. */
   readonly options?: readonly string[];
   readonly default?: unknown;
-  readonly shape?: readonly { readonly name: string; readonly type?: string }[];
+  readonly shape?: readonly ShapeMember[];
   readonly shapeIsList?: boolean;
 }
 

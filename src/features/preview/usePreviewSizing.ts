@@ -2,7 +2,8 @@
 import { assert } from '../../../shared/core/assert';
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { usePointerDrag } from '../../ui/usePointerDrag';
-import { deviceForWidth, deviceWidth, type PreviewDevice } from './PreviewToolbar';
+import { activeDeviceFor, deviceForShortcut, deviceWidth, type PreviewDevice } from './breakpointDevices';
+import type { ResolvedBreakpoint } from '../../../shared/properties/projectBreakpoints';
 import { PREVIEW_WIDTH_LIMITS, previewViewport } from './previewViewport';
 import { panelDragPhase, subscribePanelDragPhase, usePanelDragPhase, type PanelDragPhase } from '../../ui/panelDragPhase';
 /** A width asked of the canvas from outside it (the style panel picking a media
@@ -14,17 +15,25 @@ export function usePreviewDimensions() {
   const [customHeight, setCustomHeight] = useState<number | undefined>(undefined);
   return { customWidth, setCustomWidth, customHeight, setCustomHeight };
 }
-export function usePreviewSizing(device: PreviewDevice, dimensions: ReturnType<typeof usePreviewDimensions>, onDevice: (device: PreviewDevice) => void) {
+export function usePreviewSizing(
+  device: PreviewDevice,
+  dimensions: ReturnType<typeof usePreviewDimensions>,
+  breakpoints: readonly ResolvedBreakpoint[],
+  onDevice: (device: PreviewDevice) => void,
+) {
   const startDrag = usePointerDrag();
   const wrapRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const [available, setAvailable] = useState({ width: 0, height: 0 });
   const { customWidth, setCustomWidth, customHeight, setCustomHeight } = dimensions;
   const [resizing, setResizing] = useState(false);
-  const width = customWidth ?? deviceWidth(device);
+  // A custom width belongs to the custom device. Read on any other, it drew one frame at
+  // the old custom width after a device button was pressed, until the effect below
+  // cleared it.
+  const width = device === 'custom' ? (customWidth ?? deviceWidth(device, breakpoints)) : deviceWidth(device, breakpoints);
   // A fluid frame fills the canvas by CSS, so it follows a side-panel drag without React.
   useMeasuredSize(wrapRef, { fluid: width === undefined }, setAvailable);
-  useDeviceShortcuts(onDevice);
+  useDeviceShortcuts(breakpoints, onDevice);
   useEffect(() => {
     if (device !== 'custom') {
       setCustomWidth(undefined);
@@ -35,15 +44,11 @@ export function usePreviewSizing(device: PreviewDevice, dimensions: ReturnType<t
   }, [device, setCustomWidth, setCustomHeight]);
   const panelSettling = usePanelSettling(usePanelDragPhase());
   const viewport = previewViewport(width, available, customHeight);
-  const activeDevice = device === 'canvas' ? 'canvas' : (deviceForWidth(viewport.width) ?? device);
+  const activeDevice = activeDeviceFor(device, viewport.width, breakpoints);
   const setWidth = (next: number): void => {
     setCustomWidth(next);
     onDevice('custom');
   };
-  // Read by an effect that applies a width asked from outside, which must not
-  // re-run each render because this closure is new.
-  const setWidthRef = useRef(setWidth);
-  setWidthRef.current = setWidth;
   const startResize = useResizeHandler({
     wrapRef,
     frameRef,
@@ -58,7 +63,6 @@ export function usePreviewSizing(device: PreviewDevice, dimensions: ReturnType<t
     wrapRef,
     frameRef,
     wrapWidth: available.width,
-    setWidthRef,
     viewport,
     setWidth,
     customHeight,
@@ -138,15 +142,17 @@ function usePanelSettling(phase: PanelDragPhase): boolean {
   return phase === 'dragging' || settling !== 'live';
 }
 
-function useDeviceShortcuts(onDevice: (device: PreviewDevice) => void): void {
+function useDeviceShortcuts(breakpoints: readonly ResolvedBreakpoint[], onDevice: (device: PreviewDevice) => void): void {
   const onDeviceRef = useRef(onDevice);
   onDeviceRef.current = onDevice;
+  const breakpointsRef = useRef(breakpoints);
+  breakpointsRef.current = breakpoints;
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target ?? undefined)) {
         return;
       }
-      const device = deviceFromKey(event.key);
+      const device = deviceForShortcut(event.key, breakpointsRef.current);
       if (device) {
         onDeviceRef.current(device);
       }
@@ -158,21 +164,6 @@ function useDeviceShortcuts(onDevice: (device: PreviewDevice) => void): void {
 
 function isTypingTarget(target: EventTarget | undefined): boolean {
   return target instanceof HTMLElement && (target.matches('input, textarea, select') || target.isContentEditable);
-}
-
-function deviceFromKey(key: string): PreviewDevice | undefined {
-  switch (key) {
-    case '1':
-      return 'desktop';
-    case '2':
-      return 'tablet';
-    case '3':
-      return 'phone';
-    case '4':
-      return 'canvas';
-    default:
-      return undefined;
-  }
 }
 
 interface ResizeContext {
@@ -244,4 +235,18 @@ function resizeFrame(
 
 function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(Math.max(value, minimum), maximum);
+}
+
+// A width asked from outside (the style panel's query or Base pick). Applied while
+// rendering, not in an effect: the app moves the device to `custom` in the same update as
+// the request, and an effect would paint one frame with the custom device at the old
+// width (the readout and the frame a step behind the toolbar). The serial makes it apply
+// once per request, so a later hand resize is not undone by a re-render.
+export function useCanvasWidthRequest(request: CanvasWidthRequest | undefined, setCustomWidth: (width: number | undefined) => void): void {
+  const [appliedSerial, setAppliedSerial] = useState<number | undefined>(undefined);
+  if (request !== undefined && request.serial !== appliedSerial) {
+    const clamped = Math.min(PREVIEW_WIDTH_LIMITS.maximum, Math.max(PREVIEW_WIDTH_LIMITS.minimum, Math.round(request.widthPx)));
+    setAppliedSerial(request.serial);
+    setCustomWidth(clamped);
+  }
 }

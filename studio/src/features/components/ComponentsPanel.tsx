@@ -1,4 +1,5 @@
 import PalettePanel from '../../../vendor/stacki/src/features/palette/PalettePanel';
+import { useTranslate } from '../../../vendor/stacki/src/lib/i18n/useTranslate';
 import { request, type Project } from '../project/projectClient';
 import { parsePreviewTarget } from '../preview/usePreview';
 import { useComponentCounts } from './useComponentCounts';
@@ -27,6 +28,7 @@ export function ComponentsPanel({
   readonly open: (file: string) => void;
   readonly report: (error: unknown) => void;
 }) {
+  const translate = useTranslate();
   const counts = useComponentCounts(project, report);
   return (
     <PalettePanel
@@ -36,6 +38,7 @@ export function ComponentsPanel({
           const instances = counts.get(component.file);
           return {
             name: component.name,
+            file: component.file,
             path: component.file,
             ...(component.origin === undefined ? {} : { origin: component.origin }),
             folder:
@@ -61,7 +64,7 @@ export function ComponentsPanel({
       onOpenUsage={(file) => open(file.path)}
       createFrom={{
         kind: 'unavailable',
-        reason: 'Create component templates in the project source.',
+        reason: translate('studio.components.createInSource'),
       }}
       onCreateComponent={() => {}}
     />

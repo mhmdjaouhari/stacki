@@ -1,9 +1,13 @@
+import type { MessageRef } from '../core/i18n/messageReference';
+import type { BreakpointSyncApplied, BreakpointSyncScan, BreakpointUsage } from '../properties/breakpointSyncPlan';
+import type { MicrophoneReport } from '../properties/microphone';
 import type { AiResults } from './aiChat';
 import type { AppFileAnswer } from '../properties/appFiles';
 import type { AppAccessToken, AppAuthStatus } from '../properties/appAuth';
 import type { AppNetResponse } from '../properties/appNet';
 import type { AccountState } from './publishAccount';
-import type { CmsConnectionList, CmsSaveResult, SanityLoginState } from '../properties/cmsConnections';
+import type { PreviewHealth } from './previewHealth';
+import type { CmsCheckResult, CmsConnectionList, CmsSaveResult, SanityLoginState } from '../properties/cmsConnections';
 import type {
   RemoteCollection,
   RemoteAsset,
@@ -22,10 +26,14 @@ import type { MarketplaceIndex } from '../properties/appMarketplace';
 import type { AppRepositoryPlaceReply } from '../properties/appPlace';
 import type { MediaConnectionList, MediaListing, MediaResult, MediaSaveResult } from '../properties/mediaHosting';
 import type { DataSample, PageTemplatePlan } from '../properties/pageTemplate';
+import type { EmDashProject } from '../properties/emdash';
+import type { EmDashInstallPlan, EmDashInstallResult } from '../properties/emdashInstall';
 import type { AstroRemoteEditAnswer, AstroRemoteReadAnswer } from '../properties/astroContent';
 import type { RepositoryResult } from '../ipc/publishRepository';
 import type { PublishDiscovery } from '../properties/publishDiscovery';
 import type { DesktopPublishState, PublishAvailability } from '../properties/publishState';
+import type { ComponentOpError } from '../properties/componentOps';
+import type { ComponentRenameSummary } from '../properties/componentRename';
 import type { MetadataFile } from '../properties/projectMetadata';
 import type { InstructionListing, InstructionWriteResult } from '../properties/instructions';
 import type { LengthUnit } from '../properties/lengthUnit';
@@ -37,6 +45,9 @@ import type { GitHubUserSearchResult } from './githubUserSearch';
 import type { StudioStatus, StudioInstallResult } from './studioSetup';
 import type { StudioInstallProgress } from './studioProgress';
 import type { AppSecretScan } from '../properties/appSecrets';
+import type { SecretsListing, SecretsResult, SecretValue } from '../properties/secrets';
+import type { McpCodexState, McpListing, McpResult, McpText } from '../properties/mcp';
+import type { McpServerConfig } from '../properties/mcpConfig';
 import type { AppSettingValues } from '../properties/appSettings';
 import type { AppEditOutcome, AppMember, AppPerson } from '../properties/appsRpc';
 import type { AppRepositoryStatus, AppShareOutcome, AppVisibilityOutcome, MarketplacePrecheck, MarketplaceSubmissionOutcome } from '../properties/appPublish';
@@ -45,6 +56,7 @@ export interface StudioEventResults {
   readonly 'studio:progress': StudioInstallProgress;
 }
 import type { ComponentProperties } from '../properties/propertyEditing';
+import type { PropertyRemovalPreview } from '../properties/propertyRemoval';
 import type { PreviewVerdict } from '../page/previewToken';
 import type { Result } from '../core/result';
 import type { Digest } from '../core/brand';
@@ -154,6 +166,7 @@ export interface IpcResults extends AiResults {
   readonly 'component:properties': Result<ComponentProperties>;
   readonly 'component:editProperties': Result<ComponentProperties & { readonly undo: string }>;
   readonly 'component:revertProperties': Result<{ readonly undo: string }>;
+  readonly 'component:previewPropertyRemoval': Result<PropertyRemovalPreview>;
   readonly 'assets:delete':
     | {
         readonly ok: false;
@@ -242,7 +255,18 @@ export interface IpcResults extends AiResults {
     readonly rel: string;
     readonly name: string;
     readonly checksum: Digest;
+    /** Absolute paths of the folders this creation made, outermost first: empty when the folder was there already. */
+    readonly folders: readonly string[];
   };
+  readonly 'component:planRename': Result<ComponentRenameSummary>;
+  readonly 'component:rename': Result<ComponentRenameSummary & { readonly undo: string }>;
+  readonly 'component:revertRename': Result<{ readonly files: number }>;
+  readonly 'component:duplicate': Result<
+    { readonly kind: 'component' | 'folder'; readonly path: string; readonly name: string; readonly files: number },
+    ComponentOpError
+  >;
+  readonly 'component:remove': Result<{ readonly name: string; readonly files: number; readonly undo: string }, ComponentOpError>;
+  readonly 'component:restoreRemoved': Result<{ readonly files: number; readonly metadata: 'restored' | 'kept' | 'untouched' }, ComponentOpError>;
   readonly 'component:discard': {
     readonly outcome: 'deleted' | 'edited' | 'missing';
   };
@@ -279,11 +303,14 @@ export interface IpcResults extends AiResults {
     readonly entries: ReadonlyArray<WireEntry>;
     readonly readOnly: boolean;
     readonly reason?: undefined | string;
+    readonly reasonRef?: undefined | MessageRef;
     readonly idsAreGuesses?: boolean;
     readonly idNote?: undefined | string;
+    readonly idNoteRef?: undefined | MessageRef;
     readonly shape?: string;
     readonly parsed?: boolean;
     readonly parserNote?: undefined | string;
+    readonly parserNoteRef?: undefined | MessageRef;
     readonly collection: WireCollection;
   };
   readonly 'content:remoteEdit': RemoteResult<AstroRemoteEditAnswer>;
@@ -331,12 +358,14 @@ export interface IpcResults extends AiResults {
   readonly 'css:addSection': {
     readonly ok: boolean;
     readonly error?: string;
+    readonly errorRef?: MessageRef | undefined;
     readonly stale?: boolean;
     readonly title?: string;
   };
   readonly 'css:addVariables': {
     readonly ok: boolean;
     readonly error?: string;
+    readonly errorRef?: MessageRef | undefined;
     readonly name?: string;
     readonly changed?: boolean;
   };
@@ -344,16 +373,36 @@ export interface IpcResults extends AiResults {
     readonly ok: boolean;
     readonly stale?: boolean;
     readonly error?: string;
+    readonly errorRef?: MessageRef | undefined;
   };
   readonly 'css:moveVariables': {
     readonly ok: boolean;
     readonly error?: string;
+    readonly errorRef?: MessageRef | undefined;
     readonly name?: string;
     readonly changed?: boolean;
   };
   readonly 'css:removeSection': {
     readonly ok: boolean;
     readonly stale?: boolean;
+    readonly error?: string;
+    readonly errorRef?: MessageRef | undefined;
+  };
+  readonly 'breakpointSync:scan': {
+    readonly ok: boolean;
+    readonly scan?: BreakpointSyncScan;
+    readonly error?: string;
+  };
+  readonly 'breakpointSync:usage': {
+    readonly ok: boolean;
+    readonly usage?: BreakpointUsage;
+    readonly error?: string;
+  };
+  readonly 'breakpointSync:apply': BreakpointSyncApplied;
+  readonly 'breakpointSync:restore': {
+    readonly ok: boolean;
+    readonly restored?: number;
+    readonly skipped?: number;
     readonly error?: string;
   };
   readonly 'css:renameVariables': {
@@ -362,16 +411,19 @@ export interface IpcResults extends AiResults {
     readonly occurrences?: number;
     readonly paths?: ReadonlyArray<string>;
     readonly error?: string;
+    readonly errorRef?: MessageRef | undefined;
   };
   readonly 'css:setSectionTitle': {
     readonly ok: boolean;
     readonly stale?: boolean;
     readonly error?: string;
+    readonly errorRef?: MessageRef | undefined;
   };
   readonly 'css:setVariable': {
     readonly ok: boolean;
     readonly stale?: boolean;
     readonly error?: string;
+    readonly errorRef?: MessageRef | undefined;
   };
   readonly 'css:variables':
     | {
@@ -392,6 +444,7 @@ export interface IpcResults extends AiResults {
     readonly requires: undefined | string;
     readonly launchedFromGui: boolean;
   };
+  readonly 'dev:inspect': PreviewHealth;
   readonly 'dev:probe': {
     readonly ok: boolean;
     readonly status: number;
@@ -443,6 +496,7 @@ export interface IpcResults extends AiResults {
     | {
         readonly restored: boolean;
         readonly error: string;
+        readonly errorRef?: MessageRef | undefined;
         readonly parkedFrom: undefined | string;
         readonly ok: true;
         readonly from: string;
@@ -502,6 +556,7 @@ export interface IpcResults extends AiResults {
   readonly 'cmsConnections:list': CmsConnectionList;
   readonly 'cmsConnections:save': CmsSaveResult;
   readonly 'cmsConnections:remove': CmsConnectionList;
+  readonly 'cmsConnections:check': CmsCheckResult;
   readonly 'cmsConnections:sanityLogin': SanityLoginState;
   readonly 'cmsRemote:collections': RemoteResult<readonly RemoteCollection[]>;
   readonly 'cmsRemote:documents': RemoteResult<RemoteDocumentList>;
@@ -590,6 +645,7 @@ export interface IpcResults extends AiResults {
     readonly ok: boolean;
     readonly missing?: boolean;
     readonly message?: string;
+    readonly messageRef?: MessageRef | undefined;
   };
   readonly 'git:restoreProject': {
     readonly ok: boolean;
@@ -609,8 +665,17 @@ export interface IpcResults extends AiResults {
     | {
         readonly restored: boolean;
         readonly error: string;
+        readonly errorRef?: MessageRef | undefined;
       };
   readonly 'git:worktrees': ReadonlyArray<WireWorktreeInfo>;
+  readonly 'locale:set': {
+    readonly saved: boolean;
+  };
+  readonly 'microphone:openSettings': {
+    readonly ok: true;
+  };
+  readonly 'microphone:request': MicrophoneReport;
+  readonly 'microphone:status': MicrophoneReport;
   readonly 'native:copy': {
     readonly ok: true;
   };
@@ -633,6 +698,23 @@ export interface IpcResults extends AiResults {
   readonly 'pageTemplate:plan': RemoteResult<PageTemplatePlan>;
   readonly 'pageTemplate:sample': RemoteResult<DataSample>;
   readonly 'project:setEnv': RemoteResult<{ readonly gitignore: 'already-ignored' | 'added' }>;
+  readonly 'secrets:list': SecretsResult<SecretsListing>;
+  readonly 'secrets:read': SecretsResult<SecretValue>;
+  readonly 'secrets:apply': SecretsResult<SecretsListing>;
+  readonly 'secrets:ignore': SecretsResult<SecretsListing>;
+  readonly 'mcp:read': McpResult<McpListing>;
+  readonly 'mcp:readText': McpResult<McpText>;
+  readonly 'mcp:reveal': McpResult<McpServerConfig>;
+  readonly 'mcp:apply': McpResult<McpListing>;
+  readonly 'mcp:saveText': McpResult<McpListing>;
+  readonly 'mcp:readCodex': McpCodexState;
+  readonly 'mcp:revealCodex': McpResult<McpServerConfig>;
+  readonly 'mcp:applyCodex': McpResult<McpCodexState>;
+  readonly 'emdash:project': EmDashProject;
+  readonly 'emdash:installPlan': EmDashInstallPlan;
+  readonly 'emdash:install': EmDashInstallResult;
+  readonly 'emdash:installCancel': { readonly ok: true };
+  readonly 'emdash:adminUrl': { readonly url: string | undefined };
   readonly 'page:dynamicPaths':
     | {
         readonly entries: ReadonlyArray<never>;
@@ -712,6 +794,7 @@ export interface IpcResults extends AiResults {
     | {
         readonly canceled: false;
         readonly error: string;
+        readonly errorRef?: MessageRef | undefined;
         readonly projectPath?: never;
       }
     | {

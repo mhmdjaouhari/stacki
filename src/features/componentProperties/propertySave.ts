@@ -6,8 +6,10 @@
 
 import { assert } from '../../../shared/core/assert';
 import { err, ok, type Result } from '../../../shared/core/result';
+import type { Translator } from '../../../shared/properties/i18n/messageRef';
 import type { ComponentProperty, PropertyChange } from '../../../shared/properties/propertyEditing';
-import { propertyIsEditable } from './PropertyEditor';
+import type { VariantDefault, VariantGroup } from '../../../shared/properties/variantRules';
+import { propertyErrorTextFor } from '../../lib/i18n/propertyErrorText';
 import { editComponentProperties, readComponentProperties } from './propertiesBridge';
 import { refusalOf, savePhaseOf, type PropertySaveOutcome } from './propertyAutosave';
 
@@ -28,35 +30,40 @@ export interface LoadedProperty {
   readonly property: ComponentProperty;
   readonly source: string;
   readonly frontmatter: string;
-  readonly editable: boolean;
+  /** The component's variant rules (PropertyVariants.tsx). */
+  readonly variantGroups?: readonly VariantGroup[] | undefined;
+  /** Its computed defaults and every prop, for a default set by conditions (PropertyDefault.tsx). */
+  readonly variantDefaults?: readonly VariantDefault[] | undefined;
+  readonly properties?: readonly ComponentProperty[] | undefined;
 }
 
 /** Reads the property from the saved file, or says why it cannot be. */
-export async function loadProperty(saver: PropertySaver, key: string): Promise<Result<LoadedProperty, string>> {
+export async function loadProperty(saver: PropertySaver, key: string, translate: Translator): Promise<Result<LoadedProperty, string>> {
   assert(key !== '', 'loadProperty: a property is named');
   await saver.flushSave();
   const read = await readComponentProperties(saver.projectPath, saver.file);
   if (!read.ok) {
-    return err(read.error.message);
+    return err(propertyErrorTextFor(read.error, translate));
   }
   const property = read.value.properties.find((candidate) => candidate.name === key);
   if (property === undefined) {
-    return err(`This component no longer has a ${key} property.`);
+    return err(translate('componentProps.panel.propertyGone', { name: key }));
   }
   assert(property.name === key, 'loadProperty: the property found is the one named');
-  const { source, frontmatter } = read.value;
-  return ok({ property, source, frontmatter, editable: propertyIsEditable(property, read.value) });
+  const { source, frontmatter, variantGroups, variantDefaults, properties } = read.value;
+  return ok({ property, source, frontmatter, variantGroups, variantDefaults, properties });
 }
 
 /** Applies the change against `source`, and says what became of it. */
-export async function saveProperty(saver: PropertySaver, source: string, change: PropertyChange): Promise<PropertySaveOutcome> {
-  assert(change.kind === 'save', 'saveProperty: a form saves a property, nothing else');
+export async function saveProperty(saver: PropertySaver, source: string, change: PropertyChange, translate: Translator): Promise<PropertySaveOutcome> {
+  // A form saves its property, or the variant rules beside it (PropertyVariants.tsx).
+  assert(change.kind === 'save' || change.kind === 'variantRules', 'saveProperty: a form saves a property or its variant rules');
   saver.changePhase(savePhaseOf(change));
   try {
     await saver.flushSave();
     const result = await editComponentProperties(saver.projectPath, saver.file, source, change);
     if (!result.ok) {
-      return refusalOf(result.error);
+      return refusalOf(result.error, translate);
     }
     saver.recordUndo(result.value.undo);
     await saver.completeSave();

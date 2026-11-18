@@ -7,7 +7,9 @@ import '@fontsource/iosevka/400.css';
 import '@fontsource/iosevka/500.css';
 import '@fontsource/iosevka/600.css';
 import '@fontsource/iosevka/700.css';
+import { LocaleProvider } from '../../vendor/stacki/src/lib/i18n/LocaleProvider';
 import '../../vendor/stacki/src/app/styles.css';
+import '../../vendor/stacki/src/features/style/tokens.css';
 import './studio.css';
 import './fork.css';
 import './theme-light.css';
@@ -16,4 +18,8 @@ const root = document.getElementById('root');
 if (!root) {
   throw new Error('Studio root is missing');
 }
-createRoot(root).render(<App />);
+createRoot(root).render(
+  <LocaleProvider>
+    <App />
+  </LocaleProvider>,
+);

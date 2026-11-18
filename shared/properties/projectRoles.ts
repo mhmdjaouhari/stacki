@@ -1,3 +1,4 @@
+// i18n-ignore-file: the English labels and the built-in role names are the source text beside each labelRef; the renderer translates by reference.
 // Project roles: who may use which parts of Stacki in one project, shared by
 // Desktop and Studio through `.stacki/roles.json`. This module is the contract:
 // the access features, the bounded file parser, how a GitHub login resolves to
@@ -17,10 +18,19 @@
 // Each role, admin included, may pin installed apps to the left rail
 // (`pinnedApps`). The rail shows a pinned app only while the role may use it and
 // it is installed; other ids are kept, so access or a reinstall brings them back.
+//
+// Each role, admin included, may hide components from its insert surfaces
+// (`componentRules`, shared/properties/componentAccess.ts): a deny-list of component
+// and folder paths, so every component is enabled for every role until a rule says
+// otherwise. These rules narrow what a role may ADD from the palette and never what
+// it may open, so admin keeps its access to Settings however its components are hidden.
 import { assert } from '../core/assert';
 import { record, text } from '../core/boundary';
 import { toArray } from '../core/record';
 import { APP_PERMISSION_LIMITS, parseAppPermissionId, type AppPermissionDeclaration } from './appPermissions';
+import { parseComponentRules, storedComponentRule, type ComponentRule } from './componentAccess';
+import { DescribedError } from './describedError';
+import { described, messageRef, type TypedMessageRef } from './i18n/messageRef';
 
 /** The tracked project file that holds the roles. */
 export const ROLES_FILE = '.stacki/roles.json';
@@ -55,9 +65,9 @@ export const ROLE_LIMITS = {
 
 /**
  * Every part of Stacki a role can be allowed, as `area:part` ids. The groups
- * below (`ACCESS_GROUPS`) order them for the Roles tab. `settings:roles` is in
- * the union so callers can ask about it, but it is never grantable: only admin
- * edits roles.
+ * below (`ACCESS_GROUPS`) order them for the Roles tab. `settings:roles` and
+ * `cli:roles` are in the union so callers can ask about them, but they are never
+ * grantable: only admin edits roles, by any route.
  */
 export const ACCESS_FEATURES = [
   // Left rail panels.
@@ -77,6 +87,8 @@ export const ACCESS_FEATURES = [
   'panel:instructions',
   /** The Audits panel: accessibility and SEO findings, and their fixes. */
   'panel:audits',
+  /** The Settings panel at the rail's foot: the project's secrets (`.env`). Admin only until a role is given it. */
+  'panel:projectSettings',
   // Right panels.
   'panel:style',
   'panel:settings',
@@ -114,7 +126,25 @@ export const ACCESS_FEATURES = [
   'settings:studio',
   'settings:instructions',
   'settings:audits',
+  'settings:breakpoints',
   'settings:roles',
+  // The `stacki` command line and its MCP server (shared/properties/cli/stackiFeatures.ts).
+  /** Every read-only command: list, schema, doctor, config get. Granted to every role by default. */
+  'cli:read',
+  /** Generic config set, unset, add and remove on the settings files that are not roles. */
+  'cli:config',
+  /** Column guide edits (`.stacki/guide.json`). */
+  'cli:guides',
+  /** Breakpoint edits. */
+  'cli:breakpoints',
+  /** Folder edits. */
+  'cli:folders',
+  /** Rename, move, duplicate and delete components, and their insertion defaults. */
+  'cli:components',
+  /** Add and remove apps, change app settings and run the app commands the role is granted. */
+  'cli:apps',
+  /** Edit roles, enable apps' commands and trust apps through the command line. Never grantable, like `settings:roles`. */
+  'cli:roles',
 ] as const;
 export type StaticAccessFeature = (typeof ACCESS_FEATURES)[number];
 
@@ -145,6 +175,8 @@ export interface RoleView {
   readonly appPermissions: AppPermissionGrants;
   /** App ids pinned to the left rail, in the order they were pinned. The rail skips ids the role cannot use or that are not installed. */
   readonly pinnedApps: readonly string[];
+  /** Components hidden from, or re-shown to, this role's insert surfaces; admin's too. Empty shows every component. */
+  readonly componentRules: readonly ComponentRule[];
 }
 
 /** Whether `role` may use `feature`. Admin is always allowed everything. */
@@ -154,7 +186,7 @@ export function can(role: RoleView, feature: AccessFeature): boolean {
   if (role.isAdmin) {
     return true;
   }
-  if (feature === 'settings:roles') {
+  if (feature === 'settings:roles' || feature === 'cli:roles') {
     return false;
   }
   if (isAppFeature(feature)) {
@@ -209,6 +241,8 @@ export const CLIENT_DEFAULT_ACCESS: readonly StaticAccessFeature[] = [
   'page:rename',
   'publish',
   'settings:editor',
+  // Reading through the command line is as harmless as reading in the editor.
+  'cli:read',
 ];
 
 /** The admin view, which every caller may start from: full access. */
@@ -219,6 +253,7 @@ export const ADMIN_VIEW: RoleView = {
   features: new Set(ACCESS_FEATURES),
   appPermissions: {},
   pinnedApps: [],
+  componentRules: [],
 };
 
 export interface ProjectRole {
@@ -232,6 +267,8 @@ export interface ProjectRole {
   readonly appPermissions: AppPermissionGrants;
   /** App ids pinned to the left rail, unique, in pin order; admin may pin too. */
   readonly pinnedApps: readonly string[];
+  /** Hidden and re-shown components, as the file stores them; admin may have rules too. */
+  readonly componentRules: readonly ComponentRule[];
 }
 
 export interface ProjectRoles {
@@ -247,8 +284,8 @@ export const DEFAULT_PROJECT_ROLES: ProjectRoles = {
   version: 1,
   defaultRole: ADMIN_ROLE_ID,
   roles: [
-    { id: ADMIN_ROLE_ID, name: 'Admin', members: [], access: [], appPermissions: {}, pinnedApps: [] },
-    { id: CLIENT_ROLE_ID, name: 'Client', members: [], access: CLIENT_DEFAULT_ACCESS, appPermissions: {}, pinnedApps: [] },
+    { id: ADMIN_ROLE_ID, name: 'Admin', members: [], access: [], appPermissions: {}, pinnedApps: [], componentRules: [] },
+    { id: CLIENT_ROLE_ID, name: 'Client', members: [], access: CLIENT_DEFAULT_ACCESS, appPermissions: {}, pinnedApps: [], componentRules: [] },
   ],
 };
 
@@ -258,71 +295,94 @@ export const APPS_ACCESS_GROUP = 'Apps';
 /** The Roles tab's toggles, grouped by area. Every grantable static feature appears once. */
 export const ACCESS_GROUPS: readonly {
   readonly label: string;
-  readonly features: readonly { readonly feature: StaticAccessFeature; readonly label: string }[];
+  /** The same words as a reference the renderer translates (docs/i18n-playbook.md section 7); `label` stays the English and the group's identity. */
+  readonly labelRef: TypedMessageRef;
+  readonly features: readonly { readonly feature: StaticAccessFeature; readonly label: string; readonly labelRef: TypedMessageRef }[];
 }[] = [
   {
     label: 'Panels',
+    labelRef: messageRef('roles.group.panels'),
     features: [
-      { feature: 'panel:pages', label: 'Pages' },
-      { feature: 'panel:navigator', label: 'Navigator' },
-      { feature: 'panel:properties', label: 'Component properties' },
-      { feature: 'panel:components', label: 'Components' },
-      { feature: 'panel:assets', label: 'Assets' },
-      { feature: 'panel:cms', label: 'CMS' },
-      { feature: 'panel:variables', label: 'Variables' },
-      { feature: 'panel:selectors', label: 'Style selectors' },
-      { feature: 'panel:code', label: 'Code' },
-      { feature: 'panel:history', label: 'Git' },
-      { feature: 'panel:apps', label: 'Apps' },
-      { feature: 'panel:ai', label: 'AI chat' },
-      { feature: 'panel:instructions', label: 'Instructions' },
-      { feature: 'panel:audits', label: 'Audits' },
-      { feature: 'panel:style', label: 'Style panel' },
-      { feature: 'panel:settings', label: 'Settings panel' },
+      { feature: 'panel:pages', label: 'Pages', labelRef: messageRef('roles.feature.panelPages') },
+      { feature: 'panel:navigator', label: 'Navigator', labelRef: messageRef('roles.feature.panelNavigator') },
+      { feature: 'panel:properties', label: 'Component properties', labelRef: messageRef('roles.feature.panelProperties') },
+      { feature: 'panel:components', label: 'Components', labelRef: messageRef('roles.feature.panelComponents') },
+      { feature: 'panel:assets', label: 'Assets', labelRef: messageRef('roles.feature.panelAssets') },
+      { feature: 'panel:cms', label: 'CMS', labelRef: messageRef('roles.feature.panelCms') },
+      { feature: 'panel:variables', label: 'Variables', labelRef: messageRef('roles.feature.panelVariables') },
+      { feature: 'panel:selectors', label: 'Style selectors', labelRef: messageRef('roles.feature.panelSelectors') },
+      { feature: 'panel:code', label: 'Code', labelRef: messageRef('roles.feature.panelCode') },
+      { feature: 'panel:history', label: 'Git', labelRef: messageRef('roles.feature.panelHistory') },
+      { feature: 'panel:apps', label: 'Apps', labelRef: messageRef('roles.feature.panelApps') },
+      { feature: 'panel:ai', label: 'AI chat', labelRef: messageRef('roles.feature.panelAi') },
+      { feature: 'panel:instructions', label: 'Instructions', labelRef: messageRef('roles.feature.panelInstructions') },
+      { feature: 'panel:audits', label: 'Audits', labelRef: messageRef('roles.feature.panelAudits') },
+      { feature: 'panel:projectSettings', label: 'Project settings (secrets)', labelRef: messageRef('roles.feature.panelProjectSettings') },
+      { feature: 'panel:style', label: 'Style panel', labelRef: messageRef('roles.feature.panelStyle') },
+      { feature: 'panel:settings', label: 'Settings panel', labelRef: messageRef('roles.feature.panelSettings') },
     ],
   },
   {
     label: 'Pages',
+    labelRef: messageRef('roles.group.pages'),
     features: [
-      { feature: 'page:create', label: 'Create pages' },
-      { feature: 'page:delete', label: 'Delete pages' },
-      { feature: 'page:rename', label: 'Rename and move pages' },
-      { feature: 'page:layout', label: 'Edit the layout and outside it' },
+      { feature: 'page:create', label: 'Create pages', labelRef: messageRef('roles.feature.pageCreate') },
+      { feature: 'page:delete', label: 'Delete pages', labelRef: messageRef('roles.feature.pageDelete') },
+      { feature: 'page:rename', label: 'Rename and move pages', labelRef: messageRef('roles.feature.pageRename') },
+      { feature: 'page:layout', label: 'Edit the layout and outside it', labelRef: messageRef('roles.feature.pageLayout') },
     ],
   },
   {
     label: 'Components',
+    labelRef: messageRef('roles.group.components'),
     features: [
-      { feature: 'component:create', label: 'Create components' },
-      { feature: 'component:edit', label: 'Edit component source' },
+      { feature: 'component:create', label: 'Create components', labelRef: messageRef('roles.feature.componentCreate') },
+      { feature: 'component:edit', label: 'Edit component source', labelRef: messageRef('roles.feature.componentEdit') },
     ],
   },
   {
     label: 'Code and publishing',
+    labelRef: messageRef('roles.group.codeAndPublishing'),
     features: [
-      { feature: 'code:edit', label: 'Edit code' },
-      { feature: 'instructions:edit', label: 'Edit instructions' },
-      { feature: 'publish', label: 'Publish' },
+      { feature: 'code:edit', label: 'Edit code', labelRef: messageRef('roles.feature.codeEdit') },
+      { feature: 'instructions:edit', label: 'Edit instructions', labelRef: messageRef('roles.feature.instructionsEdit') },
+      { feature: 'publish', label: 'Publish', labelRef: messageRef('roles.feature.publish') },
     ],
   },
   {
     label: APPS_ACCESS_GROUP,
+    labelRef: messageRef('roles.group.apps'),
     features: [
-      { feature: 'marketplace:view', label: 'See the marketplace' },
-      { feature: 'marketplace:install', label: 'Install from the marketplace' },
-      { feature: 'marketplace:publish', label: 'Publish to the marketplace' },
-      { feature: 'apps:share', label: 'Share apps to GitHub' },
+      { feature: 'marketplace:view', label: 'See the marketplace', labelRef: messageRef('roles.feature.marketplaceView') },
+      { feature: 'marketplace:install', label: 'Install from the marketplace', labelRef: messageRef('roles.feature.marketplaceInstall') },
+      { feature: 'marketplace:publish', label: 'Publish to the marketplace', labelRef: messageRef('roles.feature.marketplacePublish') },
+      { feature: 'apps:share', label: 'Share apps to GitHub', labelRef: messageRef('roles.feature.appsShare') },
     ],
   },
   {
     label: 'Settings',
+    labelRef: messageRef('roles.group.settings'),
     features: [
-      { feature: 'settings:editor', label: 'Editor settings' },
-      { feature: 'settings:folders', label: 'Folders' },
-      { feature: 'settings:cms', label: 'CMS and media connections' },
-      { feature: 'settings:studio', label: 'Stacki Studio' },
-      { feature: 'settings:instructions', label: 'Hidden instructions' },
-      { feature: 'settings:audits', label: 'Audit checks' },
+      { feature: 'settings:editor', label: 'Editor settings', labelRef: messageRef('roles.feature.settingsEditor') },
+      { feature: 'settings:folders', label: 'Folders', labelRef: messageRef('roles.feature.settingsFolders') },
+      { feature: 'settings:cms', label: 'CMS and media connections', labelRef: messageRef('roles.feature.settingsCms') },
+      { feature: 'settings:studio', label: 'Stacki Studio', labelRef: messageRef('roles.feature.settingsStudio') },
+      { feature: 'settings:instructions', label: 'Hidden instructions', labelRef: messageRef('roles.feature.settingsInstructions') },
+      { feature: 'settings:audits', label: 'Audit checks', labelRef: messageRef('roles.feature.settingsAudits') },
+      { feature: 'settings:breakpoints', label: 'Breakpoints', labelRef: messageRef('roles.feature.settingsBreakpoints') },
+    ],
+  },
+  {
+    label: 'Command line',
+    labelRef: messageRef('roles.group.cli'),
+    features: [
+      { feature: 'cli:read', label: 'Read settings', labelRef: messageRef('roles.feature.cliRead') },
+      { feature: 'cli:config', label: 'Change settings files', labelRef: messageRef('roles.feature.cliConfig') },
+      { feature: 'cli:guides', label: 'Edit column guides', labelRef: messageRef('roles.feature.cliGuides') },
+      { feature: 'cli:breakpoints', label: 'Edit breakpoints', labelRef: messageRef('roles.feature.cliBreakpoints') },
+      { feature: 'cli:folders', label: 'Edit folders', labelRef: messageRef('roles.feature.cliFolders') },
+      { feature: 'cli:components', label: 'Manage components', labelRef: messageRef('roles.feature.cliComponents') },
+      { feature: 'cli:apps', label: 'Manage apps', labelRef: messageRef('roles.feature.cliApps') },
     ],
   },
 ];
@@ -346,10 +406,10 @@ export function sameLogin(left: string, right: string): boolean {
 export function parseGitHubLogin(input: unknown): string {
   const login = text(input).trim();
   if (login.length === 0 || login.length > ROLE_LIMITS.loginCharsMax) {
-    throw new Error(`A GitHub username is 1 to ${ROLE_LIMITS.loginCharsMax} characters`);
+    throw new DescribedError(described('roles.error.loginLength', { max: ROLE_LIMITS.loginCharsMax }));
   }
   if (!/^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9]))*$/.test(login)) {
-    throw new Error(`"${login}" is not a GitHub username`);
+    throw new DescribedError(described('roles.error.loginInvalid', { login }));
   }
   assert(login.length <= ROLE_LIMITS.loginCharsMax, 'A parsed login is within the GitHub limit');
   return login;
@@ -385,7 +445,7 @@ export function parseProjectRolesSource(source: string): ProjectRoles {
 
 /**
  * Parses the roles file. Shape: `{ version: 1, defaultRole?, roles: [{ id, name?,
- * members?, access?, appPermissions?, pinnedApps? }] }`. Admin and client are always present in the result,
+ * members?, access?, appPermissions?, pinnedApps?, componentRules? }] }`. Admin and client are always present in the result,
  * whether or not the file lists them; admin must name at least one member.
  */
 export function parseProjectRoles(input: unknown): ProjectRoles {
@@ -426,11 +486,12 @@ export function serializeProjectRoles(roles: ProjectRoles): string {
     roles: checked.roles.map((role) => {
       // Written only when set, so a file without pins or app permissions reads exactly as before.
       const pinned = role.pinnedApps.length > 0 ? { pinnedApps: role.pinnedApps } : {};
+      const components = role.componentRules.length > 0 ? { componentRules: role.componentRules.map(storedComponentRule) } : {};
       if (role.id === ADMIN_ROLE_ID) {
-        return { id: role.id, name: role.name, members: role.members, ...pinned };
+        return { id: role.id, name: role.name, members: role.members, ...pinned, ...components };
       }
       const stored = Object.keys(role.appPermissions).length > 0 ? { appPermissions: role.appPermissions } : {};
-      return { id: role.id, name: role.name, members: role.members, access: role.access, ...stored, ...pinned };
+      return { id: role.id, name: role.name, members: role.members, access: role.access, ...stored, ...pinned, ...components };
     }),
   };
   const source = `${JSON.stringify(body, undefined, 2)}\n`;
@@ -454,8 +515,10 @@ export function roleViewOf(roles: ProjectRoles, id: string): RoleView {
 /** The view of one role as given, such as a role the Roles tab is editing before it is saved. */
 export function roleView(role: ProjectRole): RoleView {
   if (role.id === ADMIN_ROLE_ID) {
-    // Admin's access is fixed; only its pins are its own.
-    return role.pinnedApps.length === 0 ? ADMIN_VIEW : { ...ADMIN_VIEW, pinnedApps: role.pinnedApps };
+    // Admin's access is fixed, but its pins and hidden components are its own.
+    return role.pinnedApps.length === 0 && role.componentRules.length === 0
+      ? ADMIN_VIEW
+      : { ...ADMIN_VIEW, pinnedApps: role.pinnedApps, componentRules: role.componentRules };
   }
   const view: RoleView = {
     id: role.id,
@@ -464,8 +527,10 @@ export function roleView(role: ProjectRole): RoleView {
     features: new Set(role.access),
     appPermissions: role.appPermissions,
     pinnedApps: role.pinnedApps,
+    componentRules: role.componentRules,
   };
   assert(!view.features.has('settings:roles'), 'No role but admin edits roles');
+  assert(!view.features.has('cli:roles'), 'No role but admin edits roles from the command line');
   assert(!view.isAdmin, 'Only the admin role is admin');
   return view;
 }
@@ -604,15 +669,18 @@ function parseRole(input: unknown): ProjectRole {
   const name = value['name'] === undefined ? builtInName(id) : roleName(value['name']);
   const members = parseMembers(value['members']);
   const pinnedApps = parsePinnedApps(value['pinnedApps']);
+  const componentRules = parseComponentRules(value['componentRules']);
   if (id === ADMIN_ROLE_ID) {
     // Admin has everything: an access list or app permissions on it are ignored, never a restriction.
-    return { id, name: 'Admin', members, access: [], appPermissions: {}, pinnedApps };
+    // Hidden components are not access: they only narrow the insert palette, so admin keeps them.
+    return { id, name: 'Admin', members, access: [], appPermissions: {}, pinnedApps, componentRules };
   }
   const access = value['access'] === undefined && id === CLIENT_ROLE_ID ? CLIENT_DEFAULT_ACCESS : parseAccess(value['access']);
   assert(!access.includes('settings:roles'), 'parseAccess refuses the roles tab');
+  assert(!access.includes('cli:roles'), 'parseAccess refuses the command line roles edit');
   // Client's name is the project's to choose, like a custom role's; only its
   // id (`client`) carries meaning to grants, the default role and the servers.
-  return { id, name, members, access, appPermissions: parseAppPermissionGrants(value['appPermissions']), pinnedApps };
+  return { id, name, members, access, appPermissions: parseAppPermissionGrants(value['appPermissions']), pinnedApps, componentRules };
 }
 
 /** `pinnedApps: ["<appId>", …]`: app ids, at most `pinnedAppsMax`, read once each. Absent is none. */
@@ -739,7 +807,7 @@ function parseAccess(input: unknown): readonly AccessFeature[] {
 
 function parseFeature(input: unknown): AccessFeature {
   const feature = text(input);
-  if (feature === 'settings:roles') {
+  if (feature === 'settings:roles' || feature === 'cli:roles') {
     throw new Error('Only admin can edit roles');
   }
   const known = ACCESS_FEATURES.find((item) => item === feature);
@@ -767,6 +835,7 @@ function withBuiltInRoles(parsed: readonly ProjectRole[]): readonly ProjectRole[
     access: [],
     appPermissions: {},
     pinnedApps: [],
+    componentRules: [],
   };
   const client = parsed.find((role) => role.id === CLIENT_ROLE_ID) ?? {
     id: CLIENT_ROLE_ID,
@@ -775,6 +844,7 @@ function withBuiltInRoles(parsed: readonly ProjectRole[]): readonly ProjectRole[
     access: CLIENT_DEFAULT_ACCESS,
     appPermissions: {},
     pinnedApps: [],
+    componentRules: [],
   };
   const custom = parsed.filter((role) => role.id !== ADMIN_ROLE_ID && role.id !== CLIENT_ROLE_ID);
   for (const id of [ADMIN_ROLE_ID, CLIENT_ROLE_ID]) {

@@ -1,3 +1,4 @@
+import { useTranslate } from '../../lib/i18n/useTranslate';
 import { ErrorToast } from '../../ui/ErrorToast';
 import { dataPickerPosition } from './dataPickerPosition';
 import Popup from '../../ui/Popup';
@@ -27,6 +28,7 @@ import NewPropForm from './NewPropForm';
 // The "New … property" row is drawn here, so its styles load with it.
 import './loopSettings.css';
 import { boundPath, fittingTree, newPropTitle, type NewPropHost, type NewPropSeed } from './newPropModel';
+import { CLASS_LIST_REFUSAL_KEYS, CLASS_LIST_SEED, type ClassListOffer } from './classListProp';
 import ExprInput from '../../ui/ExprInput';
 import { BranchIcon, CodeIcon, CloseIcon, ElementComponentIcon, FileIcon, PencilIcon, PlusIcon } from '../../ui/Icons';
 import {
@@ -69,6 +71,7 @@ const SOURCE_EDITOR_WIDTH_PX_MIN = 260;
 const SOURCE_EDITOR_HEIGHT_PX_MAX = 240;
 
 export function SourceEditButton({ name, dataContext, anchorRef, className = 'attr-asset-toggle' }: SourceEditButtonProps) {
+  const translate = useTranslate();
   const [position, setPosition] = useState<FieldPosition | undefined>(undefined);
   const target = symbolTarget(name, dataContext);
   const allowCode = useCodeAccess();
@@ -91,7 +94,7 @@ export function SourceEditButton({ name, dataContext, anchorRef, className = 'at
     <>
       <button
         className={`${className} ${position ? 'on' : ''}`}
-        title={target === 'file' ? `Open where ${name} is defined` : `Edit ${name}`}
+        title={target === 'file' ? translate('props.binding.openDefinition', { name }) : translate('props.binding.edit', { name })}
         onClick={() => (position ? setPosition(undefined) : open())}
       >
         <PencilIcon size={12} />
@@ -134,6 +137,7 @@ export function ExprValueField({ value, placeholder, dataContext, onChange }: Ex
 }
 
 export function ConditionField({ test, scope, chipsOf, bindContext, onSetText }: ConditionFieldProps) {
+  const translate = useTranslate();
   const [pick, setPick] = useState<ChipPick | undefined>(undefined); // {chip, pos}
   const apiRef = useRef<ExprInputAPI | undefined>(undefined);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -156,7 +160,7 @@ export function ConditionField({ test, scope, chipsOf, bindContext, onSetText }:
         <ExprInput
           value={test}
           syncValue={test}
-          placeholder="e.g. logo.src"
+          placeholder={translate('props.binding.exampleCondition')}
           completions={scope}
           apiRef={apiRef}
           // The values a condition names, drawn as the same purple chips the rest
@@ -175,6 +179,7 @@ export function ConditionField({ test, scope, chipsOf, bindContext, onSetText }:
           pos={pick.pos}
           bindContext={bindContext}
           current={pick.chip?.path ?? undefined}
+          // i18n-ignore: the label seeds a prop name (visible), written as code.
           seed={pick.chip === undefined ? { fit: 'boolean', label: 'Visible', value: '' } : undefined}
           onBindNew={(path) => {
             setPick(undefined);
@@ -259,6 +264,7 @@ export function ExpressionBindingField({ value, placeholder, bindContext, onChan
 }
 
 export function BindHandle({ active, onOpen }: BindHandleProps) {
+  const translate = useTranslate();
   // Read on pointerdown, before the press moves focus anywhere: whether the
   // caret was in this field decides whether a pick replaces the field or lands
   // at the caret (fieldFocus.ts). A click with no pointerdown before it — the
@@ -271,8 +277,8 @@ export function BindHandle({ active, onOpen }: BindHandleProps) {
     <button
       type="button"
       className={`bind-handle${active ? ' on' : ''}`}
-      title="Insert data — a component prop, a CMS field"
-      aria-label="Insert data"
+      title={translate('props.binding.insertDataTitle')}
+      aria-label={translate('props.binding.insertData')}
       onPointerDown={(event) => {
         focusRef.current = fieldFocusOf(fieldOfHandle(event.currentTarget), event.currentTarget.ownerDocument.activeElement ?? undefined);
       }}
@@ -291,7 +297,20 @@ export function BindHandle({ active, onOpen }: BindHandleProps) {
   );
 }
 
-export function FieldDataPicker({ pos: position, bindContext, current, tree, seed, onPick, onBindNew, onWrite, onConditional, onClose }: FieldDataPickerProps) {
+export function FieldDataPicker({
+  pos: position,
+  bindContext,
+  current,
+  tree,
+  seed,
+  onPick,
+  onBindNew,
+  onWrite,
+  onConditional,
+  rows,
+  classList,
+  onClose,
+}: FieldDataPickerProps) {
   // In a component, the field's own props come first and a new one can be
   // made for it; on a page there is no component to give a prop to, and the
   // picker is as it always was.
@@ -304,6 +323,9 @@ export function FieldDataPicker({ pos: position, bindContext, current, tree, see
     onPick(resolvePick(bound, need, bindContext ?? undefined));
   };
   const [creating, setCreating] = useState(false);
+  // The class list row opens the same form, for a prop the element's classes are rewritten to read.
+  const classOffer = host !== undefined && classList !== undefined ? { host, classList } : undefined;
+  const [creatingClassList, setCreatingClassList] = useState(false);
   const fullTree: readonly PickerNode[] = tree || dataTree(bindContext || {});
   // A running app that answers `cms.bind` is asked first; its path is picked as a row click would be.
   const override = useBindOverride({
@@ -329,10 +351,18 @@ export function FieldDataPicker({ pos: position, bindContext, current, tree, see
       mode="popover"
       portal={false}
       onClose={onClose}
-      className="dd-popup bind-menu"
+      // The settings form has no inset of its own: the pop-up gives it one, as the loop Source pop-up does (.bind-menu.is-form).
+      className={(offer !== undefined && creating) || (classOffer !== undefined && creatingClassList) ? 'dd-popup bind-menu is-form' : 'dd-popup bind-menu'}
       style={{ left: position.left, top: position.top, width: position.width }}
     >
-      {offer !== undefined && creating ? (
+      {classOffer !== undefined && creatingClassList ? (
+        <NewPropForm
+          host={classOffer.host}
+          seed={CLASS_LIST_SEED}
+          onCancel={() => setCreatingClassList(false)}
+          onCreated={(path) => classOffer.classList.onCreated(path)}
+        />
+      ) : offer !== undefined && creating ? (
         <NewPropForm
           host={offer.host}
           seed={offer.seed}
@@ -351,13 +381,15 @@ export function FieldDataPicker({ pos: position, bindContext, current, tree, see
           {...definedFields({ onWrite })}
           footer={!!onWrite}
           lead={
-            offer === undefined ? undefined : (
+            offer === undefined && onConditional === undefined && classOffer === undefined ? undefined : (
               <>
-                <NewPropRow host={offer.host} seed={offer.seed} onOpen={() => setCreating(true)} />
+                {offer !== undefined && <NewPropRow host={offer.host} seed={offer.seed} onOpen={() => setCreating(true)} />}
+                {classOffer !== undefined && <ClassListRow offer={classOffer.classList} onOpen={() => setCreatingClassList(true)} />}
                 {onConditional !== undefined && <ConditionalRow onOpen={onConditional} />}
               </>
             )
           }
+          rows={rows ?? 'data'}
           propSettings={host?.propSettings}
         />
       )}
@@ -369,25 +401,44 @@ export function FieldDataPicker({ pos: position, bindContext, current, tree, see
 // list can take one rest binding, so a component that has one says so here
 // and connects to it below instead.
 function NewPropRow({ host, seed, onOpen }: { readonly host: NewPropHost; readonly seed: NewPropSeed; readonly onOpen: () => void }) {
+  const translate = useTranslate();
   const blocked = seed.fit === 'attributes' && host.restLocal !== undefined;
   return (
     <>
       <button type="button" className="dp-new-prop" disabled={blocked} onMouseDown={(event) => event.preventDefault()} onClick={onOpen}>
         <PlusIcon size={11} />
-        New {newPropTitle(seed.fit)} property
+        {translate('props.binding.newProperty', { kind: newPropTitle(seed.fit, translate) })}
       </button>
-      {blocked && <div className="dp-new-prop-reason">A component passes its other attributes on once, as {host.restLocal}.</div>}
+      {blocked && <div className="dp-new-prop-reason">{translate('props.attributesBinding.passesOnce', { local: host.restLocal ?? '' })}</div>}
+    </>
+  );
+}
+
+// "New Class list property": under the new property, for an element's
+// classes. A shape the rewrite cannot read safely says why and makes nothing.
+function ClassListRow({ offer, onOpen }: { readonly offer: ClassListOffer; readonly onOpen: () => void }) {
+  const translate = useTranslate();
+  const refusal = offer.refusal;
+  return (
+    <>
+      <button type="button" className="dp-new-prop" disabled={refusal !== undefined} onMouseDown={(event) => event.preventDefault()} onClick={onOpen}>
+        <PlusIcon size={11} />
+        {translate('props.binding.newProperty', { kind: translate('props.newProp.title.classList') })}
+      </button>
+      {refusal !== undefined && <div className="dp-new-prop-reason">{translate(CLASS_LIST_REFUSAL_KEYS[refusal])}</div>}
     </>
   );
 }
 
 // "Create conditional": under the new property, in a component only, for a
 // field whose value can be one of several depending on the component's props.
+// A prop's own settings (Visibility, Default value, Tooltip) offer it alone.
 function ConditionalRow({ onOpen }: { readonly onOpen: () => void }) {
+  const translate = useTranslate();
   return (
     <button type="button" className="dp-new-prop" onMouseDown={(event) => event.preventDefault()} onClick={onOpen}>
       <BranchIcon size={11} />
-      Create conditional
+      {translate('props.binding.createConditional')}
     </button>
   );
 }
@@ -653,19 +704,23 @@ export function eventElement(target: unknown): Element | undefined {
 }
 
 export function SourceEditorHeader(props: { readonly name: string; readonly file?: SourceFileLabel | undefined; readonly onClose: () => void }) {
+  const translate = useTranslate();
   const { name, file, onClose } = props;
   return (
     <div className="var-src-head">
       <CodeIcon size={12} />
       <span className="var-src-name">{name}</span>
       {file !== undefined && (
-        <span className={`var-src-file ${file.kind}`} title={file.kind === 'page' ? `In the page ${file.name}` : `In the component ${file.name}`}>
+        <span
+          className={`var-src-file ${file.kind}`}
+          title={file.kind === 'page' ? translate('props.binding.inPage', { name: file.name }) : translate('props.binding.inComponent', { name: file.name })}
+        >
           {file.kind === 'page' ? <FileIcon size={11} /> : <ElementComponentIcon size={11} />}
           <span className="var-src-file-name">{file.name}</span>
         </span>
       )}
       <span style={{ flex: 1 }} />
-      <button className="ghost" title="Close" onClick={onClose}>
+      <button className="ghost" title={translate('ui.close')} onClick={onClose}>
         <CloseIcon size={12} />
       </button>
     </div>

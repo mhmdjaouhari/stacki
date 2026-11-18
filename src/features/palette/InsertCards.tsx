@@ -1,12 +1,12 @@
-import { useCallback, useRef, type MouseEvent, type RefObject } from 'react';
-import type { ComponentPreviewGesture } from './paletteModel';
+import { useRef, type MouseEvent, type RefObject } from 'react';
 import { assert } from '../../../shared/core/assert';
 import { insertFolderLabel, type InsertFolderKey } from './insertFolders';
 import type { InsertPill } from './insertGrid';
-import type { InsertItem } from './insertItem';
+import { useTranslate } from '../../lib/i18n/useTranslate';
+import { insertItemLabel, insertItemSub, type InsertItem } from './insertItem';
 import { InsertPreviewSurface, useReportVisibility, type InsertPreviewSource } from './InsertPreview';
 
-// The pieces of the insert palette: a card with a live picture of the component (Components tab), a row of the
+// The pieces of the insert palette: a card with a picture of the component (Components tab), a row of the
 // plain list (the other tabs), the folder pills that filter the grid, and the key hints.
 
 /** The preview route's address for everything the grid draws; per item only the component differs. */
@@ -16,11 +16,9 @@ export function InsertCard({
   item,
   itemKey,
   highlighted,
-  mounted,
   host,
   scrollRoot,
   onVisible,
-  onSettled,
   showFolder,
   onHover,
   onInsert,
@@ -28,59 +26,31 @@ export function InsertCard({
   readonly item: InsertItem;
   readonly itemKey: string;
   readonly highlighted: boolean;
-  readonly mounted: boolean;
   readonly host: InsertPreviewHost;
   readonly scrollRoot: RefObject<HTMLElement>;
   readonly onVisible: (key: string, visible: boolean) => void;
-  /** The card's frame answered or gave up; the grid may start another. */
-  readonly onSettled: (key: string) => void;
   /** Whether the label row names the card's folder pill; redundant, and so left out, while a pill filters the grid. */
   readonly showFolder: boolean;
   readonly onHover: () => void;
   readonly onInsert: () => void;
 }) {
   assert(item.card !== undefined, 'Only a card item renders as a card');
+  const translate = useTranslate();
   const ref = useRef<HTMLDivElement>(null);
   useReportVisibility(ref, scrollRoot, itemKey, onVisible);
   const uses = item.instances ?? 0;
-  const settle = useCallback(() => onSettled(itemKey), [onSettled, itemKey]);
-  const gesture = useCardGesture(onHover, onInsert);
   const folder = showFolder && item.card.folder !== undefined ? insertFolderLabel(item.card.folder) : undefined;
   return (
     <div ref={ref} className={`insert-item insert-card ${highlighted ? 'highlight' : ''}`} onMouseMove={highlighted ? undefined : onHover} onClick={onInsert}>
-      <InsertPreviewSurface source={{ ...host, component: item.preview }} mounted={mounted} icon={item.icon} onSettled={settle} onGesture={gesture} />
+      <InsertPreviewSurface source={{ ...host, component: item.preview }} icon={item.icon} />
       <div className="insert-card-foot">
         <span className="insert-item-icon">{item.icon}</span>
-        <span className="insert-item-label">{item.label}</span>
+        <span className="insert-item-label">{insertItemLabel(item, translate)}</span>
         {folder !== undefined && <span className="insert-card-folder">· {folder}</span>}
         {uses > 0 && <span className="insert-item-uses">{uses}×</span>}
       </div>
     </div>
   );
-}
-
-/**
- * What the live preview's pointer means to its card: coming in highlights the card as the pointer over
- * the card's own edge does, and a click inserts. Stable for the frame's message listener; the latest
- * handlers are read when a gesture arrives.
- */
-function useCardGesture(onHover: () => void, onInsert: () => void): (gesture: ComponentPreviewGesture) => void {
-  const latest = useRef({ onHover, onInsert });
-  latest.current = { onHover, onInsert };
-  return useCallback((gesture: ComponentPreviewGesture) => {
-    switch (gesture) {
-      case 'pointer':
-        latest.current.onHover();
-        return;
-      case 'click':
-        latest.current.onInsert();
-        return;
-      default: {
-        const exhaustive: never = gesture;
-        return exhaustive;
-      }
-    }
-  }, []);
 }
 
 /**
@@ -98,11 +68,12 @@ export function InsertRow({
   readonly onHover: () => void;
   readonly onInsert: () => void;
 }) {
-  const where = item.card?.folder === undefined ? item.sub : insertFolderLabel(item.card.folder);
+  const translate = useTranslate();
+  const where = item.card?.folder === undefined ? insertItemSub(item, translate) : insertFolderLabel(item.card.folder);
   return (
     <div className={`insert-item ${highlighted ? 'highlight' : ''}`} onMouseMove={highlighted ? undefined : onHover} onClick={onInsert}>
       <span className="insert-item-icon">{item.icon}</span>
-      <span className="insert-item-label">{item.label}</span>
+      <span className="insert-item-label">{insertItemLabel(item, translate)}</span>
       {where !== undefined && where !== '' && <span className="insert-item-sub">{where}</span>}
     </div>
   );
@@ -122,8 +93,9 @@ export function InsertPills({
   readonly selected: InsertFolderKey | undefined;
   readonly onPick: (folder: InsertFolderKey) => void;
 }) {
+  const translate = useTranslate();
   return (
-    <div className="insert-pills" role="group" aria-label="Component folders">
+    <div className="insert-pills" role="group" aria-label={translate('palette.insert.folders')}>
       {pills.map((pill) => {
         const on = pill.key === selected;
         return (
@@ -147,10 +119,11 @@ export function InsertPills({
 }
 
 export function InsertHints() {
+  const translate = useTranslate();
   return (
     <div className="insert-footer">
       <span className="insert-hint">
-        <kbd>↵</kbd> insert
+        <kbd>↵</kbd> {translate('palette.insert.hint')}
       </span>
     </div>
   );

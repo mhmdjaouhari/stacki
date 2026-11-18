@@ -5,14 +5,14 @@
 // it shows there, with the same field names and choices.
 
 import { assert } from '../../../shared/core/assert';
-import { toRecord } from '../../../shared/core/record';
 import { ASTRO_CONTENT_ID } from '../../../shared/properties/astroContent';
 import type { RemoteSchemaField, RemoteType } from '../../../shared/properties/cmsRemoteSchema';
-import type { ItemFieldDeclaration, ItemFieldKind } from '../../editor/listPropType';
+import { ITEM_FIELD_LIMITS, type ItemFieldDeclaration, type ItemFieldKind } from '../../editor/itemFields';
 import type { LoopField, LoopFieldKind, LoopSource, LoopSourceKind } from '../../editor/loopQuery';
 import { isFieldPath, ITEM_FIELD } from '../../editor/loopQuery';
 import { listCmsConnections, remoteReferenceOptions } from '../../ipc/cmsConnectionsBridge';
 import { readText } from '../../ipc/bridge';
+import { hasDependency } from '../../lib/packageManifest';
 import { remoteCollections, remoteTemplate } from '../../ipc/remoteSource';
 
 export const LOOP_CATALOG_LIMITS = {
@@ -22,7 +22,6 @@ export const LOOP_CATALOG_LIMITS = {
   projectsCachedMax: 8,
   /** How deep an object's fields are listed: `location.lat`, `hero.cta.label`. */
   nestingDepthMax: 4,
-  packageCharsMax: 1_000_000,
 } as const;
 
 export interface CatalogCollection {
@@ -46,25 +45,54 @@ export interface CatalogField extends LoopField {
   readonly references: readonly string[];
 }
 
-/** A List prop's item fields as the filter and sort menus offer them. */
-export function listItemFields(fields: readonly ItemFieldDeclaration[]): readonly CatalogField[] {
+/**
+ * A List prop's item fields as the filter and sort menus offer them. A group's
+ * fields are offered by their path (`address.city`); a nested list is one
+ * field that is there or not, since each of its items is many values.
+ */
+export function listItemFields(fields: readonly ItemFieldDeclaration[], prefix = '', depth = 1): readonly CatalogField[] {
   assert(fields.length <= LOOP_CATALOG_LIMITS.fieldsMax, 'A list’s item fields are bounded');
-  return fields.map((field) => ({ path: field.name, title: titled(field.name), kind: itemFieldKind(field.kind), options: [], references: [] }));
+  assert(depth <= ITEM_FIELD_LIMITS.walkDepthMax, 'A list’s item fields nest within their bound');
+  const out: CatalogField[] = [];
+  for (const field of fields) {
+    const path = `${prefix}${field.name}`;
+    if (field.kind === 'group') {
+      out.push(...listItemFields(field.fields, `${path}.`, depth + 1));
+    } else {
+      const options = field.kind === 'option' ? field.options.map((option) => ({ title: option, value: option })) : [];
+      out.push({ path, title: titled(path), kind: itemFieldKind(field.kind), options, references: [] });
+    }
+  }
+  assert(out.length <= LOOP_CATALOG_LIMITS.fieldsMax, 'A list’s offered fields are bounded');
+  return out;
 }
 
-// A link is words to compare; an image is only there or not, since its text is
-// an address rather than something a person filters by.
+// A link is words to compare; an image, a video or a file is only there or
+// not, since its text is an address rather than something a person filters by.
 function itemFieldKind(kind: ItemFieldKind): LoopFieldKind {
   switch (kind) {
     case 'text':
+    case 'longText':
+    case 'richText':
     case 'link':
+    case 'email':
+    case 'phone':
+    case 'color':
+    case 'option':
       return 'text';
     case 'number':
       return 'number';
     case 'switch':
       return 'boolean';
+    case 'date':
+      return 'date';
     case 'image':
+    case 'video':
+    case 'file':
       return 'image';
+    case 'list':
+    case 'group':
+      return 'list';
     default: {
       const exhaustive: never = kind;
       return exhaustive;
@@ -111,23 +139,6 @@ async function sanityClientIn(projectPath: string): Promise<'available' | 'unava
   return hasDependency(text, '@sanity/astro') ? 'available' : 'unavailable';
 }
 
-/** Whether a package.json's text lists `name` as a dependency of either kind. */
-export function hasDependency(text: string, name: string): boolean {
-  if (text.length === 0 || text.length > LOOP_CATALOG_LIMITS.packageCharsMax) {
-    return false;
-  }
-  let manifest: unknown;
-  try {
-    manifest = JSON.parse(text);
-  } catch {
-    return false;
-  }
-  const record = toRecord(manifest);
-  const dependencies = toRecord(record?.['dependencies']);
-  const development = toRecord(record?.['devDependencies']);
-  return typeof dependencies?.[name] === 'string' || typeof development?.[name] === 'string';
-}
-
 /** A collection's fields, as the filter and sort menus offer them. */
 export async function loadFields(projectPath: string, catalog: LoopCatalog, source: LoopSource): Promise<readonly CatalogField[] | undefined> {
   const connectionId = connectionOf(catalog, source.kind);
@@ -169,7 +180,9 @@ function connectionOf(catalog: LoopCatalog, kind: LoopSourceKind): string | unde
 // Sanity documents carry these on every type, as visual builders show
 // "Created on" and "Updated on" beside a collection's own fields.
 const SANITY_SYSTEM_FIELDS: readonly CatalogField[] = [
+  // i18n-ignore: Sanity's own labels for its system fields, stored as catalog data beside the schema's titles.
   { path: '_createdAt', title: 'Created on', kind: 'date', options: [], references: [] },
+  // i18n-ignore: as above.
   { path: '_updatedAt', title: 'Updated on', kind: 'date', options: [], references: [] },
 ];
 
@@ -262,7 +275,9 @@ function innerFields(field: RemoteSchemaField): readonly RemoteSchemaField[] {
   if (type.kind === 'geopoint') {
     const number = { kind: 'number' as const, options: [] };
     return [
+      // i18n-ignore: Sanity's geopoint field names, catalog data like the schema's own titles.
       { name: 'lat', title: 'Latitude', type: number },
+      // i18n-ignore: as above.
       { name: 'lng', title: 'Longitude', type: number },
     ].map((inner) => ({ ...field, ...inner }));
   }
@@ -310,6 +325,7 @@ function listField(field: RemoteSchemaField, members: readonly RemoteType[], bas
 export function titled(name: string): string {
   if (name === ITEM_FIELD) {
     // A list of plain values, filtered or sorted by each value itself.
+    // i18n-ignore: catalog data; the title of a plain-value list's single field, drawn with the schema's own field titles.
     return 'Item';
   }
   const words = name

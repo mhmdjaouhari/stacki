@@ -2,11 +2,12 @@ import { centralIcon } from '../../ui/central/CentralIcon';
 import { help as centralHelp } from '../../ui/central/centralGeometry';
 import { useEffect, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
-import SegmentedControl, { type SegmentedOption } from './components/SegmentedControl';
+import SegmentedControl, { type SegmentedOption } from '../../ui/SegmentedControl';
 import DragSlider from './components/DragSlider';
 import { PositionGrid, NumberField } from './components/PositionGrid';
 import FieldLabel from './components/FieldLabel';
 import VariableConnect from './VariableConnect';
+import { KeywordSegments } from './KeywordConnect';
 import { PropTip, useHoverTip } from './components/CssPropertyTip';
 import { useHighlight } from './model/computedStyle';
 import { handleArrowStep } from './model/numberStep';
@@ -15,6 +16,8 @@ import { parseOrigin, serializeOrigin, type Origin } from './model/transformSett
 import type { ResolvedProp } from './model/resolved';
 import { displayOf } from './model/styleDisplay';
 import ImportantMark from './components/ImportantMark';
+import { useTranslate } from '../../lib/i18n/useTranslate';
+import type { Translator } from '../../lib/i18n/localeContext';
 import { useLengthUnit } from './model/lengthUnit';
 import { formatPxLength, lengthUnitName, pxPerLengthUnit, type LengthUnit, type LengthUnitName } from '../../../shared/properties/lengthUnit';
 
@@ -31,9 +34,9 @@ type Read = (prop: string) => ResolvedProp | undefined;
 type SetProp = (prop: string, value: string, important: boolean) => void;
 type ClearProp = (prop: string | string[]) => void;
 
-const BACKFACE: ReadonlyArray<SegmentedOption<string>> = [
-  { value: 'visible', label: 'Visible' },
-  { value: 'hidden', label: 'Hidden' },
+const backfaceOptions = (translate: Translator): ReadonlyArray<SegmentedOption<string>> => [
+  { value: 'visible', label: translate('style.transformSettings.visible') },
+  { value: 'hidden', label: translate('style.transformSettings.hidden') },
 ];
 
 // Far enough for the flat-looking end of the range to be reachable; a perspective
@@ -75,6 +78,7 @@ function Heading({
   onClear: () => void;
   cleared: boolean;
 }) {
+  const translate = useTranslate();
   const help = useHoverTip<HTMLSpanElement>(note ? <PropTip props={props} note={note} /> : undefined);
   return (
     <div className="embed-editor_tsettings-head">
@@ -83,7 +87,7 @@ function Heading({
         active={cleared}
         disabled={busy}
         onReset={onClear}
-        resetLabel="Clear"
+        resetLabel={translate('style.transformSettings.clear')}
         tooltip={<PropTip props={props} />}
       >
         {title}
@@ -114,6 +118,7 @@ function OriginRow({
   ariaLabel: string;
   onChange: (next: Origin, live: boolean) => void;
 }) {
+  const translate = useTranslate();
   return (
     <div className="embed-editor_size-row embed-editor_grad-pos-row">
       <span className="embed-editor_size-label embed-editor_bg-caption">{label}</span>
@@ -127,7 +132,7 @@ function OriginRow({
               into one you cannot. The caption is decorative; the input carries its
               own aria-label. */}
           <div className="embed-editor_grad-pos-field">
-            <span>Left</span>
+            <span>{translate('style.transformSettings.left')}</span>
             <NumberField
               value={origin.x}
               unit="%"
@@ -139,7 +144,7 @@ function OriginRow({
             />
           </div>
           <div className="embed-editor_grad-pos-field">
-            <span>Top</span>
+            <span>{translate('style.transformSettings.top')}</span>
             <NumberField
               value={origin.y}
               unit="%"
@@ -170,6 +175,7 @@ function DistanceRow({
   onLive: (value: string) => void;
   onCommit: (value: string) => void;
 }) {
+  const translate = useTranslate();
   // Undefined for a var()/calc(): the slider has no number to sit at, so it
   // disables while the field stays editable.
   const lengthUnit = useLengthUnit();
@@ -184,7 +190,7 @@ function DistanceRow({
   }, [value]);
   return (
     <div className="embed-editor_size-row">
-      <span className="embed-editor_size-label embed-editor_bg-caption">Distance</span>
+      <span className="embed-editor_size-label embed-editor_bg-caption">{translate('style.transformSettings.distance')}</span>
       <div className="embed-editor_shadow-field">
         <DragSlider
           value={distancePx ?? 0}
@@ -204,10 +210,11 @@ function DistanceRow({
             reads as a chip and the dot can pick or swap one. */}
         <VariableConnect
           code
-          ariaLabel={`Connect ${ariaLabel} to a variable`}
+          ariaLabel={translate('style.transformSettings.connect', { name: ariaLabel })}
           disabled={busy}
           className="is-fill"
           prop="perspective"
+          canvasProperty="perspective"
           onPick={(binding) => onCommit(binding)}
         >
           <input
@@ -268,10 +275,6 @@ function stepDistanceKey(event: KeyboardEvent<HTMLInputElement>): string | undef
   return stepped.text;
 }
 
-// The explanatory notes under the two perspective headings.
-const SELF_PERSPECTIVE_NOTE = "Depth for this element's own transform — written as perspective() at the front of " + 'the transform list.';
-const CHILDREN_PERSPECTIVE_NOTE = "Depth for this element's CHILDREN, so they share one viewpoint. It does nothing to " + 'the element itself.';
-
 const HelpIcon = centralIcon(centralHelp);
 
 export default function TransformSettings({
@@ -290,6 +293,7 @@ export default function TransformSettings({
   selfPerspective: string;
   onSelfPerspective: (distance: string, live: boolean) => void;
 }) {
+  const translate = useTranslate();
   const writeOrigin = (prop: string, next: Origin) => {
     const value = serializeOrigin(next);
     // The centre IS the default, so writing `50% 50%` would leave a declaration
@@ -307,9 +311,9 @@ export default function TransformSettings({
 
       <section className="embed-editor_tsettings-section">
         <Heading
-          title="Self perspective"
+          title={translate('style.transformSettings.selfPerspective')}
           props={['transform']}
-          note={SELF_PERSPECTIVE_NOTE}
+          note={translate('style.transformSettings.selfPerspectiveNote')}
           busy={busy}
           cleared={!!selfPerspective}
           onClear={() => onSelfPerspective('', false)}
@@ -317,7 +321,7 @@ export default function TransformSettings({
         <DistanceRow
           value={selfPerspective}
           busy={busy}
-          ariaLabel="Self perspective distance"
+          ariaLabel={translate('style.transformSettings.selfPerspectiveDistance')}
           onLive={(distance) => onSelfPerspective(distance, true)}
           onCommit={(distance) => onSelfPerspective(distance, false)}
         />
@@ -339,6 +343,7 @@ type SectionProps = {
 // Where the element's own transform pivots, and whether a turned element shows
 // its back.
 function TransformSection({ read, busy, setProp, clearProp, writeOrigin }: SectionProps) {
+  const translate = useTranslate();
   const transformOrigin = parseOrigin(effectiveValue(read, 'transform-origin'));
   const backface = effectiveValue(read, 'backface-visibility').toLowerCase();
   // Nothing authored → highlight what the page actually computes for this element,
@@ -352,23 +357,39 @@ function TransformSection({ read, busy, setProp, clearProp, writeOrigin }: Secti
   return (
     <section className="embed-editor_tsettings-section">
       <Heading
-        title="Transform settings"
+        title={translate('style.transformSettings.transformSettings')}
         props={['transform-origin', 'backface-visibility']}
         busy={busy}
         cleared={!!effectiveValue(read, 'transform-origin') || !!backface}
         onClear={() => clearProp(['transform-origin', 'backface-visibility'])}
       />
-      <OriginRow label="Origin" origin={transformOrigin} busy={busy} ariaLabel="Transform origin" onChange={(next) => writeOrigin('transform-origin', next)} />
+      <OriginRow
+        label={translate('style.transformSettings.origin')}
+        origin={transformOrigin}
+        busy={busy}
+        ariaLabel={translate('style.transformSettings.transformOrigin')}
+        onChange={(next) => writeOrigin('transform-origin', next)}
+      />
       <div className="embed-editor_size-row">
-        <span className="embed-editor_size-label embed-editor_bg-caption">Backface</span>
+        <span className="embed-editor_size-label embed-editor_bg-caption">{translate('style.transformSettings.backface')}</span>
         <ImportantMark important={backfaceImportant}>
-          <SegmentedControl
-            value={shownBackface}
-            options={BACKFACE}
-            onChange={(value) => setProp('backface-visibility', value, backfaceImportant)}
-            ariaLabel="Backface visibility"
-            disabled={busy}
-          />
+          <KeywordSegments
+            prop="backface-visibility"
+            value={effectiveValue(read, 'backface-visibility')}
+            important={backfaceImportant}
+            ariaLabel={translate('style.transformSettings.backfaceVisibility')}
+            busy={busy}
+            onWrite={(value, important) => setProp('backface-visibility', value, important)}
+            onClear={() => clearProp('backface-visibility')}
+          >
+            <SegmentedControl
+              value={shownBackface}
+              options={backfaceOptions(translate)}
+              onChange={(value) => setProp('backface-visibility', value, backfaceImportant)}
+              ariaLabel={translate('style.transformSettings.backfaceVisibility')}
+              disabled={busy}
+            />
+          </KeywordSegments>
         </ImportantMark>
       </div>
     </section>
@@ -377,14 +398,15 @@ function TransformSection({ read, busy, setProp, clearProp, writeOrigin }: Secti
 
 // The perspective this element gives its children, and where it looks from.
 function ChildrenPerspectiveSection({ read, busy, setProp, clearProp, writeOrigin }: SectionProps) {
+  const translate = useTranslate();
   const perspectiveOrigin = parseOrigin(effectiveValue(read, 'perspective-origin'));
   const childDistance = effectiveValue(read, 'perspective');
   return (
     <section className="embed-editor_tsettings-section">
       <Heading
-        title="Children perspective"
+        title={translate('style.transformSettings.childrenPerspective')}
         props={['perspective', 'perspective-origin']}
-        note={CHILDREN_PERSPECTIVE_NOTE}
+        note={translate('style.transformSettings.childrenPerspectiveNote')}
         busy={busy}
         cleared={!!childDistance || !!effectiveValue(read, 'perspective-origin')}
         onClear={() => clearProp(['perspective', 'perspective-origin'])}
@@ -392,7 +414,7 @@ function ChildrenPerspectiveSection({ read, busy, setProp, clearProp, writeOrigi
       <DistanceRow
         value={childDistance}
         busy={busy}
-        ariaLabel="Children perspective distance"
+        ariaLabel={translate('style.transformSettings.childrenPerspectiveDistance')}
         onLive={(distance) => {
           if (distance) {
             setProp('perspective', distance, false);
@@ -407,10 +429,10 @@ function ChildrenPerspectiveSection({ read, busy, setProp, clearProp, writeOrigi
         }}
       />
       <OriginRow
-        label="Origin"
+        label={translate('style.transformSettings.origin')}
         origin={perspectiveOrigin}
         busy={busy}
-        ariaLabel="Perspective origin"
+        ariaLabel={translate('style.transformSettings.perspectiveOrigin')}
         onChange={(next) => writeOrigin('perspective-origin', next)}
       />
     </section>

@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { CornerIcon, ResetIcon } from './Icons';
 import { popupLayer } from './popupLayer';
+import { useTranslate } from '../lib/i18n/useTranslate';
 
 export interface ResetMenuProps {
   readonly position: { readonly left: number; readonly top: number };
@@ -10,9 +11,18 @@ export interface ResetMenuProps {
   readonly resetLabel?: string;
   readonly onUnbind?: (() => void) | undefined;
   readonly unbindLabel: string;
+  /** Why the reset item cannot run, shown the same way. */
+  readonly resetDisabledReason?: string | undefined;
   readonly onClose: () => void;
 }
-export function ResetLabel(props: { readonly label: React.ReactNode; readonly active: boolean; readonly onReset: () => void }) {
+export function ResetLabel(props: {
+  readonly label: React.ReactNode;
+  readonly active: boolean;
+  readonly onReset: () => void;
+  /** Why this value cannot be reset from its label (a default the component's own code computes): the menu shows Reset, disabled, with this reason. */
+  readonly resetDisabledReason?: string | undefined;
+}) {
+  const translate = useTranslate();
   const [position, setPosition] = useState<ResetMenuProps['position']>();
   const layer = useRef<HTMLElement>(popupLayer());
   const reset = () => {
@@ -25,7 +35,7 @@ export function ResetLabel(props: { readonly label: React.ReactNode; readonly ac
         className={`prop-label${props.active ? ' set' : ''}`}
         role={props.active ? 'button' : undefined}
         tabIndex={props.active ? 0 : undefined}
-        title={props.active ? 'Click for Reset. ⌥-click to clear value.' : undefined}
+        title={props.active ? translate('ui.resetLabel.title') : undefined}
         onClick={(event) => {
           event.preventDefault();
           if (!props.active) {
@@ -50,7 +60,17 @@ export function ResetLabel(props: { readonly label: React.ReactNode; readonly ac
       </span>
       {props.active &&
         position &&
-        createPortal(<ResetMenu position={position} onReset={reset} resetLabel="Reset" unbindLabel="" onClose={() => setPosition(undefined)} />, layer.current)}
+        createPortal(
+          <ResetMenu
+            position={position}
+            onReset={reset}
+            resetLabel={translate('ui.reset')}
+            unbindLabel=""
+            resetDisabledReason={props.resetDisabledReason}
+            onClose={() => setPosition(undefined)}
+          />,
+          layer.current,
+        )}
     </>
   );
 }
@@ -63,7 +83,9 @@ function resetMenuLayer(label: HTMLElement): HTMLElement {
   return label.closest<HTMLElement>('.popup-surface') ?? popupLayer();
 }
 
-export function ResetMenu({ position, onReset, resetLabel = 'Reset to default property value', onUnbind, unbindLabel, onClose }: ResetMenuProps) {
+export function ResetMenu({ position, onReset, resetLabel, onUnbind, unbindLabel, resetDisabledReason, onClose }: ResetMenuProps) {
+  const translate = useTranslate();
+  const resetText = resetLabel ?? translate('ui.resetLabel.toDefault');
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -103,9 +125,14 @@ export function ResetMenu({ position, onReset, resetLabel = 'Reset to default pr
           {unbindLabel}
         </div>
       )}
-      <div className="prop-menu-item" onClick={onReset}>
+      <div
+        className={`prop-menu-item${resetDisabledReason === undefined ? '' : ' disabled'}`}
+        aria-disabled={resetDisabledReason !== undefined}
+        title={resetDisabledReason}
+        onClick={resetDisabledReason === undefined ? onReset : undefined}
+      >
         <ResetIcon size={12} />
-        {resetLabel}
+        {resetText}
       </div>
     </div>
   );

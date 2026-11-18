@@ -8,6 +8,15 @@
      (.app_body, overflow-y: scroll) is the single scroll container. */
 }
 
+/* Room at the end that an element switch keeps for the rows under the pointer when the
+   next element is shorter (StylePanel useSwitchScrollAnchor); 0 otherwise. */
+.embed-editor_root::after {
+  content: '';
+  flex: none;
+  height: var(--switch-scroll-reserve, 0px);
+  margin-top: calc(var(--space-5) * -1);
+}
+
 /* ── Header ── */
 
 .embed-editor_header {
@@ -1580,6 +1589,7 @@
   max-width: none;
   max-height: 100vh;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   padding: 0;
@@ -1597,6 +1607,7 @@
 }
 .embed-editor_layer-popover-box.is-scrolling {
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .embed-editor_layer-popover-box {
   --embed-editor_size-label-w: 42px;
@@ -1803,7 +1814,7 @@
   width: 100%;
   min-width: 0;
 }
-.embed-editor_grid-count .u-input {
+.embed-editor_grid-count:not(.is-expression) .u-input {
   padding-right: 18px;
 }
 /* ▲▼ steppers pinned inside the field. */
@@ -1833,6 +1844,28 @@
 }
 .embed-editor_grid-count-steppers button:disabled {
   cursor: not-allowed;
+}
+/* A track list that is not N equal tracks: the value as text in the stepper's own cell.
+   Nothing sits over the text (no steppers here, so no reserved padding either), and a
+   value too long for the cell ends in an ellipsis so its start stays readable. Refused
+   text turns the field danger-coloured by background, not border. */
+.embed-editor_grid-count.is-expression .u-input {
+  text-overflow: ellipsis;
+}
+/* The grid settings' axis: label, one mode control, then only that mode's control. */
+.embed-editor_grid-mode-body {
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--space-3);
+}
+.embed-editor_grid-note {
+  padding-top: var(--space-3);
+  color: var(--color-text-tertiary);
+}
+.embed-editor_grid-count.is-invalid .u-input,
+.embed-editor_grid-count.is-invalid .embed-editor_varconnect-editor {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
 }
 
 /* ── Grid settings modal (Configure grid popup) ── */
@@ -1933,6 +1966,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: var(--space-4);
 }
 .embed-editor_clip-loading {
@@ -1950,6 +1984,7 @@
   max-width: none;
   max-height: 100vh;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   border-top: 1px solid var(--color-border-default);
@@ -3183,6 +3218,7 @@
   padding: var(--space-1);
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
   border: var(--border-width-thin) solid var(--color-border-default);
   border-radius: var(--radius-md);
@@ -3598,6 +3634,7 @@
   color: var(--color-text-secondary);
   white-space: nowrap;
   overflow-x: auto;
+  scrollbar-gutter: stable;
   scrollbar-width: thin;
 }
 .embed-editor_element-id.is-empty {
@@ -3638,8 +3675,8 @@
   color: #fff;
 }
 .embed-editor_element-tip-chip.is-attribute {
-  background: #453b63;
-  color: #c4afff;
+  background: var(--color-attribute-chip-bg);
+  color: var(--color-attribute-chip-text);
 }
 
 /* The source trigger reads as a little tag — green for a component embed, blue
@@ -3796,6 +3833,94 @@
   white-space: nowrap;
   font-size: var(--font-size-sm);
   color: var(--color-text-secondary);
+}
+/* The suggestion-first add form: the project's breakpoints as flat 32px rows (no cards, no lines;
+   fills only for hover and the active row), then a Custom row and its live preview. Rows end in the
+   same 16px check slot, so insets are symmetric and nothing scrolls sideways. */
+.embed-editor_add-query.is-suggested {
+  gap: var(--space-2);
+  min-width: 0;
+}
+.embed-editor_aq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  min-width: 0;
+  max-height: 14rem;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+}
+.embed-editor_aq-list:focus {
+  outline: none;
+}
+.embed-editor_aq-row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: calc(var(--radius-xl) - var(--space-3));
+  color: var(--color-text-primary);
+  font-family: var(--font-family-sans);
+  font-size: 0.8125rem;
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+}
+.embed-editor_aq-row.is-active {
+  background: var(--color-bg-hover);
+}
+.embed-editor_aq-row.is-added {
+  color: var(--color-text-secondary);
+}
+.embed-editor_aq-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--color-text-tertiary);
+}
+.embed-editor_aq-name {
+  flex: 0 0 auto;
+}
+.embed-editor_aq-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+  font-weight: var(--font-weight-regular, 400);
+}
+.embed-editor_aq-check {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.embed-editor_aq-custom {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.embed-editor_aq-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--font-size-xs);
+}
+.embed-editor_aq-preview {
+  margin: 0;
+  min-height: 1rem;
+  font-size: var(--font-size-2xs);
+  color: var(--color-text-tertiary);
+  font-family: var(--font-family-mono);
+  overflow-wrap: anywhere;
+}
+.embed-editor_aq-preview.is-invalid {
+  color: var(--color-danger, #ff9b9b);
+  font-family: var(--font-family-sans);
 }
 /* The add form wraps (its wrap/nest switch needs the room); the rename form is a
    label and two buttons and stays on one line, the label giving way first. */
@@ -4003,23 +4128,6 @@
   color: #d8b4fe;
 }
 
-/* A chip whose colour is still being read (provenancePending: the selected instance's
-   component file is on its way) is neutral grey in every state, never a blue it may
-   lose to green a moment later. After the component rules, so it outranks them. */
-.embed-editor_selector-chip.is-provenance-pending:not(.is-pending) {
-  background: var(--color-selector-context-bg);
-  color: var(--color-text-secondary);
-}
-.embed-editor_selector-chip.is-provenance-pending:not(.is-pending):not(.is-active):hover:not(:disabled) {
-  background: var(--color-selector-context-bg-hover);
-  color: var(--color-text-secondary);
-}
-.embed-editor_selector-chip.is-provenance-pending.is-active:not(.is-pending),
-.embed-editor_selector-chip.is-provenance-pending.is-active:not(.is-pending):hover:not(:disabled) {
-  background: var(--color-selector-context-bg-active);
-  color: #fff;
-}
-
 /* The "Inline styles" chip (InlineStyleChip.tsx) is amber in every state, with amber
    text at rest and on hover and white text once picked. Each rule outranks the blue
    rest, hover and active rules above (same specificity or more, later in the file),
@@ -4090,6 +4198,23 @@
 .embed-editor_selector-chip.is-dimmed.is-active {
   opacity: 1;
 }
+/* The three selector-chip families (blue class, grey plain, green component) show "styled
+   only in another query" in the fill, never in the text: whole-chip opacity washed the text out
+   (white at 50% is #808080, about 4:1 on blue and 2:1 on grey), while the green chip beside them,
+   not dimmed, kept full-strength text. Text keeps each family's own colour from the rules above;
+   amber (inline) and dashed (pending) chips keep the opacity. */
+.embed-editor_selector-chip.is-dimmed:not(.is-inline):not(.is-pending) {
+  opacity: 1;
+}
+.embed-editor_selector-chip.is-dimmed:not(.is-inline):not(.is-pending):not(.is-active):not(.is-plain):not(.is-component):not(:hover) {
+  background: var(--color-class-tag-bg-dimmed);
+}
+.embed-editor_selector-chip.is-dimmed.is-plain:not(.is-inline):not(.is-pending):not(.is-active):not(:hover) {
+  background: var(--color-selector-context-bg-dimmed);
+}
+.embed-editor_selector-chip.is-dimmed.is-component:not(.is-inline):not(.is-pending):not(.is-active):not(:hover) {
+  background: var(--color-component-tag-bg-dimmed);
+}
 .embed-editor_selector-chip:disabled {
   cursor: not-allowed;
   opacity: 0.6;
@@ -4125,6 +4250,7 @@
   flex-direction: column;
   max-height: 220px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: var(--space-1);
   border: var(--border-width-thin) solid var(--color-border-default);
   border-radius: var(--radius-md);
@@ -4913,6 +5039,7 @@
   gap: var(--space-2);
   max-height: 180px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .embed-editor_bg-picker-item {
   aspect-ratio: 1;
@@ -5232,6 +5359,7 @@
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .embed-editor_ease-main {
   padding: var(--space-4);
@@ -5486,7 +5614,7 @@
   position: absolute;
   top: -4px;
   left: -1px;
-  z-index: 4;
+  z-index: var(--z-style-connect);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5616,7 +5744,8 @@
      single-line field is a flex row, and align-self above does the same there. */
   vertical-align: middle;
   gap: var(--space-2);
-  margin: 0 1px;
+  /* No margin: the caret behind a chip stands flush with its right edge. */
+  margin: 0;
   padding: 1px var(--space-2);
   border-radius: var(--radius-sm);
   background: rgba(124, 92, 255, 0.28);
@@ -5632,6 +5761,11 @@
 .embed-editor_varconnect-editor:focus .embed-editor_varconnect-token,
 .embed-editor_varconnect-token:hover {
   background: rgba(124, 92, 255, 0.42);
+}
+
+/* Chips welded together keep a hairline between them now the chip has no margin of its own. */
+.embed-editor_varconnect-token + .embed-editor_varconnect-token {
+  margin-left: 1px;
 }
 
 /* The gap between two chips (see spaceRun). `pre` so the space keeps its width —
@@ -5660,23 +5794,107 @@
 .embed-editor_varpicker {
   z-index: var(--z-tooltip);
   box-sizing: border-box;
-  max-height: min(60vh, 420px);
+  /* The height cap is inline (VariablePicker.tsx, PICKER_HEIGHT_REM_MAX) with the room in the window. */
   display: flex;
   flex-direction: column;
   padding: var(--space-2);
-  border: var(--border-width-thin) solid var(--color-border-default);
-  border-top: 0;
-  border-radius: 0 0 var(--radius-md) var(--radius-md);
-  background: var(--color-bg-surface-overlay);
+  /* One step darker than the overlay the other menus use, so the list reads as its own
+     surface; all four corners share the menu radius and the content is clipped to it. */
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--color-bg-surface);
   box-shadow: var(--shadow-lg);
 }
-.embed-editor_varpicker-search {
+/* The search: compact, a raised fill rather than the black inset well, the glass inside it. */
+/* The search row: the field and the view-options button, with spacing only (no fill, no hairline). */
+.embed-editor_varpicker-searchrow {
+  display: flex;
+  align-items: center;
   flex: none;
-  margin-bottom: var(--space-2);
+  gap: var(--space-2);
+  margin-bottom: 0.25rem;
+}
+.embed-editor_varpicker-searchbox {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.embed-editor_varpicker-search-icon {
+  position: absolute;
+  left: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+.embed-editor_varpicker-searchbox:focus-within .embed-editor_varpicker-search-icon {
+  color: var(--color-text-primary);
+}
+.embed-editor_varpicker .embed-editor_varpicker-search {
+  box-sizing: border-box;
+  display: block;
+  width: 100%;
+  height: 1.75rem;
+  padding: 0 0.5rem 0 1.75rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  /* No fill of its own: it reads as part of the menu surface. */
+  background: transparent;
+  color: var(--color-text-primary);
+  font-family: var(--font-family-sans);
+  font-size: 0.75rem;
+  font-weight: 400;
+}
+.embed-editor_varpicker .embed-editor_varpicker-search::placeholder {
+  color: var(--color-text-secondary);
+}
+.embed-editor_varpicker .embed-editor_varpicker-search:focus {
+  outline: none;
+}
+/* The ring is for the keyboard; a click leaves only the colour shift of the icon and text. */
+.embed-editor_varpicker .embed-editor_varpicker-search:focus-visible {
+  box-shadow: 0 0 0 0.0625rem var(--color-border-focus);
+}
+.embed-editor_varpicker-options {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+.embed-editor_varpicker-options:hover,
+.embed-editor_varpicker-options[aria-expanded='true'] {
+  background: var(--color-bg-hover);
+  color: var(--color-text-primary);
+}
+/* Listed by "show all" but not valid for the property, or kept out of suggestions: still pickable. */
+.embed-editor_varpicker-item.is-invalid .embed-editor_varpicker-item-name,
+.embed-editor_varpicker-item.is-invalid .embed-editor_varpicker-item-value {
+  opacity: 0.6;
+}
+.embed-editor_varpicker-item.is-hidden {
+  opacity: 0.7;
+}
+.embed-editor_varpicker-item.is-overridden .embed-editor_varpicker-item-value::after {
+  content: ' ·';
+  color: var(--color-text-tertiary);
+}
+.embed-editor_varpicker-item-hidden {
+  flex: none;
+  display: inline-flex;
+  color: var(--color-text-secondary);
 }
 .embed-editor_varpicker-list {
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
 }
@@ -5684,7 +5902,7 @@
   margin: 0;
   padding: var(--space-3);
   font-size: var(--font-size-xs);
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
 }
 /* Collection heading — the top grouping level (bold, primary), a full-width toggle
    with a chevron; a hairline separates collections so each reads as its own block. */
@@ -5693,8 +5911,8 @@
   flex-direction: column;
 }
 .embed-editor_varpicker-collection + .embed-editor_varpicker-collection {
-  margin-top: var(--space-2);
-  border-top: var(--border-width-thin) solid var(--color-border-default);
+  /* Space, not a hairline, sets one file apart from the next. */
+  margin-top: 0.5rem;
 }
 .embed-editor_varpicker-collection-head {
   display: flex;
@@ -5702,21 +5920,21 @@
   justify-content: space-between;
   gap: var(--space-2);
   width: 100%;
-  padding: var(--space-3) var(--space-2) var(--space-1);
+  padding: 0.5rem 0.625rem 0.375rem;
   border: 0;
   background: transparent;
   text-align: left;
   cursor: pointer;
 }
 .embed-editor_varpicker-collection-name {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-bold);
+  font-size: 0.75rem;
+  font-weight: 600;
   color: var(--color-text-primary);
 }
 .embed-editor_varpicker-collection-arrow {
   flex: none;
   display: inline-flex;
-  color: var(--color-text-tertiary);
+  color: var(--color-text-secondary);
   transition: transform var(--transition-fast);
 }
 .embed-editor_varpicker-collection-arrow.is-open {
@@ -5725,24 +5943,68 @@
 .embed-editor_varpicker-group {
   display: flex;
   flex-direction: column;
+  /* A little air between rows, so each is its own target. */
+  gap: 0.125rem;
 }
 .embed-editor_varpicker-group-name {
-  padding: var(--space-2) var(--space-2) var(--space-1);
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  /* Room below the heading so the first row never touches it. */
+  padding: 0.25rem 0.625rem 0.5rem;
+  font-size: 0.6875rem;
+  font-family: var(--font-family-sans);
+  font-weight: 500;
   color: var(--color-text-secondary);
+  /* One line: the whole selector list is in the tooltip. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A group of two or more rows: a quiet block on a faint fill, its heading small and secondary,
+   its rows indented a little. Three levels read apart by
+   size, weight and tone alone: the file (md, bold, primary), the group (0.75rem, medium, secondary)
+   and the row (sm, regular, primary). No borders. */
+.embed-editor_varpicker-family {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  margin-top: 0.5rem;
+  padding: 0 0.375rem 0.375rem;
+  gap: 0.125rem;
+  border-radius: 0.5rem;
+  background: var(--color-bg-hover);
+}
+.embed-editor_varpicker-family-name {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  /* Room below the heading so the first row never touches it. */
+  padding: 0.5rem 0.125rem 0.5rem;
+  font-size: 0.6875rem;
+  font-family: var(--font-family-sans);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text-secondary);
+  /* One line, truncated with the whole name in the tooltip. */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .embed-editor_varpicker-item {
-  display: flex;
+  /* Four columns: the icon, the name (sized to its text, at most 60% of the row, so a name is not cut
+     while the value column sits nearly empty), the value (the rest, truncating) and the end marks. */
+  display: grid;
+  grid-template-columns: 0.875rem fit-content(60%) minmax(0, 1fr) 1rem;
   align-items: center;
-  gap: var(--space-2);
+  column-gap: 0.5rem;
   width: 100%;
-  padding: var(--space-2) var(--space-3);
+  min-height: 1.75rem;
+  box-sizing: border-box;
+  padding: 0.25rem 0.5rem;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 0.5rem;
   background: transparent;
   color: var(--color-text-primary);
-  font-size: var(--font-size-sm);
+  font-size: 0.75rem;
   text-align: left;
   cursor: pointer;
 }
@@ -5764,10 +6026,17 @@
 .embed-editor_varpicker-item.is-selected .embed-editor_varpicker-item-name {
   color: #cbbcff;
 }
+.embed-editor_varpicker-item-marks {
+  grid-column: 4;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.25rem;
+  min-width: 0;
+}
 .embed-editor_varpicker-item-check {
   flex: none;
   display: inline-flex;
-  margin-left: var(--space-2);
   /* The connect purple, lightened so the check clears 3:1 on the selected row's
      purple fill over the overlay (#7c5cff was 2.0:1). */
   color: #9980ff;
@@ -5776,39 +6045,47 @@
 .embed-editor_varpicker-item-icon {
   flex: none;
   display: inline-flex;
-  width: 16px;
-  height: 16px;
-  color: var(--color-text-tertiary);
+  width: 0.875rem;
+  height: 0.875rem;
+  color: var(--color-text-secondary);
 }
 /* A colour variable's swatch, in the icon's place: its resolved fill over a
    checkerboard, so a translucent value reads as one. */
 .embed-editor_varpicker-item-swatch {
   flex: none;
   display: inline-flex;
-  width: 16px;
-  height: 16px;
+  width: 0.875rem;
+  height: 0.875rem;
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: 0.1875rem;
   background: repeating-conic-gradient(#808080 0% 25%, #a0a0a0 0% 50%) 50% / 8px 8px;
 }
 .embed-editor_varpicker-item-swatch > span {
   flex: 1;
 }
 .embed-editor_varpicker-item-name {
-  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--color-text-primary);
 }
-/* Value flows in right after the name (left-aligned) and truncates at the edge. */
+/* The value sits in its own column, left-aligned, truncating with an ellipsis (the whole text is in the tooltip). */
 .embed-editor_varpicker-item-value {
-  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   text-align: left;
-  color: var(--color-text-tertiary);
+  /* Secondary, not tertiary: the value is what tells two variables apart, and the
+     tertiary grey on the overlay was 4.6:1, readable but dim. Pinned by
+     test/renderer/style/variablePickerContrast.test.js. */
+  color: var(--color-text-secondary);
   font-family: var(--font-family-mono);
-  font-size: var(--font-size-xs);
+  font-size: 0.625rem;
+  font-weight: 400;
 }
 
 /* Reveals the selectors that match nearly every element (:target,

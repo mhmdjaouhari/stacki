@@ -27,17 +27,19 @@
 
 import { assert } from '../../shared/core/assert';
 import type { ImportDecl, PageModel, PageNode } from '../../shared/page/pageNode';
+import { issue, type Issue } from './issue';
+import type { MessageKey } from '../../shared/properties/i18n/messageRef';
 import { bindingScope, readModuleScope, readModuleStatements, type JsAnalysis, type JsStatement } from '../../shared/engine/jsScope';
 import { mentions, readFile, type FileCode, type FileRead } from '../../shared/engine/variableRename';
 
 /** What becomes of one value the piece reads. */
 export type ExtractionValue =
   /** Its code moves into the component. `note` says so when the parent keeps a copy. */
-  | { readonly kind: 'move'; readonly name: string; readonly note: string | undefined }
+  | { readonly kind: 'move'; readonly name: string; readonly note: string | undefined; readonly noteIssue?: Issue | undefined }
   /** The person chose to pass it in as a prop. */
   | { readonly kind: 'prop'; readonly name: string }
   /** It can only be passed in as a prop, for `reason`. */
-  | { readonly kind: 'locked'; readonly name: string; readonly reason: string };
+  | { readonly kind: 'locked'; readonly name: string; readonly reason: string; readonly reasonIssue: Issue };
 
 export interface ExtractionPlan {
   readonly values: readonly ExtractionValue[];
@@ -72,6 +74,7 @@ export type ExtractionRead =
       readonly kind: 'unreadable';
       readonly names: readonly string[];
       readonly reason: string;
+      readonly reasonIssue: Issue;
       readonly shown: Pick<PageModel, 'imports' | 'extraFrontmatter'>;
     }
   | { readonly kind: 'read'; readonly facts: ExtractionFacts };
@@ -98,7 +101,10 @@ const PLAIN_DECLARATIONS: ReadonlySet<JsStatement['kind']> = new Set(['const', '
 
 const ASTRO_MEMBER_RE = /^\s*\??\.\s*([\p{ID_Start}$_][\p{ID_Continue}$]*)/u;
 
-interface Statement extends JsStatement {
+type Statement = FrontmatterStatement;
+
+/** One top-level statement of a frontmatter with the names it binds, reads and changes (paste reads these too). */
+export interface FrontmatterStatement extends JsStatement {
   /** The top-level names it binds, values only. */
   readonly declares: readonly string[];
   /** Top-level names, imports and globals its code reads. */
@@ -116,7 +122,7 @@ export interface ExtractionFacts {
   readonly names: readonly string[];
   readonly loopNames: ReadonlySet<string>;
   readonly inLoop: boolean;
-  readonly words: Words;
+  readonly parent: ExtractionParent;
   readonly statements: readonly Statement[];
   /** Which statements bind a name; `var` may do so twice. */
   readonly declaredBy: ReadonlyMap<string, readonly number[]>;
@@ -132,39 +138,55 @@ export interface ExtractionFacts {
   readonly pieceReads: ReadonlySet<string>;
 }
 
-interface Words {
-  readonly here: string;
-  /** The same place, from a sentence that has already said where. */
-  readonly again: string;
-  readonly owner: string;
-}
+// A reason is a whole sentence per parent ("on this page", "in the parent component"): the place is part of it, and its words change with the language.
+type ReasonId =
+  'needs' | 'changed' | 'exported' | 'otherCode' | 'astroWhole' | 'astroMember' | 'importMeta' | 'usesCaptured' | 'untraceable' | 'usedTwice' | 'copyStays';
 
-const WORDS: Readonly<Record<ExtractionParent, Words>> = {
-  page: { here: 'on this page', again: 'here', owner: 'this page’s' },
-  component: { here: 'in the parent component', again: 'there', owner: 'the parent component’s' },
+const REASON_KEYS: Readonly<Record<ReasonId, Readonly<Record<ExtractionParent, MessageKey>>>> = {
+  needs: { page: 'editor.extract.needs.page', component: 'editor.extract.needs.component' },
+  changed: { page: 'editor.extract.changed.page', component: 'editor.extract.changed.component' },
+  exported: { page: 'editor.extract.exported.page', component: 'editor.extract.exported.component' },
+  otherCode: { page: 'editor.extract.otherCode.page', component: 'editor.extract.otherCode.component' },
+  astroWhole: { page: 'editor.extract.astroWhole.page', component: 'editor.extract.astroWhole.component' },
+  astroMember: { page: 'editor.extract.astroMember.page', component: 'editor.extract.astroMember.component' },
+  importMeta: { page: 'editor.extract.importMeta.page', component: 'editor.extract.importMeta.component' },
+  usesCaptured: { page: 'editor.extract.usesCaptured.page', component: 'editor.extract.usesCaptured.component' },
+  untraceable: { page: 'editor.extract.untraceable.page', component: 'editor.extract.untraceable.component' },
+  usedTwice: { page: 'editor.extract.usedTwice.page', component: 'editor.extract.usedTwice.component' },
+  copyStays: { page: 'editor.extract.copyStays.page', component: 'editor.extract.copyStays.component' },
 };
+
+function reasonIn(facts: Pick<ExtractionFacts, 'parent'>, id: ReasonId, params?: Readonly<Record<string, string>>): Issue {
+  return issue(REASON_KEYS[id][facts.parent], params);
+}
 
 /** Reads what extraction needs of the file, once per dialog. */
 export function readExtraction(input: ExtractionInput): ExtractionRead {
-  const unreadable = (reason: string): ExtractionRead => ({ kind: 'unreadable', names: input.names, reason, shown: input.shown });
+  const unreadable = (reason: Issue): ExtractionRead => ({
+    kind: 'unreadable',
+    names: input.names,
+    reason: reason.message,
+    reasonIssue: reason,
+    shown: input.shown,
+  });
   const { origin } = input;
   if (origin === undefined) {
-    return unreadable('This page is still saving, so its code can’t move yet.');
+    return unreadable(issue('editor.extract.saving'));
   }
   if (origin.model.format !== undefined) {
-    return unreadable('Only an .astro file’s code can move.');
+    return unreadable(issue('editor.extract.astroOnly'));
   }
   const whole = readFile(origin);
   if (!whole.frontmatterValid) {
-    return unreadable('The frontmatter has a syntax error, so its code can’t move. Fix it first.');
+    return unreadable(issue('editor.extract.syntaxError'));
   }
   if (whole.partial) {
-    return unreadable('Part of this page can’t be read, so its code can’t move.');
+    return unreadable(issue('editor.extract.partial'));
   }
   const code = origin.model.extraFrontmatter;
   const analysis = readModuleScope(code);
   if (!analysis.valid) {
-    return unreadable('The frontmatter has a syntax error, so its code can’t move. Fix it first.');
+    return unreadable(issue('editor.extract.syntaxError'));
   }
   const rest = readFile(origin, { leaving: input.nodeId });
   const statements = readStatements(code, analysis);
@@ -175,7 +197,7 @@ export function readExtraction(input: ExtractionInput): ExtractionRead {
 export function planExtraction(read: ExtractionRead, asProp: ReadonlySet<string>): ExtractionPlan {
   if (read.kind === 'unreadable') {
     return {
-      values: read.names.map((name) => ({ kind: 'locked', name, reason: read.reason })),
+      values: read.names.map((name) => ({ kind: 'locked', name, reason: read.reason, reasonIssue: read.reasonIssue })),
       props: read.names,
       moved: { imports: [], code: '' },
       parent: { imports: read.shown.imports, extraFrontmatter: read.shown.extraFrontmatter },
@@ -204,7 +226,8 @@ interface StatementParts {
   readonly astroMembers: (string | undefined)[];
 }
 
-function readStatements(code: string, analysis: JsAnalysis): readonly Statement[] {
+/** The frontmatter's statements, each with what it binds and reads at the top level: the one reader extraction and paste share. */
+export function readStatements(code: string, analysis: JsAnalysis): readonly Statement[] {
   const statements = readModuleStatements(code);
   const parts = statements.map((): StatementParts => ({ declares: [], reads: [], typeReads: [], writes: [], astroMembers: [] }));
   const at = (position: number): StatementParts | undefined =>
@@ -264,7 +287,7 @@ function extractionFacts(read: {
     names: [...new Set([...input.names, ...pieceValues])],
     loopNames: new Set([...input.loopNames, ...(whole.around.get(input.nodeId) ?? [])]),
     inLoop: input.inLoop,
-    words: WORDS[input.parent],
+    parent: input.parent,
     statements,
     declaredBy,
     typesDeclaredBy: indexed(statements, (statement) => statement.typeNames),
@@ -318,7 +341,7 @@ function indexed(statements: readonly Statement[], keys: (statement: Statement) 
 
 type Closure =
   | { readonly kind: 'clear'; readonly statements: ReadonlySet<number>; readonly imports: ReadonlySet<string> }
-  | { readonly kind: 'blocked'; readonly reason: string };
+  | { readonly kind: 'blocked'; readonly reason: Issue };
 
 // What a value needs, walked from its name: each statement that binds a name it
 // reads, and so on. A name that is a prop stops the walk, since the component has
@@ -350,7 +373,7 @@ function closureOf(facts: ExtractionFacts, name: string, props: ReadonlySet<stri
       assert(statement !== undefined, 'An index points at a statement');
       const reason = nameProblem(facts, next, index) ?? statementProblem(facts, statement) ?? sharedDeclaration(statement, next, props);
       if (reason !== undefined) {
-        return { kind: 'blocked', reason: next === name ? reason : `It needs ${next}, which has to stay ${facts.words.here}.` };
+        return { kind: 'blocked', reason: next === name ? reason : reasonIn(facts, 'needs', { name: next }) };
       }
       statements.add(index);
       pending.push(...statement.reads, ...writersOf(facts, next, index).flatMap((writer) => writer.declares));
@@ -404,9 +427,8 @@ function addTypes(walk: {
   }
 }
 
-function nameProblem(facts: ExtractionFacts, name: string, declaring: number): string | undefined {
-  const { here } = facts.words;
-  const changed = `It’s changed elsewhere ${here}, so it can’t move safely.`;
+function nameProblem(facts: ExtractionFacts, name: string, declaring: number): Issue | undefined {
+  const changed = reasonIn(facts, 'changed');
   if (facts.templateWrites.has(name)) {
     return changed;
   }
@@ -414,44 +436,43 @@ function nameProblem(facts: ExtractionFacts, name: string, declaring: number): s
     return changed;
   }
   if (facts.exported.has(name)) {
-    return `It’s exported, so other files can ask for it ${here}.`;
+    return reasonIn(facts, 'exported');
   }
   const effects = facts.statements.filter((statement, index) => index !== declaring && statement.kind === 'effect');
   if (effects.some((statement) => statement.reads.includes(name) || statement.declares.includes(name))) {
-    return `Other code at the top ${here} also works with it, so it can’t move safely.`;
+    return reasonIn(facts, 'otherCode');
   }
   return undefined;
 }
 
-function statementProblem(facts: ExtractionFacts, statement: Statement): string | undefined {
-  const { here, owner } = facts.words;
+function statementProblem(facts: ExtractionFacts, statement: Statement): Issue | undefined {
   if (statement.kind === 'export') {
-    return `It’s exported, so other files can ask for it ${here}.`;
+    return reasonIn(facts, 'exported');
   }
   if (statement.kind === 'effect') {
-    return 'It’s set by code that does other work too, so it can’t move on its own.';
+    return issue('editor.extract.effect');
   }
   for (const member of statement.astroMembers) {
     if (member === undefined) {
-      return `It reads ${owner} Astro, which the new component can’t see.`;
+      return reasonIn(facts, 'astroWhole');
     }
     if (!SHARED_ASTRO_MEMBERS.has(member)) {
-      return `It reads ${owner} Astro.${member}, which the new component can’t see.`;
+      return reasonIn(facts, 'astroMember', { member });
     }
   }
   if (statement.readsImportMeta) {
-    return `It finds files from where it’s written ${here}, so it would look in the wrong place.`;
+    return reasonIn(facts, 'importMeta');
   }
   if (statement.callable) {
     const own = new Set(statement.declares);
     const captured = statement.reads.find((name) => facts.declaredBy.has(name) && !own.has(name));
     if (captured !== undefined) {
-      return `It’s a function that uses ${captured} ${here}.`;
+      return reasonIn(facts, 'usesCaptured', { name: captured });
     }
   }
   if (facts.inLoop) {
     if (statement.awaits || statement.volatile) {
-      return 'This sits inside a loop, so it would run again for every item.';
+      return issue('editor.extract.inLoop');
     }
   }
   return undefined;
@@ -459,22 +480,22 @@ function statementProblem(facts: ExtractionFacts, statement: Statement): string 
 
 // `const { a, b } = data` moves whole, so `a` cannot move while `b` is a prop:
 // the component would declare `b` twice, which does not compile.
-function sharedDeclaration(statement: Statement, name: string, props: ReadonlySet<string>): string | undefined {
+function sharedDeclaration(statement: Statement, name: string, props: ReadonlySet<string>): Issue | undefined {
   const clash = statement.declares.find((declared) => declared !== name && props.has(declared));
-  return clash === undefined ? undefined : `It’s declared together with ${clash}, which is passed in as a prop.`;
+  return clash === undefined ? undefined : issue('editor.extract.declaredTogether', { name: clash });
 }
 
 // What has to be a prop whatever the person chooses: loop items, what nothing
 // declares, and what a rule stops. A value stopped only by such a value is stopped
 // for good too, so this repeats until nothing changes; each pass locks a value or
 // ends, so the values bound it.
-function lockedValues(facts: ExtractionFacts): ReadonlyMap<string, string> {
-  const locked = new Map<string, string>();
+function lockedValues(facts: ExtractionFacts): ReadonlyMap<string, Issue> {
+  const locked = new Map<string, Issue>();
   for (const name of facts.names) {
     if (facts.loopNames.has(name)) {
-      locked.set(name, 'It comes from the loop around this element, so it’s passed in for each item.');
+      locked.set(name, issue('editor.extract.fromLoop'));
     } else if (!facts.declaredBy.has(name)) {
-      locked.set(name, `It can’t be traced to a line of code ${facts.words.here}.`);
+      locked.set(name, reasonIn(facts, 'untraceable'));
     }
   }
   for (let pass = 0; pass <= facts.names.length; pass++) {
@@ -497,7 +518,7 @@ function lockedValues(facts: ExtractionFacts): ReadonlyMap<string, string> {
 
 interface Settled {
   /** Every value that ends up a prop, with the reason where it is not a choice. */
-  readonly locked: ReadonlyMap<string, string>;
+  readonly locked: ReadonlyMap<string, Issue>;
   readonly props: ReadonlySet<string>;
   readonly statements: ReadonlySet<number>;
   readonly imports: ReadonlySet<string>;
@@ -510,7 +531,7 @@ interface Settled {
 // The choices together. One value's fate can change another's: a statement shared
 // with a prop has to stay, and a copy left behind may be one that cannot be
 // duplicated. Each pass locks a value or ends, so the values bound it.
-function settledChoices(facts: ExtractionFacts, always: ReadonlyMap<string, string>, asProp: ReadonlySet<string>): Settled {
+function settledChoices(facts: ExtractionFacts, always: ReadonlyMap<string, Issue>, asProp: ReadonlySet<string>): Settled {
   const locked = new Map(always);
   for (let pass = 0; pass <= facts.names.length; pass++) {
     const props = new Set([...locked.keys(), ...facts.names.filter((name) => asProp.has(name))]);
@@ -527,7 +548,7 @@ function settledChoices(facts: ExtractionFacts, always: ReadonlyMap<string, stri
     if (twice.length === 0) {
       return { locked, props, statements, imports, kept, parentReads };
     }
-    const reason = `It’s also used ${facts.words.here}, and running it twice could give a different result.`;
+    const reason = reasonIn(facts, 'usedTwice');
     twice.forEach(({ name }) => locked.set(name, reason));
   }
   assert(false, 'Settling choices stops once no value is locked');
@@ -624,20 +645,26 @@ function valueOf(facts: ExtractionFacts, settled: Settled, value: { readonly nam
   const { name, asProp } = value;
   const reason = settled.locked.get(name);
   if (reason !== undefined) {
-    return { kind: 'locked', name, reason };
+    return { kind: 'locked', name, reason: reason.message, reasonIssue: reason };
   }
   if (asProp.has(name)) {
     return { kind: 'prop', name };
   }
   const held = facts.declaredBy.get(name) ?? [];
   const copyStays = held.some((index) => settled.kept.has(index));
-  return { kind: 'move', name, note: copyStays ? `A copy stays ${facts.words.here} because it’s also used ${facts.words.again}.` : undefined };
+  const note = copyStays ? reasonIn(facts, 'copyStays') : undefined;
+  return { kind: 'move', name, note: note?.message, ...(note === undefined ? {} : { noteIssue: note }) };
 }
 
 function statementText(facts: ExtractionFacts, index: number): string {
   const statement = facts.statements[index];
   assert(statement !== undefined, 'An index points at a statement');
-  return facts.code.slice(statement.from, statement.to);
+  const { declarator } = statement;
+  if (declarator === undefined) {
+    return facts.code.slice(statement.from, statement.to);
+  }
+  // One declarator of several travels as a declaration of its own.
+  return `${declarator.keyword} ${facts.code.slice(statement.from, statement.to)};`;
 }
 
 // An import leaves only when this extraction is why nothing reads it any more.
@@ -653,10 +680,7 @@ function withoutStatements(facts: ExtractionFacts, leaving: readonly number[]): 
   const { code } = facts;
   const pieces: string[] = [];
   let at = 0;
-  for (const index of leaving) {
-    const statement = facts.statements[index];
-    assert(statement !== undefined, 'An index points at a statement');
-    const span = wholeLines(code, statement);
+  for (const span of removedSpans(facts, leaving)) {
     // Two statements on one line can claim the same line ends.
     pieces.push(code.slice(at, Math.max(at, span.from)));
     at = Math.max(at, span.to);
@@ -665,6 +689,66 @@ function withoutStatements(facts: ExtractionFacts, leaving: readonly number[]): 
   const left = pieces.join('').trim();
   assert(left.length <= code.length, 'Taking code out never adds any');
   return left;
+}
+
+// The text each leaving statement takes with it, in source order. A declarator whose
+// siblings all leave too takes the whole declaration; one with a sibling that stays
+// takes only itself and the comma that set it apart, so the others are left as written.
+function removedSpans(facts: ExtractionFacts, leaving: readonly number[]): readonly { readonly from: number; readonly to: number }[] {
+  const spans: { from: number; to: number }[] = [];
+  const leavingParts = new Map<number, Set<number>>();
+  for (const index of leaving) {
+    const statement = facts.statements[index];
+    assert(statement !== undefined, 'An index points at a statement');
+    const { declarator } = statement;
+    if (declarator === undefined) {
+      spans.push(wholeLines(facts.code, statement));
+    } else {
+      const parts = leavingParts.get(declarator.whole.from) ?? new Set<number>();
+      parts.add(declarator.index);
+      leavingParts.set(declarator.whole.from, parts);
+    }
+  }
+  for (const [wholeFrom, parts] of leavingParts) {
+    const statement = facts.statements.find((candidate) => candidate.declarator?.whole.from === wholeFrom);
+    assert(statement?.declarator !== undefined, 'A leaving declarator has its declaration');
+    const { declarators, whole } = statement.declarator;
+    if (parts.size === declarators.length) {
+      spans.push(wholeLines(facts.code, whole));
+    } else {
+      spans.push(...declaratorSpansLeaving(declarators, parts));
+    }
+  }
+  return spans.sort((first, second) => first.from - second.from);
+}
+
+// Each leaving declarator before the last one that stays goes with the comma after it;
+// the ones after it go with the comma before the first of them.
+function declaratorSpansLeaving(
+  declarators: readonly { readonly from: number; readonly to: number }[],
+  leaving: ReadonlySet<number>,
+): readonly { readonly from: number; readonly to: number }[] {
+  const staying = declarators.map((_, index) => index).filter((index) => !leaving.has(index));
+  const lastStaying = staying[staying.length - 1];
+  assert(lastStaying !== undefined, 'Something of the declaration stays');
+  const spans: { from: number; to: number }[] = [];
+  declarators.forEach((declarator, index) => {
+    const next = declarators[index + 1];
+    if (leaving.has(index)) {
+      if (index < lastStaying) {
+        assert(next !== undefined, 'A declarator before the last that stays has one after it');
+        spans.push({ from: declarator.from, to: next.from });
+      }
+    }
+  });
+  const last = declarators[declarators.length - 1];
+  const kept = declarators[lastStaying];
+  assert(last !== undefined, 'A declaration has declarators');
+  assert(kept !== undefined, 'The last declarator that stays is one of them');
+  if (lastStaying < declarators.length - 1) {
+    spans.push({ from: kept.to, to: last.to });
+  }
+  return spans;
 }
 
 // A statement alone on its lines takes those lines with it, and the blank line

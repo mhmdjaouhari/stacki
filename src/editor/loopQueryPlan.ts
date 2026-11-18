@@ -23,10 +23,14 @@ import type { ImportDecl } from '../../shared/page/pageNode';
 import { astroQueryCode, assertLoopQuery, chainQueryCode, listQueryCode, sanityQueryCode, type LoopField, type LoopQuery, type LoopSource } from './loopQuery';
 import { readingChain, readLoop, type LoopReading } from './loopQueryRead';
 import { reboundItem, type ItemShape } from './loopRebind';
-import { appliedEdits, sectionCodeProblem, sectionEdits, type LoopSection } from './loopSections';
+import { issue, type Issue } from './issue';
+import { appliedEdits, sectionCodeIssue, sectionEdits, type LoopSection } from './loopSections';
 import { parseExpression, parseFrontmatter, type ParsedFrontmatter } from './loopSyntax';
 import { dataFormProblem, optionsLiteral, rewrittenOptions } from './optionsQuery';
 import { LIST_ITEMS_HELPER, LIST_ITEMS_NAME, listItemsNeed } from './listItemsHelper';
+import type { ImportNeed } from './dataSample';
+import { withDataImport } from './frontmatterAdditions';
+import type { ItemSamples } from './loopRemove';
 import { indentUnitOf, withIndentUnit } from '../../shared/core/indent';
 import { reboundOptions, type BindingChange } from './optionsBinding';
 import { fieldListCode, type FieldList } from './loopFieldList';
@@ -43,8 +47,24 @@ export type LoopTarget =
       /** `data` writes the settings as data a prop can hold (listItemsHelper.ts); code otherwise. */
       readonly form?: 'code' | 'data' | undefined;
     }
-  | { readonly kind: 'value'; readonly data: string }
+  | {
+      readonly kind: 'value';
+      readonly data: string;
+      /**
+       * The project data module the list is exported from, when the file does not
+       * import it yet: the plan adds the import (or joins the module's existing
+       * `import { … }`) in the same change, so the loop and its import are one undo step.
+       * `data` starts with the name the tree offered (`need.name`); the plan rewrites it
+       * if the file already reads that export under another name.
+       */
+      readonly import?: ImportNeed | undefined;
+    }
   | { readonly kind: 'empty' }
+  /**
+   * The loop taken away, its body kept once: what the first item shows (`samples`, by path from the item)
+   * replaces what is bound to the item. Applied by the page (appLoopEdits.ts), not planned here.
+   */
+  | { readonly kind: 'remove'; readonly samples: ItemSamples }
   /** One of the list's settings linked to a component prop, or unlinked. */
   | { readonly kind: 'binding'; readonly change: BindingChange }
   /** A list field inside a content collection's items, across all of them. */
@@ -80,15 +100,16 @@ export interface LoopPlan {
   readonly restored: boolean;
 }
 
-export type LoopPlanResult = { readonly ok: true; readonly plan: LoopPlan } | { readonly ok: false; readonly message: string };
+export type LoopPlanResult = { readonly ok: true; readonly plan: LoopPlan } | ({ readonly ok: false } & Issue);
 
 const DEFAULT_SANITY_CLIENT = 'sanityClient';
 const CLEANUP_PASSES_MAX = 16;
 
-export function planLoop(input: LoopPlanInput): LoopPlanResult {
+export function planLoop(requested: LoopPlanInput): LoopPlanResult {
+  const input = withProjectImport(requested);
   const head = splitMapHead(input.loop.head);
   if (head === undefined) {
-    return { ok: false, message: 'This loop is written as custom code. Edit it in the Code field.' };
+    return { ok: false, ...issue('editor.loopPlan.customCode') };
   }
   const before = parseFrontmatter(input.model.extraFrontmatter);
   const reading = readLoop({ frontmatter: input.model.extraFrontmatter, imports: input.model.imports, data: head.data });
@@ -143,6 +164,28 @@ export function planLoop(input: LoopPlanInput): LoopPlanResult {
   };
 }
 
+// A project data export picked in the Source menu: the import it needs is added
+// to the model first, so everything after reads (and keeps, when cleaning up)
+// a file that already imports it. The data's root is the local name the import
+// ended up under, which is not the offered one when the file already read that
+// name for something else (`NAV2`).
+function withProjectImport(input: LoopPlanInput): LoopPlanInput {
+  const target = input.target;
+  if (target.kind !== 'value' || target.import === undefined) {
+    return input;
+  }
+  const need = target.import;
+  const data = target.data.trim();
+  assert(
+    data === need.name || data.startsWith(need.name + '.') || data.startsWith(need.name + '['),
+    'A project export is looped by the name it is imported as',
+  );
+  const added = withDataImport(input.model, need);
+  const rebased = added.name + data.slice(need.name.length);
+  assert(added.model.imports.length >= input.model.imports.length, 'Importing a project export only adds');
+  return { ...input, model: added.model, target: { kind: 'value', data: rebased } };
+}
+
 // A List prop's settings live in the loop's own head, where the prop is read:
 // the frontmatter, the imports and the children stay as they are, since a
 // filter, a sort and a limit leave each item as it was.
@@ -182,9 +225,9 @@ function sectionEdit(
   read: { readonly head: LoopHead; readonly reading: LoopReading; readonly frontmatter: ParsedFrontmatter },
 ): LoopPlanResult {
   const { head, frontmatter } = read;
-  const problem = sectionCodeProblem(target.section, target.code);
+  const problem = sectionCodeIssue(target.section, target.code);
   if (problem !== undefined) {
-    return { ok: false, message: problem };
+    return { ok: false, ...problem };
   }
   const code = { frontmatter: input.model.extraFrontmatter, imports: input.model.imports, data: head.data };
   const shared = sharedAt(frontmatter, readingChain(read.reading), markupWithout(input.model.nodes, input.loop.id));
@@ -209,7 +252,7 @@ function sectionEdit(
     parseExpression(data) === undefined ||
     parseFrontmatter(extraFrontmatter).declarations.size !== frontmatter.declarations.size
   ) {
-    return { ok: false, message: 'This code would break the loop, so it was not written.' };
+    return { ok: false, ...issue('editor.loopPlan.wouldBreak') };
   }
   const loop = { ...input.loop, head: loopHead };
   assert(loop.id === input.loop.id, 'A planned loop keeps its id');
@@ -269,7 +312,7 @@ function optionsEdit(input: LoopPlanInput, reading: LoopReading, frontmatter: Pa
   const query = target.query;
   const home = reading.home;
   if (init === undefined) {
-    return { ok: false, message: 'The list settings changed in the code since they were read. Select the loop again.' };
+    return { ok: false, ...issue('editor.loopPlan.settingsChanged') };
   }
   if (home.kind === 'chain') {
     return {
@@ -281,12 +324,12 @@ function optionsEdit(input: LoopPlanInput, reading: LoopReading, frontmatter: Pa
   const call = init.kind === 'await' ? init.value : init;
   const options = call.kind === 'call' ? call.args[1] : undefined;
   if (options?.kind !== 'object' || options.from !== home.options.from) {
-    return { ok: false, message: 'The list settings changed in the code since they were read. Select the loop again.' };
+    return { ok: false, ...issue('editor.loopPlan.settingsChanged') };
   }
   const unsupported =
     query.random || query.conditions.some((condition) => condition.kind === 'test' && (condition.operator === 'inPast' || condition.operator === 'inFuture'));
   if (unsupported) {
-    return { ok: false, message: 'This list’s settings can’t shuffle or compare with today’s date.' };
+    return { ok: false, ...issue('editor.loopPlan.noShuffleOrDate') };
   }
   const extraFrontmatter = rewrittenOptions(input.model.extraFrontmatter, home, options, query);
   assert(extraFrontmatter !== '', 'Rewritten settings leave a frontmatter');
@@ -305,7 +348,7 @@ function bindingEdit(
     return convertedBinding(input, reading.query, change);
   }
   if (reading.kind !== 'query' || reading.home?.kind !== 'options') {
-    return { ok: false, message: 'Only a list whose settings are kept as data can link them to properties.' };
+    return { ok: false, ...issue('editor.loopPlan.onlyData') };
   }
   const holder = reading.chain[reading.chain.length - 1];
   const declaration = holder === undefined ? undefined : frontmatter.declarations.get(holder);
@@ -313,7 +356,7 @@ function bindingEdit(
   const call = init?.kind === 'await' ? init.value : init;
   const options = call?.kind === 'call' ? call.args[1] : undefined;
   if (declaration === undefined || options?.kind !== 'object' || options.from !== reading.home.options.from) {
-    return { ok: false, message: 'The list settings changed in the code since they were read. Select the loop again.' };
+    return { ok: false, ...issue('editor.loopPlan.settingsChanged') };
   }
   const result = reboundOptions(
     input.model.extraFrontmatter,
@@ -334,7 +377,7 @@ function bindingEdit(
 function convertedBinding(input: LoopPlanInput, query: LoopQuery, change: BindingChange): LoopPlanResult {
   const problem = dataFormProblem(query);
   if (problem !== undefined) {
-    return { ok: false, message: problem };
+    return { ok: false, ...problem };
   }
   const converted = planLoop({ ...input, target: { kind: 'query', query, fields: [], form: 'data' }, restore: undefined });
   if (!converted.ok) {
@@ -376,11 +419,7 @@ interface Written {
   readonly name: string | undefined;
 }
 
-function writtenTarget(
-  input: LoopPlanInput,
-  holder: Holder | undefined,
-  before: ParsedFrontmatter,
-): Written | { readonly ok: false; readonly message: string } {
+function writtenTarget(input: LoopPlanInput, holder: Holder | undefined, before: ParsedFrontmatter): Written | ({ readonly ok: false } & Issue) {
   const target = input.target;
   const frontmatter = input.model.extraFrontmatter;
   switch (target.kind) {
@@ -402,11 +441,15 @@ function writtenTarget(
       // Linking a setting edits the options in place (bindingEdit); it never
       // writes a new source.
       assert(false, 'A binding change is planned in place');
-      return { ok: false, message: 'A binding change is planned in place.' };
+      return { ok: false, ...issue('editor.loopPlan.bindingInPlace') };
     case 'section':
       // A section is rewritten in place too (sectionEdit).
       assert(false, 'A section is planned in place');
-      return { ok: false, message: 'A section is planned in place.' };
+      return { ok: false, ...issue('editor.loopPlan.sectionInPlace') };
+    case 'remove':
+      // A removed loop is unwrapped by the page (appLoopEdits.ts); it has no source to write.
+      assert(false, 'A removed loop is applied by the page');
+      return { ok: false, ...issue('editor.loopPlan.sectionInPlace') };
     default: {
       const exhaustive: never = target;
       return exhaustive;
@@ -419,7 +462,7 @@ function writtenQuery(
   target: Extract<LoopTarget, { readonly kind: 'query' }>,
   holder: Holder | undefined,
   before: ParsedFrontmatter,
-): Written | { readonly ok: false; readonly message: string } {
+): Written | ({ readonly ok: false } & Issue) {
   const query = target.query;
   assertLoopQuery(query);
   assert(query.source.kind !== 'list', 'A list prop’s settings are written in the loop’s head');
@@ -437,7 +480,7 @@ function writtenQuery(
   } else {
     const client = importedName(imports, 'sanity:client', 'sanityClient');
     if (client === undefined && input.sanityClient === 'unavailable') {
-      return { ok: false, message: 'Add the @sanity/astro integration to this project to loop over Sanity content.' };
+      return { ok: false, ...issue('editor.loopPlan.needSanity') };
     }
     if (client === undefined) {
       imports = [...imports, newImport(DEFAULT_SANITY_CLIENT, 'sanity:client')];
@@ -460,7 +503,7 @@ function writtenQuery(
   // A list kept as data is read through the helper, written once, above it.
   const need = target.form === 'data' ? listItemsNeed(before) : { kind: 'present' as const };
   if (need.kind === 'taken') {
-    return { ok: false, message: `This file already has its own ${LIST_ITEMS_NAME}. Rename it to link list settings to properties.` };
+    return { ok: false, ...issue('editor.loopPlan.helperTaken', { name: LIST_ITEMS_NAME }) };
   }
   const helper = withIndentUnit(LIST_ITEMS_HELPER, indentUnitOf(input.model.extraFrontmatter));
   const written = need.kind === 'add' ? `${helper}\n${statement}` : statement;
@@ -475,14 +518,14 @@ function writtenFieldList(
   list: FieldList,
   holder: Holder | undefined,
   before: ParsedFrontmatter,
-): Written | { readonly ok: false; readonly message: string } {
+): Written | ({ readonly ok: false } & Issue) {
   const astro = list.source.kind === 'astro';
   const [path, exported, fallback] = astro
     ? (['astro:content', 'getCollection', 'getCollection'] as const)
     : (['sanity:client', 'sanityClient', DEFAULT_SANITY_CLIENT] as const);
   const reader = importedName(input.model.imports, path, exported);
   if (reader === undefined && !astro && input.sanityClient === 'unavailable') {
-    return { ok: false, message: 'Add the @sanity/astro integration to this project to loop over Sanity content.' };
+    return { ok: false, ...issue('editor.loopPlan.needSanity') };
   }
   const imports = reader === undefined ? [...input.model.imports, newImport(fallback, path)] : input.model.imports;
   const taken = new Set(before.bound);
@@ -704,6 +747,9 @@ export function targetKey(target: LoopTarget): string {
       return `value:${target.data.trim()}`;
     case 'empty':
       return 'empty';
+    case 'remove':
+      // i18n-ignore: an internal key for what a loop reads, never shown.
+      return 'remove';
     case 'binding':
       // Not a source: no children are kept or restored under it.
       return `binding:${target.change.setting}`;
@@ -711,6 +757,7 @@ export function targetKey(target: LoopTarget): string {
       // Nor is a section: the loop still reads the same list.
       return `section:${target.section}`;
     case 'field':
+      // i18n-ignore: an internal key for what a loop reads, never shown.
       return `field:${target.list.source.kind}:${target.list.source.collection}:${target.list.path.join('.')}`;
     default: {
       const exhaustive: never = target;

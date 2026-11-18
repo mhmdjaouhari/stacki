@@ -13,17 +13,21 @@
 
 import { assert } from '../../shared/core/assert';
 import { err, ok, type Result } from '../../shared/core/result';
+import { elementsWithPath } from './frameRegions';
 import {
+  HOVER_STYLE_LIMITS,
   LIVE_RULE_LIMITS,
   isConditionAtRule,
   liveRuleKey,
   normalizeAtRule,
+  parseHoverStyleMessage,
   parseLiveRuleMessage,
   selectorKeyOf,
   sheetPathIsAstroStyle,
   sheetPathIsSource,
   sheetScopeOf,
   sourceSelectorKey,
+  type HoverDeclaration,
   type LiveRuleEdit,
   type LiveRuleTarget,
 } from '../../shared/properties/liveRules';
@@ -55,8 +59,11 @@ const overrides = new Map<string, Override>();
 const patchesByKey = new Map<string, readonly Patch[]>();
 let settleScheduled = false;
 
-/** Applies an app message if it is one; false when it was something else. */
+/** Applies an app message if it is one (a rule preview or a hover preview); false when it was something else. */
 export function receiveLiveRules(input: unknown): boolean {
+  if (receiveHoverStyle(input)) {
+    return true;
+  }
   const message = parseLiveRuleMessage(input);
   if (message === undefined) {
     return false;
@@ -94,6 +101,194 @@ export function receiveLiveRules(input: unknown): boolean {
   assert(overrides.size <= LIVE_RULE_LIMITS.entriesMax, 'receiveLiveRules: previews stay bounded');
   assert(patchesByKey.size <= overrides.size, 'receiveLiveRules: patches belong to held previews');
   return true;
+}
+
+// ───────────────────────────── Hover style ─────────────────────────────
+
+/** One element a hover preview set, and its own inline declarations before it. */
+interface HoverEntry {
+  readonly element: ElementCSSInlineStyle & Element;
+  /** Each previewed property's own inline value and priority, in declaration order. */
+  readonly own: readonly { readonly property: string; readonly value: string; readonly priority: string }[];
+  /** Whether the element had a style attribute at all: one the preview added goes again. */
+  readonly hadStyle: boolean;
+}
+
+/** A settling preview: kept until the page computes each previewed value without it. */
+interface HoverSettle {
+  readonly framesWaited: number;
+  /** What each element computes with the preview on, per property: the values the save must reach. */
+  readonly wanted: readonly (readonly string[])[];
+}
+
+// The hover preview that is up, if any. A look, never a write: nothing here reaches the
+// project, and taking it away leaves each element's style attribute exactly as it was.
+let hover:
+  | {
+      readonly declarations: readonly HoverDeclaration[];
+      readonly entries: readonly HoverEntry[];
+      readonly settle: HoverSettle | undefined;
+    }
+  | undefined = undefined;
+let hoverFrameScheduled = false;
+
+function receiveHoverStyle(input: unknown): boolean {
+  const message = parseHoverStyleMessage(input);
+  if (message === undefined) {
+    return false;
+  }
+  switch (message.op) {
+    case 'clear':
+      clearHoverStyle();
+      break;
+    case 'settle':
+      settleHoverStyle();
+      break;
+    case 'show':
+      clearHoverStyle();
+      showHoverStyle(message.path, message.declarations);
+      break;
+    default: {
+      const exhaustive: never = message;
+      return exhaustive;
+    }
+  }
+  assert(hover === undefined || hover.entries.length <= HOVER_STYLE_LIMITS.elementsMax, 'receiveHoverStyle: bounded');
+  return true;
+}
+
+function showHoverStyle(path: string, declarations: readonly HoverDeclaration[]): void {
+  assert(hover === undefined, 'showHoverStyle: the last preview is gone first');
+  const entries: HoverEntry[] = [];
+  for (const element of elementsWithPath(path)) {
+    if (entries.length >= HOVER_STYLE_LIMITS.elementsMax) {
+      break; // Loop copies past the bound keep their own look; the selected one is among the first.
+    }
+    if (!hasInlineStyle(element)) {
+      continue;
+    }
+    const own = declarations.map(({ property }) => ({
+      property,
+      value: element.style.getPropertyValue(property),
+      priority: element.style.getPropertyPriority(property),
+    }));
+    entries.push({ element, own, hadStyle: element.hasAttribute('style') });
+    for (const { property, value, important } of declarations) {
+      element.style.setProperty(property, value, important ? 'important' : '');
+    }
+  }
+  hover = { declarations, entries, settle: undefined };
+}
+
+// Puts each element's own inline declarations back, newest first, and forgets the preview. Idempotent.
+function clearHoverStyle(): void {
+  const shown = hover;
+  hover = undefined;
+  if (shown === undefined) {
+    return;
+  }
+  for (let index = shown.entries.length - 1; index >= 0; index -= 1) {
+    const entry = shown.entries[index];
+    assert(entry !== undefined, 'clearHoverStyle: index within entries');
+    putOwnStyleBack(entry);
+  }
+}
+
+function putOwnStyleBack(entry: HoverEntry): void {
+  for (let index = entry.own.length - 1; index >= 0; index -= 1) {
+    const own = entry.own[index];
+    assert(own !== undefined, 'putOwnStyleBack: index within declarations');
+    if (own.value === '') {
+      entry.element.style.removeProperty(own.property);
+    } else {
+      entry.element.style.setProperty(own.property, own.value, own.priority);
+    }
+  }
+  if (!entry.hadStyle) {
+    if (entry.element.style.length === 0) {
+      entry.element.removeAttribute('style');
+    }
+  }
+}
+
+// A pick is being saved: the preview stays until the page shows the same thing without it.
+function settleHoverStyle(): void {
+  const shown = hover;
+  if (shown === undefined) {
+    return;
+  }
+  if (shown.settle !== undefined) {
+    return; // Already settling: the first settle's wanted values stand.
+  }
+  const wanted = shown.entries.map((entry) => computedOf(entry, shown.declarations));
+  hover = { ...shown, settle: { framesWaited: 0, wanted } };
+  scheduleHoverFrame();
+}
+
+function scheduleHoverFrame(): void {
+  if (hoverFrameScheduled) {
+    return;
+  }
+  hoverFrameScheduled = true;
+  requestAnimationFrame(hoverFrame);
+}
+
+// Once per frame, before paint: take the preview off and read what the page computes. Where it is
+// what the preview showed, the save has landed and the preview is gone; where not, it goes back on
+// within the same task, so no frame paints the old value. The window bounds a save that never lands.
+function hoverFrame(): void {
+  hoverFrameScheduled = false;
+  const shown = hover;
+  if (shown === undefined) {
+    return;
+  }
+  const settle = shown.settle;
+  if (settle === undefined) {
+    return; // Cleared or shown again since the frame was asked for.
+  }
+  let agrees = true;
+  for (let index = 0; index < shown.entries.length; index += 1) {
+    const entry = shown.entries[index];
+    assert(entry !== undefined, 'hoverFrame: index within entries');
+    putOwnStyleBack(entry);
+    const now = computedOf(entry, shown.declarations);
+    if (now.join('\n') !== (settle.wanted[index] ?? []).join('\n')) {
+      agrees = false;
+    }
+  }
+  if (agrees) {
+    hover = undefined;
+    return;
+  }
+  if (settle.framesWaited + 1 >= HOVER_STYLE_LIMITS.settleFramesMax) {
+    hover = undefined; // The save never showed: the page's own value, as a failed rule save does.
+    return;
+  }
+  for (const entry of shown.entries) {
+    for (const { property, value, important } of shown.declarations) {
+      entry.element.style.setProperty(property, value, important ? 'important' : '');
+    }
+  }
+  hover = { ...shown, settle: { ...settle, framesWaited: settle.framesWaited + 1 } };
+  scheduleHoverFrame();
+}
+
+function computedOf(entry: HoverEntry, declarations: readonly HoverDeclaration[]): readonly string[] {
+  const view = entry.element.ownerDocument.defaultView;
+  if (view === null) {
+    return [];
+  }
+  const style = view.getComputedStyle(entry.element);
+  return declarations.map(({ property }) => style.getPropertyValue(property));
+}
+
+function hasInlineStyle(element: Element): element is ElementCSSInlineStyle & Element {
+  return 'style' in element && element.style instanceof Object && 'setProperty' in element.style;
+}
+
+/** The elements a hover preview is set on now: for tests, which check that `clear` leaves none. */
+export function hoverStyleCount(): number {
+  return hover?.entries.length ?? 0;
 }
 
 /** How many previews are held: for tests, which check that nothing outlives its window. */

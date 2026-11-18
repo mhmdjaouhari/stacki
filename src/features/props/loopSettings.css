@@ -373,6 +373,14 @@
   position: fixed;
   /* Under the menus its own dropdowns open (.dd-popup, 400), over the panel. */
   z-index: 390;
+  /* Never taller than the window below it (its max-height is set where it is
+     placed, RowPopup): a column whose content scrolls inside it, the content's
+     own scroll region first (a Value conditions body), else the pop-up itself. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 10px;
   border-radius: 10px;
   background: #232323;
@@ -681,8 +689,10 @@
   color: #fff;
 }
 .loop-bind-button.primary:hover:not(:disabled) {
-  background: var(--accent);
-  filter: brightness(1.1);
+  background: var(--accent-hover);
+}
+.loop-bind-button.primary:active:not(:disabled) {
+  background: var(--accent-pressed);
 }
 .loop-bind-button:disabled {
   opacity: 0.45;
@@ -833,6 +843,19 @@
   width: 100%;
   min-width: 0;
 }
+/* A loop that reads data (a property, a collection, a project list) is purple, like every value bound to dynamic data: the linked bar, the conditional chip. None and Custom list stay neutral. */
+.loop-source-trigger.is-bound {
+  background: rgba(146, 116, 255, 0.28);
+  color: #c9bbff;
+}
+.loop-source-trigger.is-bound:hover,
+.loop-source-trigger.is-bound[aria-expanded='true'] {
+  background: rgba(146, 116, 255, 0.38);
+}
+.loop-source-trigger.is-bound .dd-icon,
+.loop-source-trigger.is-bound .dd-chevron {
+  color: inherit;
+}
 .loop-source-picker {
   display: flex;
   flex-direction: column;
@@ -867,6 +890,89 @@
 }
 .loop-source-extras .dp-row:hover:not(:disabled) {
   background: var(--bg-hover);
+}
+.loop-field-extras {
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+}
+.loop-field-extras .dp-row {
+  width: 100%;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  text-align: left;
+  justify-content: flex-start;
+}
+.loop-field-extras .dp-row:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* A field typed by name: labels in a column as wide as the longest, controls
+   that shrink with the pop-up, one primary action. Fills, never rules. */
+.loop-typed-form {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 8px 12px;
+  margin: 4px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+}
+.loop-settings-popup .loop-typed-form {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+.loop-typed-label {
+  color: var(--text-dim);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.loop-typed-input {
+  min-width: 0;
+}
+.loop-typed-form input {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+.loop-typed-form .dd-trigger {
+  width: 100%;
+  min-width: 0;
+}
+.loop-quiet-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+.loop-quiet-row:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.loop-typed-note {
+  grid-column: 1 / -1;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}
+.loop-typed-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
 }
 .loop-source-extras .dp-preview {
   margin-left: auto;
@@ -932,6 +1038,7 @@
   min-height: 48px;
   max-height: 200px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .loop-settings-code .expr-input.invalid {
   background: rgba(255, 80, 80, 0.12);
@@ -945,6 +1052,10 @@
    look. A name with a problem says so in red words beneath it; the field
    itself keeps its fill, so the problem reads as text, not as an alarm. */
 .new-prop-form .loop-bind-name {
+  /* Stated here too: opened from a field's dot, the form sits inside the
+     field's .props-field, whose `label { display: block }` would stack each
+     label over its box. */
+  display: grid;
   grid-template-columns: 64px minmax(0, 1fr);
 }
 .new-prop-form .loop-bind-name input[aria-invalid='true'] {
@@ -974,17 +1085,104 @@
   align-items: center;
   gap: 6px;
 }
-/* A list's item field: its name, its kind, and the bin. */
+/*
+ * A list's item field: its name, its kind, and the bin. Narrow, the name takes
+ * the first line with the bin at its end and the kind wraps beneath it, so the
+ * name stays readable; wide, all three share one line. The container is the
+ * card (or nested group) the rows sit in, so the layout follows the panel width.
+ */
+.property-item-fields,
+.property-nested-fields {
+  container-type: inline-size;
+  container-name: item-fields;
+}
 .new-prop-list-field {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 92px) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 6px;
+}
+.new-prop-list-field > input {
+  grid-column: 1;
+  grid-row: 1;
+}
+.new-prop-list-field > .loop-settings-remove {
+  grid-column: 2;
+  grid-row: 1;
+}
+.new-prop-list-field > .dropdown,
+.new-prop-list-field > :nth-child(2) {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+@container item-fields (min-width: 320px) {
+  .new-prop-list-field {
+    grid-template-columns: minmax(96px, 1fr) max-content auto;
+  }
+  .new-prop-list-field > input,
+  .new-prop-list-field > .dropdown,
+  .new-prop-list-field > :nth-child(2),
+  .new-prop-list-field > .loop-settings-remove {
+    grid-column: auto;
+    grid-row: auto;
+  }
 }
 .new-prop-list-field .dd-trigger,
 .loop-property-default .dd-trigger {
   width: 100%;
   min-width: 0;
+}
+/* Wide, the type trigger fits its longest label, icon and chevron; the name input shrinks instead. */
+@container item-fields (min-width: 320px) {
+  .new-prop-list-field > .dropdown,
+  .new-prop-list-field > :nth-child(2) {
+    min-width: 9.5rem;
+  }
+}
+.new-prop-list-field > input {
+  min-width: 0;
+}
+.new-prop-list-field .dd-trigger {
+  white-space: nowrap;
+}
+/* A list or group's own fields: indented on a quiet fill, never a rule. */
+.property-nested-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 12px;
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+}
+.property-nested-title {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+.list-item-nested-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+}
+.list-item-nested-count {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+.list-item-nested-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-left: 10px;
 }
 .new-prop-note {
   color: var(--text-dim);
@@ -996,6 +1194,12 @@
   align-self: flex-start;
   gap: 4px;
 }
+/* The rows above the search: the same 4px inset the list's rows have, so they
+   never sit against the menu's edge or each other, wherever the menu opens. */
+.dp-lead {
+  padding: 4px 4px 0;
+  flex-shrink: 0;
+}
 /* The picker's first row in a component: a new prop for this field. */
 .dp-new-prop {
   display: flex;
@@ -1005,7 +1209,7 @@
   gap: 8px;
   width: 100%;
   height: 28px;
-  padding: 0 8px;
+  padding: 0 8px 0 6px;
   border: none;
   border-radius: 6px;
   background: transparent;

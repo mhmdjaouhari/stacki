@@ -19,8 +19,12 @@ import { styleTransport } from '../../../ipc/editorEnvironment';
 // just text with CSS regions in it, and a stylesheet is that with one region
 // covering the whole file.
 
+import { LayerRegistry } from './cascadeLayers';
+import { orderByImports } from './cssImportOrder';
 import { collectRules, parseRegion, renderEmbed, splitEmbed } from './css';
 import { assert } from '../../../../shared/core/assert';
+import { englishText, messageRef } from '../../../../shared/properties/i18n/messageRef';
+import { failureOf, type Failure } from './failureMessage';
 import { getHost, walkNodes, type HostNode } from './host';
 import type { ElementSnapshot, NativeStyle, ParsedRule, StyleRegion } from './styleTypes';
 import type { MatchTarget, TreeView } from './selectors';
@@ -29,6 +33,14 @@ import { variableEdit } from '../../../ipc/variableEditBridge';
 import { type AnyElement, serializeElementId, nodeById, buildSnapshot } from './webflowElement';
 import { type CanvasAsk, canvasIdentityOf } from './canvasAsk';
 import { isGlobalRegion } from './projectResources';
+import { PLACEMENT_END } from '../../../editor/classAttr';
+import {
+  newStyleTagOpening,
+  templateFrame,
+  type NewStyleTagSettings,
+  type StyleTagAttribute,
+  type StyleTagScope,
+} from '../../../../shared/properties/newStyleTag';
 export { type ProjectVariable, streamProjectVariables, getProjectFontFamilies, type ImageAsset, getImageAssets } from './projectResources';
 
 export {
@@ -57,6 +69,8 @@ export type EmbedSource = {
   order: number;
   element: AnyElement;
   instance?: AnyElement;
+  /** A `<style>` tag of the open file: its scope and whether it is a `define:vars` tag (newStyleTarget.ts). */
+  styleTag?: { readonly scope: StyleTagScope; readonly variables: 'defined' | 'none' };
   /** Where the CSS lives — the panel writes back through this. `astro` is a
    *  component file whose `<style is:global>` blocks are edited in place. */
   origin:
@@ -75,6 +89,11 @@ export class EmbedDocument {
   #code: string;
   #segments: string[];
   #regions: StyleRegion[];
+  // What the source held before the live writes since the last recorded step, while there are
+  // any. A live write (a hover preview, a scrub, a draft being typed) is not a step of its own:
+  // the step that undoes it is recorded by the commit that follows, and goes back to this text,
+  // so a preview that is abandoned leaves nothing to undo and one that is picked leaves one step.
+  #historyBase: string | undefined;
 
   constructor(source: EmbedSource, code: string, segments: string[], regions: StyleRegion[]) {
     // Segments interleave the regions: one before each, and one after the last.
@@ -98,9 +117,23 @@ export class EmbedDocument {
     return this.#regions;
   }
 
-  /** The source now holds `code`, serialized from these regions. */
+  /** The text an undo of the next committed write returns the source to. */
+  get historyBase(): string {
+    return this.#historyBase ?? this.#code;
+  }
+
+  /** The source now holds `code`, serialized from these regions: a committed write. */
   recordWritten(code: string): void {
     this.#code = code;
+    this.#historyBase = undefined;
+  }
+
+  /** The source now holds `code` from a live write: no step is recorded for it. */
+  recordLiveWritten(code: string): void {
+    const base = this.historyBase;
+    this.#code = code;
+    // Back where the live writes began: nothing is left to undo.
+    this.#historyBase = code === base ? undefined : base;
   }
 
   /** Take on a fresh read of the same source. */
@@ -109,6 +142,7 @@ export class EmbedDocument {
     this.#segments = fresh.segments;
     this.#regions = fresh.regions;
     this.#code = fresh.code;
+    this.#historyBase = undefined;
   }
 }
 
@@ -234,6 +268,7 @@ function styleSources(): EmbedSource[] {
       order: order++,
       element: node.id,
       origin: { kind: 'node', nodeId: node.id, filePath: host.openFilePath },
+      styleTag: { scope: isGlobal ? 'global' : 'scoped', variables: node.props?.['define:vars'] === undefined ? 'none' : 'defined' },
     });
   });
 
@@ -317,7 +352,7 @@ async function readSource(source: EmbedSource): Promise<string> {
 /** The text this doc's source file should now hold. A stylesheet or a <style>
  *  node is all CSS; a component file is its markup with only the edited
  *  regions re-stringified. */
-function serializeDocument(embedDocument: EmbedDocument): string {
+export function serializeDocument(embedDocument: EmbedDocument): string {
   if (embedDocument.source.origin.kind === 'astro') {
     return renderEmbed(embedDocument.segments, embedDocument.regions);
   }
@@ -378,7 +413,7 @@ export function embedWritesStarted(): number {
   return embedWriteCount;
 }
 
-export type EmbedWriteResult = { ok: true; code: string } | { ok: false; error: string };
+export type EmbedWriteResult = { ok: true; code: string } | Failure;
 
 // One file's writes, in order. Studio and the demo check each write against the
 // version it was made from (its `base`), so a write may only start once the one
@@ -391,7 +426,7 @@ type FileWriteLane = {
   /** Settles when the last queued task has finished. Never rejects. */
   tail: Promise<void>;
   /** The flush queued behind the running task, not started yet. */
-  waiting: { readonly embedDocument: EmbedDocument; readonly result: Promise<EmbedWriteResult> } | undefined;
+  waiting: { readonly embedDocument: EmbedDocument; readonly result: Promise<EmbedWriteResult>; live: boolean } | undefined;
 };
 
 // Lanes are per file path, so two documents over one file still write in turn.
@@ -430,43 +465,61 @@ function queueOnLane<T>(path: string, task: () => Promise<T>): Promise<T> {
 
 // Queues one write of `embedDocument`'s current regions, or joins the one already
 // waiting for this document: it has not serialized yet, so it will carry this edit.
-function queueFileWrite(embedDocument: EmbedDocument, path: string): Promise<EmbedWriteResult> {
+function queueFileWrite(embedDocument: EmbedDocument, path: string, options: { readonly live: boolean }): Promise<EmbedWriteResult> {
   const lane = fileWriteLane(path);
   if (lane.waiting !== undefined && lane.waiting.embedDocument === embedDocument) {
+    // A commit that joins a live write is the step: the joined write must record it.
+    lane.waiting.live = lane.waiting.live && options.live;
     return lane.waiting.result;
   }
+  // Assigned just below, before the lane runs the task (it runs on a later tick).
+  const { live } = options;
+  let waiting: { readonly embedDocument: EmbedDocument; readonly result: Promise<EmbedWriteResult>; live: boolean } | undefined = undefined;
   const result = queueOnLane(path, () => {
     // Serializing starts now: an edit after this point needs a write of its own.
-    if (lane.waiting?.result === result) {
+    const liveNow = waiting?.live ?? live;
+    if (lane.waiting === waiting) {
       lane.waiting = undefined;
     }
-    return writeFileNow(embedDocument, path);
+    return writeFileNow(embedDocument, path, { live: liveNow });
   });
-  lane.waiting = { embedDocument, result };
+  waiting = { embedDocument, live, result };
+  lane.waiting = waiting;
   return result;
 }
 
 // The one place a stylesheet write is sent. The lane guarantees nothing else is in
 // flight for this file, so the document's code is what the file holds — the base.
-async function writeFileNow(embedDocument: EmbedDocument, path: string): Promise<EmbedWriteResult> {
+async function writeFileNow(embedDocument: EmbedDocument, path: string, options: { readonly live: boolean }): Promise<EmbedWriteResult> {
   const code = serializeDocument(embedDocument);
-  // What the file held before this write — the undo target, and the version the
-  // host checks the write against.
-  const before = embedDocument.code;
+  // What the file holds, which the host checks the write against; and the text an undo
+  // returns to, which differs from it while live writes are on the file (recordLiveWritten).
+  const base = embedDocument.code;
+  const undoTarget = embedDocument.historyBase;
   try {
-    if (before !== code) {
-      await styleTransport.writeStyleFile({ filePath: path, css: code, base: before });
+    if (base !== code) {
+      await styleTransport.writeStyleFile({ filePath: path, css: code, base });
+    }
+    // A live write is no step; the commit that follows it is, and goes back to undoTarget.
+    if (!options.live && undoTarget !== code) {
       // A <style> node's write goes through the page model, which the app
       // already snapshots — only stylesheets need their own history entry.
+      const stylesIn = messageRef('shell.history.stylesIn', { name: embedDocument.source.label });
       getHost().recordUndo?.({
-        label: `styles in ${embedDocument.source.label}`,
+        // The English name stays for readers that predate the reference; the app words the reference in the current language.
+        label: englishText(stylesIn),
+        labelRef: stylesIn,
         // One step per file per burst: a slider drag writes on every tick.
         coalesceKey: `css:${path}`,
-        undo: () => writeStyleFileAndReload(embedDocument, path, before),
+        undo: () => writeStyleFileAndReload(embedDocument, path, undoTarget),
         redo: () => writeStyleFileAndReload(embedDocument, path, code),
       });
     }
-    embedDocument.recordWritten(code);
+    if (options.live) {
+      embedDocument.recordLiveWritten(code);
+    } else {
+      embedDocument.recordWritten(code);
+    }
     assert(embedDocument.code === code, 'writeFileNow: the document holds what was written');
     return { ok: true, code };
   } catch (error: unknown) {
@@ -488,12 +541,12 @@ export async function writeEmbedDocument(
   embedWriteCount += 1;
   const origin = embedDocument.source.origin;
   if (origin.kind === 'file' || origin.kind === 'astro') {
-    return queueFileWrite(embedDocument, origin.path);
+    return queueFileWrite(embedDocument, origin.path, { live });
   }
   const code = serializeDocument(embedDocument);
   const write = getHost().writeStyleNode;
   if (!write) {
-    return { ok: false, error: 'No page open to write into.' };
+    return failureOf('styleModel.write.noPage');
   }
   // A <style> block belonging to the page, while a component is open: there
   // is no such node in the model being edited. The write used to find
@@ -501,7 +554,64 @@ export async function writeEmbedDocument(
   // canvas would never show.
   try {
     if (write({ nodeId: origin.nodeId, filePath: origin.filePath }, code, !live) === false) {
-      return { ok: false, error: "Couldn't find that <style> block in the open file." };
+      return failureOf('styleModel.write.blockMissing', { tag: '<style>' });
+    }
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : '';
+    return { ok: false, error: message || String(error) };
+  }
+  embedDocument.recordWritten(code);
+  return { ok: true, code };
+}
+
+/**
+ * A `<style>` block that is not in the file yet: a document holding the project's template
+ * (newStyleTag.ts; empty by default) that the panel builds the first rule in (editorModel.ts
+ * createRuleForWrite, which puts the rule inside the template's wrapper), so a first rule is shaped
+ * by the same code as every other. Nothing reads it back; the real block is scanned once the host
+ * has added it.
+ */
+export function blankStyleDocument(settings: NewStyleTagSettings): EmbedDocument {
+  const host = getHost();
+  const frame = templateFrame(settings.content);
+  assert(frame.ok, 'blankStyleDocument: the stored template parses');
+  const skeleton = frame.frame.skeleton;
+  const source: EmbedSource = {
+    key: `node:${host.openFilePath ?? ''}:new`,
+    label: newStyleTagOpening(settings.attributes),
+    classNames: [],
+    fromComponent: host.openFileKind === 'component',
+    componentName: undefined,
+    order: 0,
+    element: 'new',
+    origin: { kind: 'node', nodeId: 'new', filePath: host.openFilePath },
+  };
+  const region = parseRegion({ start: 0, end: skeleton.length, css: skeleton, root: undefined });
+  return new EmbedDocument(source, '', ['', ''], [region]);
+}
+
+/**
+ * Hand the host a blank document's first rule as a new block, with the class the rule needs
+ * (firstStyleBlock.ts). One host edit, so one undo step; the result has the shape of every
+ * other write, so the panel settles it the same way.
+ */
+export async function writeFirstStyleBlock(
+  embedDocument: EmbedDocument,
+  block: { readonly className: string | undefined; readonly attributes: readonly StyleTagAttribute[] },
+): Promise<EmbedWriteResult> {
+  embedWriteCount += 1;
+  const add = getHost().addStyleBlock;
+  if (!add) {
+    return failureOf('styleModel.write.pageCannotTakeBlock');
+  }
+  const code = serializeDocument(embedDocument);
+  if (code.trim().length === 0) {
+    return failureOf('styleModel.write.nothingToAdd');
+  }
+  try {
+    const outcome = await add({ css: code, attributes: block.attributes, className: block.className, placement: PLACEMENT_END });
+    if (outcome.tag === 'refused') {
+      return { ok: false, error: outcome.message };
     }
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : '';
@@ -541,12 +651,54 @@ async function writeStyleFileAndReload(embedDocument: EmbedDocument, path: strin
   }
 }
 
+/**
+ * Bring the open page's `<style>` documents up to the page model, in place, and say how many
+ * were read again. Those blocks are read from the model's nodes (readSource), and the model
+ * changes under the panel: an undo or redo, a save's reply, a code edit, a reload. Rereading
+ * every stylesheet over IPC to notice took long enough that the panel showed the step before
+ * (SP-06); a node's text is already in memory. A document with live writes outstanding is
+ * ahead of the model on purpose (the model catches up when they commit), so it is left alone.
+ */
+export function syncNodeDocuments(docs: readonly EmbedDocument[]): number {
+  const host = getHost();
+  let synced = 0;
+  for (const embedDocument of docs) {
+    const origin = embedDocument.source.origin;
+    if (origin.kind !== 'node') {
+      continue;
+    }
+    // Another file's block (the page's, remembered while a component is open) is not in this model.
+    if (origin.filePath !== host.openFilePath) {
+      continue;
+    }
+    if (embedDocument.historyBase !== embedDocument.code) {
+      continue;
+    }
+    const node = nodeById(origin.nodeId);
+    // A block that left the page: the rescan its list change starts takes the document away.
+    if (node === undefined) {
+      continue;
+    }
+    const text = String(node.inner ?? '');
+    if (text === embedDocument.code) {
+      continue;
+    }
+    embedDocument.replaceWith(documentForSource(embedDocument.source, text));
+    assert(embedDocument.code === text, 'syncNodeDocuments: the document holds the node text');
+    synced += 1;
+  }
+  assert(synced <= docs.length, 'syncNodeDocuments: at most one read per document');
+  return synced;
+}
+
 export function rebuildRules(docs: EmbedDocument[]): ParsedRule[] {
   const rules: ParsedRule[] = [];
   // One running counter across every source, so document order — and with it
   // the cascade — is comparable between a stylesheet and a <style> block.
   const order = { n: 0 };
-  const ordered = [...docs].sort((left, right) => left.source.order - right.source.order);
+  // One layer registry for the whole page, so a layer keeps one place in the order wherever it is named.
+  const layers = new LayerRegistry();
+  const { ordered, baseLayers } = documentsInCascadeOrder(docs);
 
   for (const embedDocument of ordered) {
     const origin = embedDocument.source.origin;
@@ -563,6 +715,8 @@ export function rebuildRules(docs: EmbedDocument[]): ParsedRule[] {
         regionIndex,
         idSeed: embedDocument.source.key,
         order,
+        layers,
+        baseLayer: baseLayers.get(embedDocument.source.key),
       });
       // A scoped block of the page reaches the open component only through
       // selectors written `:global(…)`; its other rules style the page alone.
@@ -573,25 +727,54 @@ export function rebuildRules(docs: EmbedDocument[]): ParsedRule[] {
   return rules;
 }
 
+// The documents in the order the page applies them. Stylesheets come first, in the order their
+// `@import`s put them (cssImportOrder.ts); a file nothing imports keeps its listing place. Then
+// the components' global styles and the page's own `<style>` blocks, which come later in the
+// document and win ties. Also the layer each imported file sits in, by embed key.
+function documentsInCascadeOrder(docs: readonly EmbedDocument[]): {
+  readonly ordered: EmbedDocument[];
+  readonly baseLayers: ReadonlyMap<string, readonly string[]>;
+} {
+  const listed = [...docs].sort((left, right) => left.source.order - right.source.order);
+  const files = listed.flatMap((document) => (document.source.origin.kind === 'file' ? [{ document, path: document.source.origin.path }] : []));
+  const placements = orderByImports(files.map(({ document, path }) => ({ path, code: document.code })));
+  const rankByPath = new Map(placements.map((placement) => [placement.path, placement]));
+  const baseLayers = new Map<string, readonly string[]>();
+  const fileDocuments = files.map(({ document }) => document);
+  fileDocuments.sort((left, right) => {
+    const leftPath = left.source.origin.kind === 'file' ? left.source.origin.path : '';
+    const rightPath = right.source.origin.kind === 'file' ? right.source.origin.path : '';
+    return (rankByPath.get(leftPath)?.rank ?? 0) - (rankByPath.get(rightPath)?.rank ?? 0);
+  });
+  for (const document of fileDocuments) {
+    const origin = document.source.origin;
+    const layer = origin.kind === 'file' ? rankByPath.get(origin.path)?.layer : undefined;
+    if (layer !== undefined) {
+      baseLayers.set(document.source.key, layer);
+    }
+  }
+  const others = listed.filter((document) => document.source.origin.kind !== 'file');
+  const ordered = [...fileDocuments, ...others];
+  assert(ordered.length === docs.length, 'documentsInCascadeOrder: every document is placed once');
+  return { ordered, baseLayers };
+}
+
 function reachesComponent(rule: ParsedRule): boolean {
   return rule.selectors.some((selector) => selector.text.includes(':global('));
 }
 
 // Selecting the <style> node a rule lives in; a stylesheet isn't in the tree,
 // so there is nothing to navigate to.
-export async function navigateToEmbed(source: EmbedSource, _pageInstances?: unknown): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function navigateToEmbed(source: EmbedSource, _pageInstances?: unknown): Promise<{ ok: true } | Failure> {
   if (source.origin.kind === 'astro') {
-    return {
-      ok: false,
-      error: `These styles live in ${source.label} — open that ${source.origin.reach === 'page' ? 'page' : 'component'} to see them in the tree.`,
-    };
+    return failureOf(source.origin.reach === 'page' ? 'styleModel.navigate.livesInPage' : 'styleModel.navigate.livesInComponent', { label: source.label });
   }
   if (source.origin.kind !== 'node') {
-    return { ok: false, error: `${source.label} is a stylesheet — open it from the Assets panel.` };
+    return failureOf('styleModel.navigate.stylesheet', { label: source.label });
   }
   const select = getHost().selectNode;
   if (!select) {
-    return { ok: false, error: 'Nothing to select.' };
+    return failureOf('styleModel.navigate.nothing');
   }
   select(source.origin.nodeId);
   return { ok: true };

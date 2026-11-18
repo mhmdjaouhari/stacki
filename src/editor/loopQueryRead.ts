@@ -24,9 +24,10 @@ import { listCollectionOf, readOptionsQuery, type OptionsHome } from './optionsQ
 import { chainOf, conditionOf } from './loopConditionRead';
 import { curatedSelection, entriesSelection, pickedIds } from './loopSelectionRead';
 import { readComparator } from './loopSortRead';
-import { LOOP_QUERY_LIMITS, assertLoopQuery, emptyQuery } from './loopQuery';
+import { LOOP_QUERY_LIMITS, assertLoopQuery, chainableListCode, emptyQuery, isFieldPath, isItemId, listExpressionProblem } from './loopQuery';
 import type { AstroItemParameter, LoopCondition, LoopFieldKind, LoopQuery, LoopSort, LoopSortOrder, LoopSource } from './loopQuery';
 import { namePath, parseExpression, parseFrontmatter, textOf, type Js, type ParsedFrontmatter } from './loopSyntax';
+import { issue, type Issue } from './issue';
 import { listPropOf } from './propDeclaration';
 
 export interface LoopImport {
@@ -41,6 +42,20 @@ export interface LoopReadInput {
   readonly imports: readonly LoopImport[];
   /** The loop's data expression: `posts`, `posts.slice(0, 3)`. */
   readonly data: string;
+  /**
+   * What a list another file's function returns reads as. `traced` (the default)
+   * leaves it a value, whose settings live where the function's query does;
+   * `list` reads the steps in the loop's own head as its settings, for a call
+   * whose query cannot be edited from here.
+   */
+  readonly calls?: 'traced' | 'list' | undefined;
+  /**
+   * What a list's steps read as when the settings cannot say them all. `partial`
+   * (the default) reads the list and keeps the code, as a notice. `kept` reads
+   * the whole expression as the list, so settings are added after the code the
+   * person wrote, which is neither shown as controls nor rewritten.
+   */
+  readonly unreadSteps?: 'partial' | 'kept' | undefined;
   /** What a field holds, when the collection's schema is known. */
   readonly fieldKind?: ((source: LoopSource, path: string) => LoopFieldKind | undefined) | undefined;
 }
@@ -61,7 +76,7 @@ export type LoopReading =
       /** Where its settings live when they are not a query Stacki writes itself. */
       readonly home?: QueryHome | undefined;
     }
-  | { readonly kind: 'partial'; readonly source: LoopSource; readonly chain: readonly string[]; readonly reason: string }
+  | { readonly kind: 'partial'; readonly source: LoopSource; readonly chain: readonly string[]; readonly reason: string; readonly reasonIssue: Issue }
   | { readonly kind: 'value'; readonly root: string; readonly origin: LoopValueOrigin; readonly chain: readonly string[] }
   | { readonly kind: 'code' };
 
@@ -82,6 +97,26 @@ const CHAIN_STEPS_MAX = 8;
 const STEPS_MAX = 16;
 
 export function readLoop(input: LoopReadInput): LoopReading {
+  const reading = readLoopAsWritten(input);
+  if (reading.kind !== 'partial' || input.unreadSteps !== 'kept') {
+    return reading;
+  }
+  return keptReading(input, reading.chain) ?? reading;
+}
+
+// Every step the list takes is code the settings leave alone: the list is the
+// whole expression, with nothing narrowed yet, so what is set is added after it.
+function keptReading(input: LoopReadInput, chain: readonly string[]): LoopReading | undefined {
+  const data = input.data.trim();
+  const parsed = parseExpression(data);
+  if (parsed === undefined || listExpressionProblem(data) !== undefined) {
+    return undefined;
+  }
+  const context: Context = { input, frontmatter: parseFrontmatter(input.frontmatter) };
+  return stepsReading({ source: { kind: 'list', collection: data }, steps: [], chain, filter: undefined, itemPath: [] }, context);
+}
+
+function readLoopAsWritten(input: LoopReadInput): LoopReading {
   const data = input.data.trim();
   if (data === '' || data === '[]') {
     return { kind: 'empty' };
@@ -93,11 +128,29 @@ export function readLoop(input: LoopReadInput): LoopReading {
   const frontmatter = parseFrontmatter(input.frontmatter);
   const context: Context = { input, frontmatter };
   const pipeline = pipelineOf({ source: parsed.source, node: parsed.expression }, context, []);
+  if (pipeline.kind === 'value' || pipeline.kind === 'unknown') {
+    const picked = pickedListReading({ source: parsed.source, node: parsed.expression });
+    if (picked !== undefined) {
+      return picked;
+    }
+  }
   if (pipeline.kind === 'value') {
-    return listPropReading(pipeline, context) ?? { kind: 'value', root: pipeline.root, origin: originOf(pipeline.root, context), chain: pipeline.chain };
+    const origin = originOf(pipeline.root, context);
+    const held = listPropReading(pipeline, context);
+    if (held !== undefined) {
+      return held;
+    }
+    // Every other list is read where the loop reads it: the steps in its head are
+    // its filter, sort and limit, whatever the list is (a path, a props array).
+    // A list another file's function returns keeps its own settings, unless asked.
+    const headed =
+      origin.kind === 'call' && input.calls !== 'list'
+        ? undefined
+        : headListReading({ source: parsed.source, node: parsed.expression }, context, pipeline.chain);
+    return headed ?? { kind: 'value', root: pipeline.root, origin, chain: pipeline.chain };
   }
   if (pipeline.kind === 'unknown') {
-    return { kind: 'code' };
+    return headListReading({ source: parsed.source, node: parsed.expression }, context, []) ?? { kind: 'code' };
   }
   if (pipeline.kind === 'options') {
     return { kind: 'query', query: pipeline.query, chain: pipeline.chain, client: undefined, home: pipeline.home };
@@ -155,15 +208,38 @@ export function readPipeline(input: LoopReadInput): LoopPipeline | undefined {
   const pipeline = pipelineOf({ source: parsed.source, node: parsed.expression }, context, []);
   const headOffset = parsed.source.indexOf(data);
   assert(headOffset >= 0, 'A parsed expression holds its own text');
+  if (input.unreadSteps === 'kept') {
+    const written = readLoopAsWritten(input);
+    if (written.kind === 'partial') {
+      // The steps are kept as part of the list, so none of them is a step to rewrite.
+      return {
+        source: { kind: 'list', collection: data },
+        base: chainableListCode(data),
+        steps: [],
+        filterArgument: undefined,
+        itemPath: [],
+        chain: written.chain,
+        headOffset,
+      };
+    }
+  }
   const placed = (step: Step): PipelineStep => ({
     place: step.call.source === parsed.source ? 'head' : 'frontmatter',
     source: step.call.source,
     call: step.call.node,
   });
+  if ((pipeline.kind === 'unknown' || pipeline.kind === 'value') && pickedListOf({ source: parsed.source, node: parsed.expression }) !== undefined) {
+    // Picked items are not a list's steps: there is nothing here for a section to rewrite.
+    return undefined;
+  }
+  if (pipeline.kind === 'unknown') {
+    return headListPipeline({ source: parsed.source, node: parsed.expression }, context, { chain: [], headOffset });
+  }
   if (pipeline.kind === 'value') {
     const reading = listPropReading(pipeline, context);
     if (reading === undefined) {
-      return undefined;
+      const called = originOf(pipeline.root, context).kind === 'call' && input.calls !== 'list';
+      return called ? undefined : headListPipeline({ source: parsed.source, node: parsed.expression }, context, { chain: pipeline.chain, headOffset });
     }
     const source: LoopSource = { kind: 'list', collection: pipeline.root };
     return {
@@ -198,6 +274,156 @@ export function readPipeline(input: LoopReadInput): LoopPipeline | undefined {
     itemPath: base.list?.itemPath ?? ['data'],
     chain: pipeline.chain,
     headOffset,
+  };
+}
+
+// Items picked by hand from a list, in the order picked:
+//   ["a", "b"].map((key) => list.find((item) => item.slug === key)).filter(Boolean)
+//   [0, 2].map((index) => list[index]).filter(Boolean)
+// The list is whatever expression the picks are found in. The picks are ids of
+// a field of the item, or positions; any other shape of code is not a pick.
+interface PickedList {
+  readonly list: Located;
+  readonly picks: readonly string[];
+  readonly field: string | undefined;
+}
+
+function pickedListOf(start: Located): PickedList | undefined {
+  const node = start.node;
+  const filtered =
+    node.kind === 'call' && node.callee.kind === 'member' && node.callee.property === 'filter' && node.args.length === 1 && node.args[0]?.kind === 'name';
+  if (!filtered || node.kind !== 'call' || node.callee.kind !== 'member' || node.args[0]?.kind !== 'name' || node.args[0].name !== 'Boolean') {
+    return undefined;
+  }
+  const mapped = node.callee.object;
+  if (mapped.kind !== 'call' || mapped.callee.kind !== 'member' || mapped.callee.property !== 'map' || mapped.args.length !== 1) {
+    return undefined;
+  }
+  const picks = mapped.callee.object;
+  const callback = mapped.args[0];
+  if (picks.kind !== 'array' || picks.items.length > LOOP_QUERY_LIMITS.selectionMax || callback?.kind !== 'function') {
+    return undefined;
+  }
+  const parameter = callback.parameters[0];
+  const body = callback.body;
+  if (parameter?.kind !== 'name' || callback.parameters.length !== 1 || body === undefined) {
+    return undefined;
+  }
+  if (body.kind === 'index' && body.index.kind === 'name' && body.index.name === parameter.name) {
+    const positions = picks.items.flatMap((item) =>
+      item.kind === 'number' && Number.isSafeInteger(item.value) && item.value >= 0 ? [String(item.value)] : [],
+    );
+    return positions.length === picks.items.length ? { list: { source: start.source, node: body.object }, picks: positions, field: undefined } : undefined;
+  }
+  const field = findField(body, parameter.name);
+  const keys = picks.items.flatMap((item) => (item.kind === 'string' && isItemId(item.value) ? [item.value] : []));
+  if (field === undefined || keys.length !== picks.items.length) {
+    return undefined;
+  }
+  return { list: { source: start.source, node: field.list }, picks: keys, field: field.path };
+}
+
+// `list.find((item) => item.slug === key)`: the list, and the field compared.
+function findField(body: Js, key: string): { readonly list: Js; readonly path: string } | undefined {
+  if (body.kind !== 'call' || body.callee.kind !== 'member' || body.callee.property !== 'find' || body.args.length !== 1) {
+    return undefined;
+  }
+  const finder = body.args[0];
+  const item = finder?.kind === 'function' ? finder.parameters[0] : undefined;
+  const test = finder?.kind === 'function' ? finder.body : undefined;
+  if (item?.kind !== 'name' || test?.kind !== 'binary' || test.operator !== '===') {
+    return undefined;
+  }
+  const [read, compared] = test.right.kind === 'name' ? [test.left, test.right] : [test.right, test.left];
+  const path = namePath(read);
+  if (compared.kind !== 'name' || compared.name !== key || path?.[0] !== item.name || path.length < 2) {
+    return undefined;
+  }
+  const field = path.slice(1).join('.');
+  return isFieldPath(field) ? { list: body.callee.object, path: field } : undefined;
+}
+
+function pickedListReading(start: Located): LoopReading | undefined {
+  const picked = pickedListOf(start);
+  if (picked === undefined) {
+    return undefined;
+  }
+  const text = textOf(picked.list, picked.list.node);
+  if (listExpressionProblem(text) !== undefined) {
+    return undefined;
+  }
+  const source: LoopSource = { kind: 'list', collection: text };
+  const query: LoopQuery = { ...emptyQuery(source), selection: picked.picks, selectionField: picked.field };
+  return checked(query, { chain: [] }, undefined);
+}
+
+// A list read where the loop reads it: the head's trailing method calls are the
+// steps, and what they are called on is the list, whatever it is. It is the one
+// reading every loop has, so Filters, Sort and Limit show whatever the source.
+interface HeadList {
+  readonly base: Located;
+  /** Nearest the list first, as the code runs them. */
+  readonly steps: readonly Step[];
+}
+
+function headListOf(start: Located): HeadList | undefined {
+  const peeled: Step[] = [];
+  let current = start;
+  for (let pass = 0; pass <= STEPS_MAX; pass++) {
+    const step = stepOf(current);
+    if (step === undefined || !isSettingStep(step.step) || isOptionalCall(current.node)) {
+      const text = textOf(current, current.node);
+      return listExpressionProblem(text) === undefined ? { base: current, steps: peeled.reverse() } : undefined;
+    }
+    peeled.push(step.step);
+    current = step.from;
+  }
+  // A longer chain is not a list's settings.
+  return undefined;
+}
+
+// A step that is not a setting's method (`.map`, `.flatMap`, `.concat`) reshapes
+// the list: what it is called on and it together are the list, kept as written.
+function isSettingStep(step: Step): boolean {
+  return step.kind !== 'other' || METHOD_STEPS.has(step.name);
+}
+
+// `list?.filter(…)` does not throw for a missing list, which a rewritten
+// `list.filter(…)` would: the whole call is part of the list, kept as written.
+function isOptionalCall(node: Js): boolean {
+  return node.kind === 'call' && node.callee.kind === 'member' && node.callee.optional;
+}
+
+function headListReading(start: Located, context: Context, chain: readonly string[]): LoopReading | undefined {
+  const head = headListOf(start);
+  if (head === undefined) {
+    return undefined;
+  }
+  const source: LoopSource = { kind: 'list', collection: textOf(head.base, head.base.node) };
+  const reading = stepsReading({ source, steps: head.steps, chain, filter: undefined, itemPath: [] }, context);
+  assert(reading.kind === 'query' || reading.kind === 'partial', 'A head list’s steps read as a query or partly');
+  return reading;
+}
+
+function headListPipeline(
+  start: Located,
+  context: Context,
+  held: { readonly chain: readonly string[]; readonly headOffset: number },
+): LoopPipeline | undefined {
+  const head = headListOf(start);
+  if (head === undefined) {
+    return undefined;
+  }
+  void context;
+  const text = textOf(head.base, head.base.node);
+  return {
+    source: { kind: 'list', collection: text },
+    base: chainableListCode(text),
+    steps: head.steps.map((step) => ({ place: 'head' as const, source: step.call.source, call: step.call.node })),
+    filterArgument: undefined,
+    itemPath: [],
+    chain: held.chain,
+    headOffset: held.headOffset,
   };
 }
 
@@ -514,7 +740,19 @@ function heldListChain(pipeline: Extract<Pipeline, { readonly kind: 'value' }>, 
   if (pipeline.chain.length > 0) {
     return undefined;
   }
-  return listPropOf(context.input.frontmatter, pipeline.root) === undefined ? undefined : [];
+  if (listPropOf(context.input.frontmatter, pipeline.root) !== undefined) {
+    return [];
+  }
+  // A list a project module exports (`import { NAV } from '../consts'`) is read
+  // where the loop reads it, like a prop: the name is the list, and its steps
+  // are the loop's settings. A package's import, or one called, is not.
+  return importsProjectData(context.input.imports, pipeline.root) ? [] : undefined;
+}
+
+// Whether `name` is imported, by name or default, from a module of the project itself.
+const PROJECT_SPECIFIER = /^(?:\.{1,2}\/|@\/|~\/)/;
+function importsProjectData(imports: readonly LoopImport[], name: string): boolean {
+  return imports.some((entry) => entry.name === name && PROJECT_SPECIFIER.test(entry.path));
 }
 
 // ---------------------------------------------------------------------------
@@ -528,7 +766,7 @@ function queryOf(pipeline: Extract<Pipeline, { readonly kind: 'collection' }>, c
     return sanityQueryOf(base, pipeline, context);
   }
   if (!COLLECTION_NAME.test(source.collection)) {
-    return partial(source, pipeline, 'The collection is named by code.');
+    return partial(source, pipeline, issue('editor.loopRead.collectionNamed'));
   }
   if (base.selection !== undefined) {
     return selectedOf(base, pipeline);
@@ -562,33 +800,29 @@ function stepsReading(
   const pipeline = { chain: list.chain };
   const order = stepOrder(list.steps);
   if (order === undefined) {
-    return partial(source, pipeline, 'Its items are changed by code the list settings cannot show.');
+    return partial(source, pipeline, issue('editor.loopRead.itemsChanged'));
   }
   const filters = [...(list.filter ? [list.filter] : []), ...order.filters];
   const conditions = astroConditions(filters, source, context, itemPath);
   if (conditions === undefined) {
-    return partial(source, pipeline, 'Its filter is written in a way the list settings cannot show.');
+    return partial(source, pipeline, issue('editor.loopRead.filterShape'));
   }
   const sorting =
     order.sort === undefined ? { sorts: [], random: false } : readComparator(order.sort, itemPath, source.kind === 'list' ? 'field' : 'not-field');
   // A comparator no sort key can say is kept as code: a custom sort.
   const customSort = sorting === undefined && order.sort !== undefined ? customSortOf(order.sort) : undefined;
   if (sorting === undefined && customSort === undefined) {
-    return partial(source, pipeline, 'Its sort order is computed by code.');
+    return partial(source, pipeline, issue('editor.loopRead.sortComputed'));
   }
   if (order.reversed && customSort !== undefined) {
-    return partial(source, pipeline, 'Its sort order is computed by code, then reversed.');
+    return partial(source, pipeline, issue('editor.loopRead.sortComputedReversed'));
   }
   // The schema knows better than the syntax: `+b.data.date` is a date read as a number.
   const typed = (sorting?.sorts ?? []).map((sort) => withOrder(sort, source, context.input.fieldKind));
   const sorts = order.reversed ? typed.map(flipped) : typed;
   const random = sorting?.random === true;
   if (order.reversed && sorts.length === 0 && !random) {
-    return partial(
-      source,
-      pipeline,
-      source.kind === 'list' ? 'It is shown in reverse of the list’s own order.' : 'It is shown in reverse of the collection’s own order.',
-    );
+    return partial(source, pipeline, source.kind === 'list' ? issue('editor.loopRead.reversedList') : issue('editor.loopRead.reversedCollection'));
   }
   const query: LoopQuery = {
     source,
@@ -600,7 +834,7 @@ function stepsReading(
     projection: undefined,
     ...(customSort === undefined ? {} : { customSort }),
   };
-  return checked(query, pipeline, undefined) ?? partial(source, pipeline, 'Its settings are outside what the list settings can show.');
+  return checked(query, pipeline, undefined) ?? partial(source, pipeline, issue('editor.loopRead.settingsOutside'));
 }
 
 // Picked items. Filters after them only drop ids no longer found (getEntries
@@ -608,7 +842,7 @@ function stepsReading(
 function selectedOf(base: Extract<Base, { readonly kind: 'astro' }>, pipeline: Extract<Pipeline, { readonly kind: 'collection' }>): LoopReading {
   const source: LoopSource = { kind: 'astro', collection: base.collection };
   if (pipeline.steps.some((step) => step.kind !== 'filter')) {
-    return partial(source, pipeline, 'Its picked items are changed by code.');
+    return partial(source, pipeline, issue('editor.loopRead.pickedChanged'));
   }
   const query: LoopQuery = { ...emptyQuery(source), selection: base.selection };
   const read = checked(query, pipeline, undefined);
@@ -632,27 +866,27 @@ function sanityQueryOf(
     const reordered = pipeline.steps.length === 0 || (pipeline.steps.length === 1 && pipeline.steps[0]?.kind === 'sort');
     const picked: LoopQuery = { ...emptyQuery(source), selection: groq.selection, projection: groq.projection };
     return reordered
-      ? (checked(picked, pipeline, base.client) ?? partial(source, pipeline, 'Its picked items are outside the list settings.'))
-      : partial(source, pipeline, 'Its picked documents are changed by code after they are fetched.');
+      ? (checked(picked, pipeline, base.client) ?? partial(source, pipeline, issue('editor.loopRead.pickedOutside')))
+      : partial(source, pipeline, issue('editor.loopRead.pickedDocsChanged'));
   }
   const order = stepOrder(pipeline.steps);
   if (order === undefined || order.filters.length > 0 || order.reversed) {
-    return partial(source, pipeline, 'Its items are changed by code after they are fetched.');
+    return partial(source, pipeline, issue('editor.loopRead.itemsChangedAfterFetch'));
   }
   const random = order.sort === undefined ? false : readComparator(order.sort, [], 'not-field')?.random === true;
   // A sort after the fetch that is not a shuffle is a custom sort: GROQ's own
   // order and a slice before it would both be undone by it.
   const customSort = order.sort !== undefined && !random ? customSortOf(order.sort) : undefined;
   if (order.sort !== undefined && !random && customSort === undefined) {
-    return partial(source, pipeline, 'It is sorted by code after it is fetched.');
+    return partial(source, pipeline, issue('editor.loopRead.sortedAfterFetch'));
   }
   const sliced = order.offset > 0 || order.limit !== undefined;
   const groqSliced = groq.offset > 0 || groq.limit !== undefined;
   if (sliced && groqSliced) {
-    return partial(source, pipeline, 'It is sliced twice.');
+    return partial(source, pipeline, issue('editor.loopRead.slicedTwice'));
   }
   if (customSort !== undefined && (groq.sorts.length > 0 || groqSliced)) {
-    return partial(source, pipeline, 'It is ordered by GROQ, then again by code.');
+    return partial(source, pipeline, issue('editor.loopRead.groqThenCode'));
   }
   const fieldKinds = context.input.fieldKind;
   const conditions = groq.conditions;
@@ -668,7 +902,7 @@ function sanityQueryOf(
     parameter: { kind: 'data' },
     ...(customSort === undefined ? {} : { customSort }),
   };
-  return checked(query, pipeline, base.client) ?? partial(source, pipeline, 'Its settings are outside what the list settings can show.');
+  return checked(query, pipeline, base.client) ?? partial(source, pipeline, issue('editor.loopRead.settingsOutside'));
 }
 
 function checked(query: LoopQuery, pipeline: { readonly chain: readonly string[] }, client: string | undefined): LoopReading | undefined {
@@ -689,8 +923,8 @@ function withinLimits(query: LoopQuery): boolean {
   return query.limit === undefined || (query.limit >= 1 && query.limit <= LOOP_QUERY_LIMITS.limitMax);
 }
 
-function partial(source: LoopSource, pipeline: { readonly chain: readonly string[] }, reason: string): LoopReading {
-  return { kind: 'partial', source, chain: pipeline.chain, reason };
+function partial(source: LoopSource, pipeline: { readonly chain: readonly string[] }, reason: Issue): LoopReading {
+  return { kind: 'partial', source, chain: pipeline.chain, reason: reason.message, reasonIssue: reason };
 }
 
 interface StepOrder {

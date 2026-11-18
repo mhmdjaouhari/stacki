@@ -8,10 +8,13 @@
 
 import postcss, { type Root, type Rule, type AtRule, type ChildNode } from 'postcss';
 import type { ParsedDeclaration, ParsedRule, StyleRegion } from './styleTypes';
+import { LayerRegistry, layerNamesOf, type LayerPosition } from './cascadeLayers';
 import { parseSelectorList, selectorListMembers } from './selectors';
 import { ruleChainLevels, ruleHead, ruleLayout, sourceTextFromEditor } from './cssRuleText';
 import { assert } from '../../../../shared/core/assert';
+import type { TemplateWrapper } from '../../../../shared/properties/newStyleTag';
 import { LIMITS } from '../../../../shared/core/limits';
+import { failureOf, type Failure } from './failureMessage';
 import {
   type DeclarationValue,
   squash,
@@ -37,6 +40,11 @@ type WalkContext = {
   idSeed: string;
   /** Shared running counter assigning cascade document order across embeds. */
   order: { n: number };
+  /** The page's layer registry, shared by every source so a layer keeps one place in the order.
+   *  A call without one numbers the layers of its own region only. */
+  layers?: LayerRegistry;
+  /** The layer the whole region sits in: a stylesheet imported with `layer(name)`. */
+  baseLayer?: readonly string[] | undefined;
 };
 
 /** Split a selector list on top-level commas (ignoring commas inside `()`/`[]`). */
@@ -118,6 +126,12 @@ export function collectRules(region: StyleRegion, context: WalkContext): ParsedR
   }
   const rules: ParsedRule[] = [];
   let ruleCounter = 0;
+  // The layers around the walk's position, outermost first. Local mutation, centralized here:
+  // a layer block pushes its names for the length of its walk and pops them after.
+  const layers = context.layers ?? new LayerRegistry();
+  const layerStack: string[] = [...(context.baseLayer ?? [])];
+  const layerOfRule = () => (layerStack.length === 0 ? undefined : layers.positionOf(layerStack));
+  let anonymousLayers = 0;
 
   // parentSelectors: undefined at the top level; the enclosing rule's RESOLVED selectors
   // once inside one. ancestorDisplay: the enclosing rules' RAW selectors plus `@`
@@ -141,7 +155,7 @@ export function collectRules(region: StyleRegion, context: WalkContext): ParsedR
         // the query position (shown when viewing that query).
         const nestedDisplay = selectorsOnly.length > 1 ? renderNestedPath(selectorsOnly) : undefined;
         const queryDisplay = displayPath.includes('@') ? renderNestedPath(displayPath) : undefined;
-        rules.push(buildRule(node, atContext, context, ruleCounter++, resolved, nestedDisplay, queryDisplay));
+        rules.push(withLayer(buildRule(node, atContext, context, ruleCounter++, resolved, nestedDisplay, queryDisplay), layerOfRule()));
         const nextSelectors = resolved ?? splitTopLevelCommas(node.selector);
         walk(node, atContext, nextSelectors, displayPath, depth + 1);
       } else if (child.type === 'atrule') {
@@ -156,15 +170,31 @@ export function collectRules(region: StyleRegion, context: WalkContext): ParsedR
           // A nested query's OWN bare declarations style the ENCLOSING selector within
           // the query. Surface them as a rule bound to the at-rule node itself (its
           // direct decls), so the authored bare form round-trips without an `& { }`.
-          if (parentSelectors && parentSelectors.length && at.some((child) => child.type === 'decl')) {
+          // A just-scaffolded query (`selector { @media (…) }`) has no block body yet: `nodes` is undefined, not [].
+          if (parentSelectors && parentSelectors.length && at.nodes !== undefined && at.some((child) => child.type === 'decl')) {
             const selectorsOnly = nextDisplay.filter((part) => part !== '@');
             const nestedDisplay = selectorsOnly.length > 1 ? renderNestedPath(selectorsOnly) : undefined;
             const queryDisplay = renderNestedPath(nextDisplay);
-            rules.push(buildRule(at as unknown as Rule, nextContext, context, ruleCounter++, parentSelectors, nestedDisplay, queryDisplay));
+            rules.push(
+              withLayer(buildRule(at as unknown as Rule, nextContext, context, ruleCounter++, parentSelectors, nestedDisplay, queryDisplay), layerOfRule()),
+            );
           }
           walk(at, nextContext, parentSelectors, nextDisplay, depth + 1);
-        } else if (name === 'layer' && at.nodes) {
-          walk(at, atContext, parentSelectors, ancestorDisplay, depth + 1);
+        } else if (name === 'layer') {
+          const names = layerNamesOf(at.params);
+          if (at.nodes === undefined) {
+            // `@layer a, b;` only fixes the order: it holds no rules.
+            for (const path of names) {
+              layers.positionOf([...layerStack, ...path]);
+            }
+          } else {
+            // A block names one layer, or none: each anonymous block is a layer of its own.
+            const path = names[0] ?? [`\u0000anonymous-${context.embedKey}-${anonymousLayers++}`];
+            const outer = layerStack.length;
+            layerStack.push(...path);
+            walk(at, atContext, parentSelectors, ancestorDisplay, depth + 1);
+            layerStack.length = outer;
+          }
         }
         // @keyframes / @font-face / @import etc. inject no element styles — skip.
       }
@@ -588,7 +618,14 @@ function ensureQueryChain(root: Root, segments: readonly string[]): Root | AtRul
  * Create `selector { prop: value }` at the region root (base, non-@ level). Returns false on
  * empty input.
  */
-export function createRuleAtRoot(region: StyleRegion, selector: string, prop: string, declared: DeclarationValue): boolean {
+export function createRuleAtRoot(
+  region: StyleRegion,
+  selector: string,
+  prop: string,
+  declared: DeclarationValue,
+  /** The at-rule blocks a new-style-tag template puts rules in (newStyleTag.ts); none writes at the root. */
+  wrappers: readonly TemplateWrapper[] = [],
+): boolean {
   if (!region.root) {
     return false;
   }
@@ -604,12 +641,62 @@ export function createRuleAtRoot(region: StyleRegion, selector: string, prop: st
     setDeclOnRule(existing, cleanProp, { value: cleanValue, important: declared.important });
     return true;
   }
+  // A tag that follows the project's template already holds its wrapper (`@layer components {}`):
+  // the rule goes inside it, after the rules there. A tag that does not hold it is written as ever.
+  const container = wrapperContainer(region.root, wrappers);
+  if (container !== undefined) {
+    openEmptyWrapper(container);
+    return createRuleInAtRule(container, selector, prop, declared);
+  }
   // Attached first, as in createRuleInAtRule, so the body indents from the rule's line.
   const rule = postcss.rule({ selector });
   appendTopLevel(region.root, rule);
   setDeclOnRule(rule, cleanProp, { value: cleanValue, important: declared.important });
   placeNewRuleBody(rule);
   return true;
+}
+
+/**
+ * A template's wrapper written on one line (`@layer components {}` or `{ }`) closes on a line of its
+ * own once it holds a rule, as `@layer components {\n}` does; otherwise the rule's last line ran
+ * into both closing braces (`color: red;}}`). Only an empty wrapper is touched: one that already
+ * holds anything keeps the person's own layout.
+ */
+function openEmptyWrapper(container: AtRule): void {
+  if ((container.nodes ?? []).length > 0) {
+    return;
+  }
+  const after = container.raws.after ?? '';
+  if (after.includes('\n')) {
+    return;
+  }
+  const before = container.raws.before ?? '';
+  const lineIndent = before.includes('\n') ? before.slice(before.lastIndexOf('\n') + 1) : '';
+  container.assign({ raws: { ...container.raws, after: `\n${lineIndent}` } });
+  assert((container.raws.after ?? '').startsWith('\n'), 'openEmptyWrapper: the closing brace starts a line');
+}
+
+/**
+ * The innermost block of a template's wrapper chain, found at the top level of `root` by at-rule
+ * name and parameters (whitespace-insensitive); undefined when the chain is empty or any link is
+ * missing, so a tag that does not follow the template is never restructured. The chain is the
+ * template's own, a handful of links; the search visits each level's children once.
+ */
+export function wrapperContainer(root: Root, wrappers: readonly TemplateWrapper[]): AtRule | undefined {
+  assert(wrappers.length <= LIMITS.treeDepthMax, 'wrapperContainer: a template nests a bounded number of blocks');
+  let container: Root | AtRule = root;
+  let found: AtRule | undefined;
+  for (const wrapper of wrappers) {
+    const link: AtRule | undefined = (container.nodes ?? []).find(
+      (child): child is AtRule => child.type === 'atrule' && child.name.toLowerCase() === wrapper.name && squash(child.params) === wrapper.params,
+    );
+    if (link === undefined) {
+      return undefined;
+    }
+    found = link;
+    container = link;
+  }
+  return found;
 }
 
 /**
@@ -655,6 +742,11 @@ export function ensureNestPath(region: StyleRegion, path: NestStep[]): boolean {
     container = level.node;
   }
   return true;
+}
+
+// A rule with its layer position, written only when the rule is layered.
+function withLayer(rule: ParsedRule, layer: LayerPosition | undefined): ParsedRule {
+  return layer === undefined ? rule : { ...rule, layer };
 }
 
 function buildRule(
@@ -793,7 +885,7 @@ export function reorderDeclarations(rule: ParsedRule, orderedDeclIds: string[]) 
  * block's indentation and the file's own indent unit go back before parsing, and the
  * rule keeps the whitespace that led up to it, so the file keeps its layout.
  */
-export function replaceRuleCss(rule: ParsedRule, editorCss: string): { ok: true } | { ok: false; error: string } {
+export function replaceRuleCss(rule: ParsedRule, editorCss: string): { ok: true } | Failure {
   const before = rule.node.raws.before;
   const sourceCss = sourceTextFromEditor(editorCss, ruleLayout(rule.node));
   try {
@@ -801,7 +893,7 @@ export function replaceRuleCss(rule: ParsedRule, editorCss: string): { ok: true 
     // A nested query's own declarations are a rule bound to the at-rule itself.
     const nodes = parsed.nodes.filter((node) => node.type === rule.node.type);
     if (!nodes.length) {
-      return { ok: false, error: 'No CSS rule found in the edited text.' };
+      return failureOf('styleModel.css.noRule');
     }
     const first = parsed.first;
     assert(first !== undefined, 'replaceRuleCss: a parse with a rule has a first node');

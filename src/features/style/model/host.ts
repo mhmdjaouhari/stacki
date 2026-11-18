@@ -10,6 +10,8 @@ import { assert } from '../../../../shared/core/assert';
 import { LIMITS } from '../../../../shared/core/limits';
 import { PX_LENGTHS, type LengthUnit } from '../../../../shared/properties/lengthUnit';
 import type { ClassPlacement } from '../../../editor/classAttr';
+import type { TypedMessageRef } from '../../../../shared/properties/i18n/messageRef';
+import type { StyleTagAttribute } from '../../../../shared/properties/newStyleTag';
 
 type HostAttr = { readonly type: string; readonly value?: string };
 
@@ -51,6 +53,18 @@ export type StyleNodeTarget = {
 /** A `style` attribute as the panel writes it: a declaration string, or an expression (`style={…}`). */
 export type InlineStyleAttr = { readonly type: 'string' | 'expr'; readonly value: string };
 
+/** A new style block for the open file, and the class its rule needs on the selected element. */
+export type StyleBlockRequest = {
+  /** The block's CSS as the panel builds it: tab-indented rule lines ended by `\n`. The host
+   *  sets it between the tags in the file's own indent and line ending (styleBlockInner). */
+  readonly css: string;
+  /** The opening tag's attributes (`is:global`, `lang="scss"`): the project's `newStyleTag` setting at the time of the write. */
+  readonly attributes: readonly StyleTagAttribute[];
+  /** The class to put on the selected element, or undefined when it already carries the selector. */
+  readonly className: string | undefined;
+  readonly placement: ClassPlacement;
+};
+
 export type ClassOutcome = { readonly tag: 'applied' } | { readonly tag: 'refused'; readonly message: string };
 
 export type HostState = {
@@ -60,6 +74,8 @@ export type HostState = {
   selectedId: string | undefined;
   /** Canvas breakpoint: desktop | tablet | phone. */
   device: string;
+  /** The canvas's rendered width in CSS pixels (fit and custom included), or undefined while unknown. The panel follows it (embed/contextFollow.ts). */
+  canvasWidthPx: number | undefined;
   /** Stylesheets in the project, from style:listFiles. */
   files: Array<{ rel: string; name: string; path: string; size: number }>;
   /** Component files holding a `<style is:global>` block, from
@@ -112,12 +128,26 @@ export type HostState = {
    *  moves the canvas inside it (model/queryWidth.ts). Absent where the host
    *  has no canvas to size. */
   setCanvasWidth: ((widthPx: number) => void) | undefined;
+  /** Put the canvas on the desktop preset, exactly as the toolbar's desktop device does
+   *  (one handler, so the width, the active device and the readout change together).
+   *  Choosing Base with no single query convention lands there (model/baseWidth.ts).
+   *  Absent where the host has no canvas to size. */
+  showDesktopCanvas: (() => void) | undefined;
   /** Put a class on the selected element. Typing a bare class in the selector
    *  box should land it on the element, the way a class field would — a rule
    *  for a class the element doesn't carry would never apply. Resolves once the
    *  page edit reached disk or was refused: the stylesheet rule for that class
    *  is written only after it applied (step 6, plan §3.3 — outcome-gated). */
   addClass: ((className: string, placement: ClassPlacement) => Promise<ClassOutcome>) | undefined;
+  /** Create the page's first `<style>` tag (model/firstStyleBlock.ts, newStyleTarget.ts), global or not as
+   *  `request.attributes` say: add a block holding `css` at the end of the open file and, when
+   *  `className` is given, put that class on the selected element, as ONE page edit and so
+   *  one undo step. The CSS is the block's whole text, rule included. Resolves once the edit
+   *  reached disk or was refused; a refusal says why. Absent where the host cannot add a node. */
+  addStyleBlock: ((request: StyleBlockRequest) => Promise<ClassOutcome>) | undefined;
+  /** Open the project's settings for new `<style>` tags (Desktop's Settings → Style tags), from the
+   *  "Add custom styles in" list. Absent where the host has no such settings: the list then has no link. */
+  openStyleTagSettings: (() => void) | undefined;
   /** Take a class, or an attribute, off the selected element: a chip selected in
    *  the selector field and then Delete. Only a name written literally on the
    *  element is removed; anything computed is refused, and the refusal says why
@@ -169,6 +199,8 @@ export type PseudoRequest = { readonly nodeId: string; readonly pseudo: 'before'
 
 export type UndoCommand = {
   label?: string;
+  /** The step's name as a reference: the app words it in the language in force when the step is undone. Wins over `label`. */
+  labelRef?: TypedMessageRef | undefined;
   /** Edits sharing a key inside one burst collapse into a single step. */
   coalesceKey?: string;
   undo: () => void | Promise<void>;
@@ -182,6 +214,7 @@ const state: HostState = {
   pathOf: undefined,
   historyTick: 0,
   device: 'desktop',
+  canvasWidthPx: undefined,
   files: [],
   astroFiles: [],
   openFilePath: undefined,
@@ -193,8 +226,11 @@ const state: HostState = {
   writeStyleNode: undefined,
   selectNode: undefined,
   setCanvasWidth: undefined,
+  showDesktopCanvas: undefined,
   recordUndo: undefined,
   addClass: undefined,
+  addStyleBlock: undefined,
+  openStyleTagSettings: undefined,
   removeClass: undefined,
   removeAttribute: undefined,
   setInlineStyle: undefined,

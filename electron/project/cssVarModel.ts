@@ -3,12 +3,14 @@
 
 import { variableFiles as fs } from './variableWorkspace';
 import path from 'path';
-import { MAIN_LIMITS } from './variableWorkspace';
+import { runSliced, runSync, type SlicedWork } from '../lib/slicedWork';
 import { assert } from '../../shared/core/assert';
-import { toPosix, findStylesheets, type VarEntry, type Rule, readDeclarations } from './cssVarRead';
+import { described, type MessageRef } from '../../shared/properties/i18n/messageRef';
+import { toPosix, stylesheetsSliced, type VarEntry, type Rule, readDeclarations } from './cssVarRead';
 import { labelForRule, commonStem, namesOf, groupRules, findFamilies, prefixSections } from './cssVarGroups';
-import { resolveValue, colorOf, isUncomputableColor, kindOf } from './cssVarValues';
-import { findAstroSources, isAstroFile, readAstroVariables, relativeTo, type VariableScope } from './cssVarRegions';
+import { shortLabel } from '../../shared/properties/variableGroups';
+import { resolveValue, colorOf, isUncomputableColor, kindOf, type ValueLookup } from './cssVarValues';
+import { astroSourcesSliced, isAstroFile, readAstroVariables, relativeTo, type VariableScope } from './cssVarRegions';
 
 export interface Column {
   readonly id: string;
@@ -61,6 +63,8 @@ export interface FileModel {
   readonly name: string;
   readonly groups: Group[];
   readonly error?: string;
+  /** The reference the panel translates `error` from; absent for text received from elsewhere. */
+  readonly errorRef?: MessageRef | undefined;
   readonly count?: number;
   declarations?: Rule[];
 }
@@ -274,7 +278,7 @@ export interface DescribedCell extends Cell {
 
 // A cell's value said three ways: what the file holds, what it comes out as,
 // and what colour to draw beside it (if any).
-export function describeCell(cell: Cell | undefined, map: Map<string, string>): DescribedCell | undefined {
+export function describeCell(cell: Cell | undefined, map: ValueLookup): DescribedCell | undefined {
   if (!cell) {
     return undefined;
   }
@@ -296,10 +300,8 @@ export function describeCell(cell: Cell | undefined, map: Map<string, string>): 
   };
 }
 
-export const shortLabel = (name: string, prefix?: string): string => {
-  const body = name.replace(/^--/, '');
-  return prefix && body.startsWith(`${prefix}-`) ? body.slice(prefix.length + 1) : body;
-};
+// Shared with the variable picker, so both name a variable the same way under its group.
+export { shortLabel };
 
 /**
  * Every stylesheet and Astro `<style>` block in the project that declares custom
@@ -307,17 +309,18 @@ export const shortLabel = (name: string, prefix?: string): string => {
  * panel is a place to find variables, not a file browser. Stylesheets come first:
  * where a name is declared in both, the stylesheet is the project-wide answer.
  */
-export function readVariables(projectPath: string): {
+export interface VariablesModel {
   files: FileModel[];
   values: Record<string, string>;
-} {
+}
+
+export function* variablesSliced(projectPath: string): SlicedWork<VariablesModel> {
   const files: FileModel[] = [];
-  for (const abs of findStylesheets(projectPath)) {
+  for (const abs of yield* stylesheetsSliced(projectPath)) {
+    // One stylesheet is one unit: a project with thousands of them is a longer run, never a refusal.
+    yield;
     let text: string;
     try {
-      if (fs.statSync(abs).size > MAIN_LIMITS.cssVariableFileBytesMax) {
-        continue;
-      }
       text = fs.readFileSync(abs, 'utf8');
     } catch {
       continue;
@@ -327,12 +330,8 @@ export function readVariables(projectPath: string): {
     try {
       rules = readDeclarations(text);
     } catch (error: unknown) {
-      files.push({
-        rel,
-        name: path.basename(abs),
-        error: `Could not parse — ${error instanceof Error ? error.message : String(error)}`,
-        groups: [],
-      });
+      const parseFailure = described('variables.error.parse', { detail: error instanceof Error ? error.message : String(error) });
+      files.push({ rel, name: path.basename(abs), error: parseFailure.message, errorRef: parseFailure.messageRef, groups: [] });
       continue;
     }
     if (!rules.length) {
@@ -347,7 +346,7 @@ export function readVariables(projectPath: string): {
       count: rules.reduce((sum, rule) => sum + namesOf(rule).length, 0),
     });
   }
-  files.push(...readAstroFiles(projectPath));
+  files.push(...(yield* readAstroFiles(projectPath)));
   // Values reference each other across files as freely as within one, so the
   // map every value is resolved against is the project's, not the file's.
   const map = new Map<string, string>();
@@ -375,20 +374,27 @@ export function readVariables(projectPath: string): {
         }
       }
     }
+    yield;
   }
   return { files, values };
 }
 
+export function readVariables(projectPath: string): VariablesModel {
+  return runSync(variablesSliced(projectPath));
+}
+
+export function readVariablesSliced(projectPath: string): Promise<VariablesModel> {
+  return runSliced(variablesSliced(projectPath));
+}
+
 // One model per Astro file whose `<style>` blocks declare custom properties. Its
 // offsets are the file's, so a cell is written back exactly as a stylesheet's is.
-function readAstroFiles(projectPath: string): FileModel[] {
+function* readAstroFiles(projectPath: string): SlicedWork<FileModel[]> {
   const files: FileModel[] = [];
-  for (const abs of findAstroSources(projectPath)) {
+  for (const abs of yield* astroSourcesSliced(projectPath)) {
+    yield;
     let text: string;
     try {
-      if (fs.statSync(abs).size > MAIN_LIMITS.cssVariableFileBytesMax) {
-        continue;
-      }
       text = fs.readFileSync(abs, 'utf8');
     } catch {
       continue;
@@ -398,7 +404,9 @@ function readAstroFiles(projectPath: string): FileModel[] {
     const name = rel.replace(/^src\//, '');
     const read = readAstroVariables(rel, text);
     if (read.kind === 'error') {
-      files.push({ rel, name, error: `Could not parse — ${read.message}`, groups: [] });
+      // A reference from the reader already names the whole sentence; one without it is wrapped as the English always was.
+      const parseFailure = described('variables.error.parse', { detail: read.message });
+      files.push({ rel, name, error: parseFailure.message, errorRef: read.messageRef ?? parseFailure.messageRef, groups: [] });
     } else if (read.kind === 'rules') {
       const rules = read.sections.flatMap((section) => section.rules);
       assert(rules.length > 0, 'readAstroFiles: a read with sections holds rules');
@@ -455,18 +463,37 @@ function variableScopes(files: readonly FileModel[]) {
     }
   }
   assert(base.size <= fallback.size, 'Base values are a subset of every declared name');
-  const merged = new Map<string, Map<string, string>>();
-  const mapFor = (cell: Cell): Map<string, string> => {
+  // A cell's map is its scope's declarations over the file's base, the project's base and then any declaration. It is read
+  // through layers rather than copied: a copy per scope is the whole project's names once per scope, which for a stylesheet
+  // of tens of thousands of rules (each its own scope) is quadratic memory.
+  const layered = new Map<string, ValueLookup>();
+  const mapFor = (cell: Cell): ValueLookup => {
     const scope = scopeOfEntry.get(`${cell.file}:${cell.valueStart}`);
     assert(scope !== undefined, 'Every described cell was read from a rule');
-    const known = merged.get(scope);
+    const known = layered.get(scope);
     if (known !== undefined) {
       return known;
     }
-    const map = new Map([...fallback, ...base, ...(fileBases.get(cell.file) ?? []), ...(scopes.get(scope) ?? [])]);
-    assert(map.has(cell.name), 'A cell resolves in a scope that declares it');
-    merged.set(scope, map);
-    return map;
+    const layers: readonly ValueLookup[] = [
+      scopes.get(scope) ?? new Map<string, string>(),
+      fileBases.get(cell.file) ?? new Map<string, string>(),
+      base,
+      fallback,
+    ];
+    const lookup: ValueLookup = {
+      get(name: string): string | undefined {
+        for (const layer of layers) {
+          const found = layer.get(name);
+          if (found !== undefined) {
+            return found;
+          }
+        }
+        return undefined;
+      },
+    };
+    assert(lookup.get(cell.name) !== undefined, 'A cell resolves in a scope that declares it');
+    layered.set(scope, lookup);
+    return lookup;
   };
   return { mapFor };
 }

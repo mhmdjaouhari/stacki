@@ -10,8 +10,10 @@ import { createPortal } from 'react-dom';
 import { assert } from '../../../shared/core/assert';
 import { APP_LIMITS, type AppSummary } from '../../../shared/properties/apps';
 import { appListedInMarketplace, appPlacePills, type AppPill, type AppRepositoryPlace } from '../../../shared/properties/appPlace';
-import type { MarketplaceIndex } from '../../../shared/properties/appMarketplace';
+import { latestApprovedVersion, marketplaceApp, type MarketplaceIndex } from '../../../shared/properties/appMarketplace';
 import { loadAppRepositoryPlace, loadMarketplace } from '../../ipc/appMarketplaceBridge';
+import { appPublication, type AppPublication } from './publishFlow';
+import { useTranslateRef } from '../../lib/i18n/useTranslate';
 import { useDelayedTooltip } from '../../ui/delayedTooltip';
 
 /** What the pills of one app say beyond its lockfile. */
@@ -20,9 +22,13 @@ export interface AppPlaceFacts {
   readonly place: AppRepositoryPlace | undefined;
   /** Whether the marketplace index lists it, by id and repository. */
   readonly listed: boolean;
+  /** The repository it is already published to (a file or folder app the marketplace lists, or whose manifest names one), if any. */
+  readonly published: AppPublication | undefined;
+  /** The newest approved version the marketplace lists for it, when the index lists the app (under its id and repository); undefined otherwise. */
+  readonly listedVersion: string | undefined;
 }
 
-export const NO_APP_PLACE_FACTS: AppPlaceFacts = { place: undefined, listed: false };
+export const NO_APP_PLACE_FACTS: AppPlaceFacts = { place: undefined, listed: false, published: undefined, listedVersion: undefined };
 
 /**
  * The facts for every listed app, keyed by app id. Looked up again only when the
@@ -31,19 +37,19 @@ export const NO_APP_PLACE_FACTS: AppPlaceFacts = { place: undefined, listed: fal
  */
 export function useAppPlaces(projectPath: string, apps: readonly AppSummary[], options: { readonly marketplace: boolean }): ReadonlyMap<string, AppPlaceFacts> {
   // The sources that decide a lookup, as one stable key: a reload with the same apps asks nothing again.
-  const signature = useMemo(() => JSON.stringify(apps.map((app) => [app.manifest.id, app.lock.source])), [apps]);
+  // The manifest's repository counts too: it decides whether a file or folder app is already shared.
+  const signature = useMemo(() => JSON.stringify(apps.map((app) => [app.manifest.id, app.lock.source, app.manifest.source])), [apps]);
   const marketplace = options.marketplace;
   // The panel opens on the pills it last drew for the same apps: starting empty
   // drew "GitHub" and then "GitHub · Private" a moment later, on every open.
   const [facts, setFacts] = useState<ReadonlyMap<string, AppPlaceFacts>>(() => keptFacts(projectPath, { signature, marketplace }));
   useEffect(() => {
-    const remote = apps.filter((app) => onGitHub(app));
-    if (remote.length === 0) {
+    if (apps.length === 0) {
       setFacts(new Map());
       return;
     }
     let current = true;
-    void lookUpPlaces(projectPath, remote, { marketplace }).then((found) => {
+    void lookUpPlaces(projectPath, apps, { marketplace }).then((found) => {
       keepFacts(projectPath, { signature, marketplace, facts: found });
       if (current) {
         setFacts(found);
@@ -105,16 +111,17 @@ export function AppPlacePills({ app, facts }: { readonly app: AppSummary; readon
 
 function AppPlacePill({ pill }: { readonly pill: AppPill }) {
   const tooltip = useDelayedTooltip();
+  const translateRef = useTranslateRef();
   return (
     <>
       <span className="apps-badge muted apps-place-pill" data-place={pill.kind} onMouseEnter={tooltip.show} onMouseLeave={tooltip.hide}>
-        {pill.label}
+        {translateRef(pill.labelRef)}
       </span>
       {/* The pill sits inside the row's button, where a block is invalid; the tip goes to the body. */}
       {tooltip.value !== undefined &&
         createPortal(
           <div className="rail-tooltip below" role="tooltip" style={tooltip.value}>
-            {pill.tooltip}
+            {translateRef(pill.tooltipRef)}
           </div>,
           document.body,
         )}
@@ -133,17 +140,37 @@ async function lookUpPlaces(
   options: { readonly marketplace: boolean },
 ): Promise<ReadonlyMap<string, AppPlaceFacts>> {
   assert(apps.length <= APP_LIMITS.appsMax, 'Place lookups are bounded by the installed apps');
+  // The index is the one the Marketplace tab reads, from the host's cache: no request of its own.
   const [index, places] = await Promise.all([
     options.marketplace ? readIndex(projectPath) : Promise.resolve(undefined),
-    Promise.all(apps.map((app) => readPlace(projectPath, app.manifest.id))),
+    Promise.all(apps.map((app) => (onGitHub(app) ? readPlace(projectPath, app.manifest.id) : Promise.resolve(undefined)))),
   ]);
   const found = new Map<string, AppPlaceFacts>();
   apps.forEach((app, position) => {
     const listed = index === undefined ? false : appListedInMarketplace(index, { id: app.manifest.id, source: app.lock.source });
-    found.set(app.manifest.id, { place: places[position], listed });
+    const published = appPublication(app, index);
+    found.set(app.manifest.id, {
+      place: places[position],
+      listed,
+      published,
+      listedVersion: listedVersionOf(index, app, { listed: listed || published?.listed === true }),
+    });
   });
   assert(found.size <= apps.length, 'One entry per app');
   return found;
+}
+
+/** The newest approved version the index lists for an app it lists; a copy of the same id from another repository is not listed. */
+function listedVersionOf(index: MarketplaceIndex | undefined, app: AppSummary, state: { readonly listed: boolean }): string | undefined {
+  if (index === undefined) {
+    return undefined;
+  }
+  if (!state.listed) {
+    return undefined;
+  }
+  const listing = marketplaceApp(index, app.manifest.id);
+  assert(listing !== undefined, 'A listed app has its listing');
+  return latestApprovedVersion(listing).version;
 }
 
 async function readIndex(projectPath: string): Promise<MarketplaceIndex | undefined> {

@@ -1,3 +1,4 @@
+// i18n-ignore-file: HTTP API fallback text on the Studio server: it has no language, and the editor shows its own sentence for a failed request.
 import { withGitWorkspaceLease, isGitWorkspaceRead } from '../features/history/gitWorkspaceLease';
 import { createAstroNotifications } from '../features/notifications/astroNotificationServer';
 import { readPackagePreviews } from '../../vendor/stacki/electron/lib/componentSources';
@@ -7,7 +8,7 @@ import { configOf } from '../../vendor/stacki/shared/properties/projectFolders';
 import { isDefaultsCanvas } from '../../vendor/stacki/shared/properties/defaultsCanvas';
 import { instrumentVariant } from '../features/preview/variantRuntime';
 import { mutateAsset } from '../features/assets/assetOperations';
-import { replacementRefusal } from '../../vendor/stacki/shared/properties/mediaHosting';
+import { describeReplacementRefusal } from '../../vendor/stacki/shared/properties/mediaHosting';
 import { configureRenderPush } from '../features/preview/renderPushServer';
 import { managedAsset, MEDIA_EXT } from '../features/assets/assetStateTypes';
 import { assetFolderPath } from '../features/assets/assetFolders';
@@ -24,17 +25,14 @@ import { STUDIO_STATE_DIRECTORY } from '../../vendor/stacki/shared/properties/st
 import path from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { markSourceFile } from '../../vendor/stacki/electron/previewServer/previewMarkers';
-import {
-  componentPreviewPlugin,
-  PREVIEW_RECIPE_FILE,
-  renderComponentPreviewPage,
-  renderComponentPreviewRecipe,
-} from '../../vendor/stacki/electron/previewServer/componentPreview';
+import { componentPreviewPlugin, previewSupportFiles, renderComponentPreviewPage } from '../../vendor/stacki/electron/previewServer/componentPreview';
 import { createRooms } from '../features/collaboration/rooms';
 import { safePath, preparePath, readSource } from '../features/project/projectServer';
 import { filePath, sourcePath, string, record, MAX_SOURCE } from '../shared/validation';
 import { isStudioAsset } from '../shared/studioAssets';
 import { featureRoutes } from './featureRoutes';
+import { DescribedError } from '../../vendor/stacki/shared/properties/describedError';
+import { ReferencedError } from '../shared/referencedError';
 import { fileStamps, parseFileStampRequest } from '../features/apps/pageFileStamps';
 import { saveAsset } from '../features/storage/assetStorage';
 import { interceptBrowserReloads } from '../features/preview/browserReloads';
@@ -69,8 +67,11 @@ export default function studio(options: Options): AstroIntegration {
           const entrypoint = path.join(options.root, '.stacki/studio/state/component-preview.astro');
           // The route's globs follow the project's component folders (.stacki/folders.json) at start.
           await writeFile(entrypoint, renderComponentPreviewPage(configOf(readProjectFolders(options.root))));
-          // The page imports the recipe node component from beside it (componentPreviewRecipe.ts).
-          await writeFile(path.join(path.dirname(entrypoint), PREVIEW_RECIPE_FILE), renderComponentPreviewRecipe());
+          // The page imports the recipe node, attempt and guard components from beside it, as Desktop's
+          // dev server writes them (electron/handlers/devServers.ts); a missing one fails every preview.
+          for (const [name, text] of Object.entries(previewSupportFiles())) {
+            await writeFile(path.join(path.dirname(entrypoint), name), text);
+          }
           injectRoute({ pattern: '/__avb/preview', entrypoint });
         }
         addMiddleware({
@@ -424,9 +425,9 @@ async function uploadAsset(request: IncomingMessage, response: ServerResponse, o
   // place so every reference keeps working; Desktop's assets:replace holds the same rule.
   const replacement = url.searchParams.get('replacement');
   if (replacement !== null) {
-    const refusal = replacementRefusal(path.posix.basename(file), path.posix.basename(replacement));
+    const refusal = describeReplacementRefusal(path.posix.basename(file), path.posix.basename(replacement));
     if (refusal !== undefined) {
-      throw new Error(refusal);
+      throw new DescribedError(refusal);
     }
   }
   const bytes = await bodyBytes(request, 20_000_000);
@@ -509,11 +510,14 @@ function configureStudioRequests(
       return;
     }
     void handleRequest(request, response, options, features, rooms, catalogs)
-      .catch((error) =>
+      .catch((error) => {
+        // A refusal that carries a message reference travels with it, so the editor shows the sentence in the person's language.
+        const messageRef = error instanceof ReferencedError ? error.messageRef : error instanceof DescribedError ? error.problem.messageRef : undefined;
         json(response, 400, {
           error: error instanceof Error ? error.message : 'Request failed',
-        }),
-      )
+          ...(messageRef === undefined ? {} : { messageRef }),
+        });
+      })
       .finally(() => {
         // Uploads and metadata writes also change catalogs outside document rooms.
         if (request.method !== 'GET') {

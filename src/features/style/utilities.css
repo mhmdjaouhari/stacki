@@ -515,126 +515,10 @@ body.is-scrubbing * {
   border-bottom-color: var(--color-text-primary);
 }
 
-/* ──────────────────────────── Segmented tab control ──────────────────────────── */
-/* Sliding-indicator tabs (SegmentedControl.tsx). Fills its container; the grid
-   columns + indicator size/position are set inline from the option count. */
-
-/* --seg-pad / --seg-gap drive both the CSS padding/gap AND the indicator's inline
-   width/offset math (SegmentedControl.tsx), so variants can resize by overriding
-   these two vars and the indicator stays aligned. */
-.u-segmented {
-  --seg-pad: var(--space-2);
-  --seg-gap: var(--space-1);
-  position: relative;
-  display: flex;
-  flex-shrink: 0;
-  gap: var(--seg-gap);
-  width: 100%;
-  padding: var(--seg-pad);
-  border-radius: var(--radius-input);
-  /* Recessed track (`inset`, matching the app's dark input fields) so the lifted
-     active indicator (`surface`, matching buttons/tags) reads with clear contrast. */
-  background: var(--color-bg-inset);
-}
-/* 'hug' variant: the track shrinks to fit its segments (no full-width stretch),
-   each segment sizes to its own content, and the indicator (measured in
-   SegmentedControl.tsx) animates to the active one's width. */
-.u-segmented.is-hug {
-  width: fit-content;
-  justify-content: flex-start;
-}
-
-/* Indicator geometry (transform + width) is set inline from the active button's
-   measured rect, so it fits equal-width and content-width segments alike. */
-.u-segmented-indicator {
-  position: absolute;
-  z-index: 0;
-  top: var(--seg-pad);
-  bottom: var(--seg-pad);
-  left: 0;
-  width: 0;
-  border-radius: var(--radius-sm);
-  /* Active segment = a lifted control pill. Surface-aware like the dropdown button
-     and slider fill: --color-bg-surface normally, one step up on a surface. */
-  background: var(--surface-control);
-  pointer-events: none;
-}
-.u-segmented-indicator.is-animated {
-  transition:
-    transform var(--transition-normal),
-    width var(--transition-normal);
-}
-
-.u-segmented-button {
-  position: relative;
-  z-index: 1;
-  flex: 1 1 0;
-  min-width: 0;
-  height: var(--size-control-md);
-  /* Center content both axes so icon labels (border-style line spans, the ✕, the
-     background type/tile SVGs) sit centered — not just text via text-align. */
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-tertiary);
-  font-family: var(--font-family-sans);
-  font-size: var(--font-size-md);
-  line-height: var(--line-height-tight);
-  cursor: pointer;
-  transition:
-    background var(--transition-fast),
-    color var(--transition-fast),
-    box-shadow var(--transition-fast);
-}
-.u-segmented.is-hug .u-segmented-button {
-  flex: 0 0 auto;
-}
-/* Hover lifts the text only: the chosen segment is drawn by the indicator
-   behind these buttons, so a background here would paint over it — and the
-   app's blanket `button:hover` (src/app/styles.css) does exactly that unless this
-   states otherwise. */
-.u-segmented-button:hover:not(:disabled) {
-  background: none;
-  color: var(--color-text-primary);
-}
-/* Light text/icon on the grey active pill. */
-.u-segmented-button.is-selected {
-  color: var(--color-text-primary);
-}
-.u-segmented-button:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 var(--border-width-default) var(--color-border-focus);
-}
-
-/* Disabled: dim the whole control but keep the current value legible; block
-   clicks and the hover color-shift so it reads as informational, not actionable. */
-.u-segmented.is-disabled {
-  opacity: 0.5;
-}
-.u-segmented.is-disabled .u-segmented-button {
-  cursor: not-allowed;
-}
-.u-segmented.is-disabled .u-segmented-button:not(.is-selected):hover {
-  color: var(--color-text-tertiary);
-}
-
-/* Center icon-only segments (e.g. grid/list toggle). */
-.u-segmented-button svg {
-  display: block;
-  margin: 0 auto;
-  width: 14px;
-  height: 14px;
-}
-
-/* Shared tooltip surface — used by the legacy anchored tooltip (`.u-segmented-tooltip`,
-   still used by the hand-rolled overflow / display / direction bars) and the newer
-   body-portaled popup (`.u-segmented-popup`, from SegmentedControl). Visual only. */
-.u-segmented-tooltip,
-.u-segmented-popup {
+/* ──────────────────────────── Segmented tooltip (legacy) ──────────────────────────── */
+/* The anchored tooltip the hand-rolled overflow / display / direction bars draw. The
+   segmented control itself and its portaled popup live in src/ui/segmentedControl.css. */
+.u-segmented-tooltip {
   z-index: var(--z-tooltip);
   width: max-content;
   max-width: min(300px, 88vw);
@@ -648,8 +532,7 @@ body.is-scrubbing * {
   line-height: var(--line-height-normal);
   pointer-events: none;
 }
-.u-segmented-tooltip strong,
-.u-segmented-popup strong {
+.u-segmented-tooltip strong {
   color: var(--color-text-primary);
   font-weight: var(--font-weight-semibold);
 }
@@ -665,8 +548,7 @@ body.is-scrubbing * {
   margin-top: var(--space-2);
   color: var(--color-text-tertiary);
 }
-.u-segmented-tooltip-arrow,
-.u-segmented-popup-arrow {
+.u-segmented-tooltip-arrow {
   position: absolute;
   border: 6px solid transparent;
 }
@@ -683,26 +565,6 @@ body.is-scrubbing * {
   right: var(--tip-arrow-right, 50%);
   transform: translateX(50%);
   border-top-color: var(--color-bg-surface-overlay);
-}
-
-/* Popup: fixed position set inline from the segment's rect (portaled to <body>, so
-   no ancestor `overflow: hidden` can clip it). The arrow (`--tip-arrow-left`, offset
-   from the tooltip's left edge) points at the segment center and flips sides when the
-   tooltip is placed below. */
-.u-segmented-popup {
-  position: fixed;
-}
-.u-segmented-popup-arrow {
-  left: var(--tip-arrow-left, 50%);
-  transform: translateX(-50%);
-}
-.u-segmented-popup.is-above .u-segmented-popup-arrow {
-  top: 100%;
-  border-top-color: var(--color-bg-surface-overlay);
-}
-.u-segmented-popup.is-below .u-segmented-popup-arrow {
-  bottom: 100%;
-  border-bottom-color: var(--color-bg-surface-overlay);
 }
 
 /* ──────────────────────────── Slider (Slider.tsx) ──────────────────────────── */
@@ -874,14 +736,15 @@ body.is-scrubbing * {
 
 .u-select {
   position: relative;
-  z-index: var(--z-modal);
+  /* A closed select sits below the variable-connect dot that overlaps its neighbour. */
+  z-index: var(--z-style-field);
   width: 100%;
 }
-/* An open select must sit above sibling selects (all at --z-modal), or a later
+/* An open select must sit above sibling selects and the connect dot, or a later
    sibling's trigger paints over this one's dropdown. Lift its whole stacking
-   context one step so the menu clears neighbouring controls. */
+   context to the popover tier so the menu clears neighbouring controls. */
 .u-select.is-open {
-  z-index: calc(var(--z-modal) + 1);
+  z-index: var(--z-style-popover);
 }
 .u-select.is-disabled {
   opacity: 0.5;
@@ -922,6 +785,33 @@ body.is-scrubbing * {
 .u-select-link .u-select-chevron {
   width: 12px;
   height: 12px;
+}
+/* The chip never outgrows its row: it shrinks, and its label gives way. */
+.u-select.is-link {
+  min-width: 0;
+  max-width: 100%;
+}
+.u-select-link {
+  min-width: 0;
+  max-width: 100%;
+}
+.u-select-link .u-select-icon,
+.u-select-link .u-select-chevron {
+  flex: none;
+}
+/* A path is cut from its start so its end, the file name, stays visible. An RTL box
+   puts the ellipsis on the left, and the `<bdi dir="ltr">` inside keeps the path's own
+   order: without it the bidi algorithm moves a leading `/` or `.` to the far end
+   (`src/a.css` would draw as `src/a.css/`). CSS rather than measuring, so the text
+   stays whole in the DOM and refits at any width. */
+.u-select-label.is-path {
+  direction: rtl;
+  text-align: left;
+}
+.u-select-link-tip-code {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 /* Anchored to the trigger's left with a fixed width, capped to the panel width on a
    narrow sidebar (the JS clamp then nudges it away from the edge). Border-box so
@@ -1120,6 +1010,69 @@ body.is-scrubbing * {
 .u-select-label-line {
   font-size: var(--font-size-sm);
 }
+.u-select-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  color: var(--color-text-tertiary);
+}
+.u-select-pin {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+/* The toggle has no fill at rest. Its glyph is at full strength while the target follows the canvas (on)
+   and dimmed while it is held (off): the dimming is on the glyph, so the hover fill below is never dimmed.
+   Hover lays a 10% fill of the text colour behind it and press 16%, on the plain trigger and on the tinted
+   (off-Base) one alike. Background only, never a border; the glyph's opacity logic does not change. */
+.u-select-pin {
+  padding: 0.125rem;
+  color: var(--color-text-primary);
+}
+.u-select-pin svg {
+  opacity: 0.5;
+}
+.u-select-pin.is-on svg {
+  opacity: 1;
+}
+.u-select-pin:hover {
+  background: color-mix(in srgb, var(--color-text-primary) 10%, transparent);
+}
+.u-select-pin:active {
+  background: color-mix(in srgb, var(--color-text-primary) 16%, transparent);
+}
+/* The value fills the trigger, so the follow toggle (margin-left: auto) sits at the right end, beside the chevron. */
+.embed-editor_context-select .u-select-value {
+  flex: 1 1 auto;
+}
+/* A breakpoint or query is the target, not Base: the whole trigger is filled with the app's attribute-chip
+   purple mixed into the control surface, so it is clear the styles apply to that screen size only. Mid
+   luminance and softer than the chip itself; the light text and glyphs keep at least 7:1 contrast
+   (7.97 at rest, more on hover and press). A background fill, never a border. Hover and press and the
+   open list deepen the same purple and never turn it grey; focus keeps it. */
+.embed-editor_context-select.is-query .u-select-button {
+  background: color-mix(in srgb, var(--color-attribute-chip-bg) 50%, var(--surface-control));
+  color: var(--color-text-primary);
+}
+.embed-editor_context-select.is-query .u-select-button:hover {
+  background-color: color-mix(in srgb, var(--color-attribute-chip-bg) 58%, var(--surface-control));
+  background-image: none;
+}
+.embed-editor_context-select.is-query .u-select-button:active,
+.embed-editor_context-select.is-query .u-select-button[aria-expanded='true'] {
+  background-color: color-mix(in srgb, var(--color-attribute-chip-bg) 66%, var(--surface-control));
+  background-image: none;
+}
+.embed-editor_context-select.is-query .u-select-icon,
+.embed-editor_context-select.is-query .u-select-mark {
+  color: var(--color-text-primary);
+}
+.u-select-mark svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
 .u-select-icon {
   flex: 0 0 auto;
   display: inline-flex;
@@ -1154,11 +1107,41 @@ body.is-scrubbing * {
   gap: var(--space-1);
   max-height: 268px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
   padding: var(--space-3);
   border-radius: var(--radius-xl);
   background: var(--surface-overlay);
   box-shadow: var(--shadow-lg);
+}
+/* A list with a pinned footer: the list is the frame and clips; the rows scroll in their own
+   region and the footer sits below it, so nothing ever slides under the footer. */
+.u-select-list.has-footer {
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  /* The frame clips and never scrolls; its rows region below reserves the bar's room. A gutter
+     inherited from the plain list would also be reserved here (Chromium keeps it on a hidden box),
+     pushing the pinned strip, the footer and the rows in by a second bar's width on the right. */
+  scrollbar-gutter: auto;
+}
+.u-select-list.has-footer > .u-select-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  overscroll-behavior: contain;
+  padding: 0.5rem var(--space-3) 0;
+}
+.u-select-list.has-footer > .u-select-footer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.25rem var(--space-3) 0.5rem;
 }
 /* Flip above the button when there's no room below. */
 .u-select-list.is-up {
@@ -1298,6 +1281,176 @@ body.is-scrubbing * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* A footer row ("Add query") is pinned below the scrolling rows, outside them (.u-select-footer). */
+.u-select-option.is-footer {
+  flex-shrink: 0;
+}
+.embed-editor_context-select .u-select-option.is-footer.is-selected:not(.is-active) {
+  background: transparent;
+}
+.u-select-option.is-footer.is-active {
+  background: var(--color-bg-surface-high);
+}
+
+/* The context dropdown: one flat list. A section is a small muted label, never a card; the only
+   fills are hover, active and the picked row. Rows are 32px, the condition reads one step smaller
+   than before, and the list is as narrow as its longest label needs (280 to 320px). A typical
+   list (Base, a few width queries, Other, Add query) fits without a scrollbar. The cap is this
+   dropdown's own; `--select-room` is the space the placement leaves it on the side it opens to,
+   so a short window shrinks it (and the rows scroll) rather than letting it run off the edge. */
+.embed-editor_context-select .u-select-list {
+  max-height: min(36rem, 80vh, var(--select-room, 100vh));
+  right: auto;
+  width: 100%;
+  min-width: 17.5rem;
+  max-width: 20rem;
+  gap: 0.125rem;
+}
+.embed-editor_context-select .u-select-option {
+  box-sizing: border-box;
+  min-height: 2rem;
+  padding: 0.25rem 0.5rem;
+  flex-shrink: 0;
+}
+/* Every row sits in by the same quarter rem, so every row's trailing column (dot, check,
+   pencil) stands at the same x, and left and right insets match. */
+.embed-editor_context-select .u-select-list > .u-select-option,
+.embed-editor_context-select .u-select-scroll > .u-select-option,
+.embed-editor_context-select .u-select-header > .u-select-option,
+.embed-editor_context-select .u-select-footer > .u-select-option {
+  margin-inline: 0.25rem;
+}
+.embed-editor_context-select .u-select-scroll {
+  gap: 0.125rem;
+}
+/* One header for every group (a component or file chip with its selector, a file path, Other): 28px
+   tall, its left edge on the rows' icon column, 12px above it (16px after Base) and 4px below it,
+   in secondary 12px text. Hierarchy is weight, size and colour only: the chip and Other are
+   semibold, the selector beside a chip is regular mono and quieter. No lines, no fills. */
+.embed-editor_context-select .u-select-heading {
+  box-sizing: border-box;
+  /* Never squeezed when a long list scrolls: a header keeps its 28px. */
+  flex: 0 0 1.75rem;
+  height: 1.75rem;
+  /* The list's 2px gap adds to these margins: 12px above, 4px below. */
+  margin: 0.625rem 0.25rem 0.125rem;
+  padding: 0 0.5rem;
+  gap: 0.375rem;
+  color: var(--color-text-secondary);
+  font-size: 0.75rem;
+  font-weight: var(--font-weight-semibold);
+}
+.embed-editor_context-select .u-select-scroll > .u-select-option:first-child + .u-select-heading {
+  margin-top: 0.875rem;
+}
+.embed-editor_context-select .u-select-heading:first-child {
+  margin-top: 0;
+}
+.embed-editor_context-select .u-select-heading .u-select-icon {
+  width: 1.25rem;
+  justify-content: flex-start;
+  margin-right: -0.125rem;
+}
+.embed-editor_context-select .u-select-heading.has-tag .u-select-heading-label {
+  font-family: var(--font-family-mono);
+  font-weight: var(--font-weight-regular, 400);
+  color: var(--color-text-tertiary);
+}
+/* A header is a label, not an option: smaller and muted, uppercase when it is a plain name, with no icon,
+   no hover state, no pointer cursor and no focus (it is role="presentation" and arrow keys skip it). Its
+   source pill is the same chip, smaller and softer. Options below keep the 20px icon column, the hover
+   and selected fills and the dots; only they are clickable. Background fills only, no lines. */
+.embed-editor_context-select .u-select-heading {
+  pointer-events: none;
+  cursor: default;
+  color: var(--color-text-tertiary);
+  font-size: 0.6875rem;
+  margin-top: 0.875rem;
+}
+.embed-editor_context-select .u-select-heading:not(.has-tag) .u-select-heading-label {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.embed-editor_context-select .u-select-heading .u-select-tag {
+  opacity: 0.7;
+  font-size: 0.6875rem;
+}
+/* "Add query" is an action, not a choice: accent text and the plus. */
+.embed-editor_context-select .u-select-option.is-footer {
+  color: var(--color-info);
+}
+.embed-editor_context-select .u-select-option.is-footer .u-select-icon {
+  color: var(--color-info);
+}
+/* The icon column of every row is 20px, so labels start together. */
+.embed-editor_context-select .u-select-option > .u-select-icon {
+  width: 1.25rem;
+  justify-content: flex-start;
+}
+/* A two-line raw row gets room to breathe: more padding, a smaller second line with its own leading. */
+.embed-editor_context-select .u-select-option.has-subline {
+  padding-block: 0.5rem;
+}
+.embed-editor_context-select .u-select-option .u-select-label,
+.embed-editor_context-select .u-select-option .u-select-label-line {
+  font-size: 0.8125rem;
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-primary);
+}
+/* A breakpoint's condition, beside its name, muted. */
+.u-select-detail {
+  margin-left: 0.5rem;
+  color: var(--color-text-tertiary);
+  font-size: 0.75rem;
+  font-weight: var(--font-weight-regular, 400);
+}
+/* The closed trigger on one line: where the query is written (it gives way with an ellipsis),
+   then the condition, which stays whole. */
+.u-select-label.has-prefix {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.u-select-prefix {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.u-select-prefix-separator {
+  flex: 0 0 auto;
+  color: var(--color-text-tertiary);
+}
+.u-select-main {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+/* The Follow canvas size strip heads the list, outside the scrolling rows. */
+.u-select-list.has-footer > .u-select-header {
+  flex: 0 0 auto;
+  padding: 0.25rem var(--space-3) 0;
+}
+.embed-editor_context-select .u-select-option.is-header.is-selected:not(.is-active) {
+  background: transparent;
+}
+.u-select-switch {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  pointer-events: none;
+}
+/* The picked query is filled, not only checked, so it is found at a glance among many. */
+.embed-editor_context-select .u-select-option.is-selected {
+  background: var(--color-bg-active);
+}
+.embed-editor_context-select .u-select-option .u-select-subline {
+  font-family: var(--font-family-mono);
+  font-size: 0.6875rem;
+  line-height: 1.3;
+  color: var(--color-text-secondary);
 }
 
 /* Trailing status dot, in its slot: orange normally, white on the selected row. */

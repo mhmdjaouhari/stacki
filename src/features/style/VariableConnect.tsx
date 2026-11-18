@@ -1,17 +1,20 @@
-import { cloneElement, isValidElement, useRef, useState } from 'react';
+import { cloneElement, isValidElement, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { MutableRefObject, ReactElement, ReactNode, RefObject } from 'react';
+import { useTranslate } from '../../lib/i18n/useTranslate';
 import { flushSync } from 'react-dom';
 import { type ProjectVariable } from './model/webflow';
+import { SLOT_MARK, slotOfMarked, type ValueSlot } from '../../../shared/properties/valueSlot';
 import { selectionOffsets, setCaretOffset } from './model/cssCode';
 import CustomValue, { doesNotFit } from './CustomValueEditor';
 import { insertBindingAt, type ValueSelection } from './model/insertBinding';
 import { completeTypedVariable, fieldOffsetOf, replaceVariableAt, typedVariableAt, type TypedVariable } from './model/typedVariable';
-import type { PickerNavigation } from './VariablePicker';
+import type { PickerNavigation, PreviewEndTiming } from './VariablePicker';
 import { PlusIcon } from './VariableIcons';
+import { useExitRestore } from './pickerExit';
 import { varTypeAllowed, useSharedVars } from './sharedVars';
 import { VariablePicker } from './VariablePicker';
 import VariableHint from './VariableHint';
-import { type Chip, CHIP_MARK, fieldText, type PressedChip, serializeTokens, TokenField } from './TokenField';
+import { type Chip, CHIP_MARK, fieldText, type PressedChip, pressedChip, serializeTokens, TokenField } from './TokenField';
 import './embedEditor.css';
 import {
   childValue,
@@ -22,6 +25,7 @@ import {
   type FieldRefValue,
   type ChildFieldProps,
   updateChildRef,
+  useFieldPreview,
 } from './connectFieldHelpers';
 
 export { buildTokenHtml, serializeTokens } from './TokenField';
@@ -53,6 +57,22 @@ type VariableConnectProps = {
    *  is the worst place to change it from; opening one over a field that is
    *  already that size just puts a box in front of the box. */
   expanded?: boolean;
+  /**
+   * Open the chooser for this chip as soon as the field mounts: the large value editor opened by
+   * pressing a chip its field clipped is this field, and the same press asks for the chooser.
+   */
+  initialChip?: PressedChip;
+  /**
+   * The control whose press opened this field (the clipped chip a large editor opened from). The
+   * chooser never covers it: a list over it took the next press of a quick double press as a pick.
+   */
+  trigger?: DOMRect;
+  /**
+   * The CSS property whose whole value this field holds, when it does: the chooser's preview is then
+   * shown on the canvas as that property (never written). A field that is one part of a value (a
+   * shadow's offset, one transform) leaves it out, and the preview shows in the field alone.
+   */
+  canvasProperty?: string;
   children: ReactNode;
 };
 
@@ -64,24 +84,77 @@ type VariableConnectProps = {
  * second opinion on a question already answered — and when the first answer
  * was "replace", it turned a picked variable into a wiped value.
  */
-export function connectCustomField(field: ReactElement, prop: string | undefined, onDraft: (value: string) => void): ReactNode {
+export function connectCustomField(
+  field: ReactElement,
+  prop: string | undefined,
+  openChip: PressedChip | undefined,
+  trigger: DOMRect | undefined,
+  onDraft: (value: string) => void,
+): ReactNode {
   // The property travels with the value: without it the chooser in the big box
   // offered every variable, colours in a gap and sizes in a background.
   return (
-    <VariableConnect className="is-multiline" code onDraft={onDraft} onPick={onDraft} {...(prop === undefined ? {} : { prop })}>
+    <VariableConnect
+      className="is-multiline"
+      code
+      onDraft={onDraft}
+      onPick={onDraft}
+      {...(prop === undefined ? {} : { prop })}
+      {...(openChip === undefined ? {} : { initialChip: openChip })}
+      {...(trigger === undefined ? {} : { trigger })}
+    >
       {field}
     </VariableConnect>
   );
 }
 
 export default function VariableConnect(props: VariableConnectProps) {
-  const { onPick, disabled, ariaLabel = 'Connect to variable', prop } = props;
+  const translate = useTranslate();
+  const { onPick, disabled, ariaLabel = translate('style.variablePicker.connectToVariable'), prop } = props;
   const connect = useVariableConnect(props);
   const { open, setOpen, big, setBig, value, applied, showToken, field, wrapRef } = connect;
   const { editorRef, dotRef, chipText, liveValue, selectionRef, readCaret, hintValue } = connect;
   const { chipTarget, setChipTarget, suggest, setSuggest, navigationRef } = connect;
   const anchor = (showToken ? editorRef.current : dotRef.current) ?? undefined;
-  const { openedRef } = connect;
+  // The caret moved without typing (arrows, Home, End, a press): the chooser opens when it lands in a
+  // reference being typed and closes when it leaves one. Up and Down are the chooser's own keys.
+  const refreshSuggest = (change: { readonly key: string | undefined }): void => {
+    if (disabled) {
+      return;
+    }
+    if (change.key !== undefined && !CARET_KEYS.includes(change.key)) {
+      return;
+    }
+    const next = typedAtSelection(liveValue(), selectionRef.current);
+    setSuggest((current) => (sameTyped(current, next) ? current : next));
+  };
+  const { openedRef, bigChipRef, epochRef, setPreviewText } = connect;
+  const canvas = useFieldPreview(props.canvasProperty);
+  // The press that closed the large editor, by its event time. The editor closes on the press's
+  // capture (CustomValueEditor's outside press), React renders that before the field's own handlers
+  // run, and the field then saw a press on a clipped chip with no editor open and opened it again:
+  // a press on the chip that opened the editor was a close and a reopen, never a toggle (soak
+  // SP-10). The press is named by its time, not a timer's flag, so a quick next press is its own.
+  const pressAtRef = useRef<number | undefined>(undefined);
+  const closedAtRef = useRef<number | undefined>(undefined);
+  // A layout effect, so it listens from the commit that opened the editor: a press in the frame
+  // before an ordinary effect ran (a quick double press under a slow CPU) went unnamed.
+  useLayoutEffect(() => {
+    if (big === undefined) {
+      return undefined;
+    }
+    // Capture on the window runs before the editor's own listener on the document.
+    const note = (event: Event): void => {
+      pressAtRef.current = event.timeStamp;
+    };
+    window.addEventListener('mousedown', note, true);
+    return () => window.removeEventListener('mousedown', note, true);
+  }, [big]);
+  const closeBig = (): void => {
+    closedAtRef.current = pressAtRef.current;
+    pressAtRef.current = undefined;
+    setBig(undefined);
+  };
   // The value as it would be with `chosen` picked, worked out from the value
   // the chooser opened on: previews change the field, and a pick after three
   // of them must still be one change from where it started.
@@ -92,13 +165,19 @@ export default function VariableConnect(props: VariableConnectProps) {
     }
     return insertBindingAt(base, chosen, selectionRef.current);
   };
-  // Shown, not written: the field's draft, the path typing takes, so the page
-  // previews it the same way it previews a value being typed.
-  const draftTo = (next: string): void => {
-    if (props.onDraft === undefined) {
-      pushDraft(field, next);
+  // Shown, never written, and never handed to the field: the field this wraps writes what reaches its
+  // change handler (a live write as you type), so a preview that went through it was a save per hovered
+  // row (soak SP-09), and every field had to be taught to tell the two apart. The preview is this
+  // wrapper's own: its token editor shows it in place of the field's value, and the canvas shows it on
+  // the selected element when the field holds a property's whole value (canvasProperty). Putting the
+  // original back is dropping it: the field never changed.
+  const draftTo = (next: string, kind: 'preview' | 'restore'): void => {
+    if (kind === 'preview') {
+      setPreviewText(next);
+      canvas.show(next);
     } else {
-      props.onDraft(next);
+      setPreviewText(undefined);
+      canvas.takeBack();
     }
   };
   const openChooser = (): void => {
@@ -106,12 +185,9 @@ export default function VariableConnect(props: VariableConnectProps) {
     setOpen(true);
   };
   const closeChooser = (): void => {
-    const opened = openedRef.current;
+    // Closed without a pick: whatever was previewed goes back, then the session ends.
+    restore({ when: 'batched' });
     openedRef.current = undefined;
-    // Closed without a pick: whatever the arrows previewed goes back.
-    if (opened !== undefined && opened.previewed) {
-      draftTo(opened.value);
-    }
     setChipTarget(undefined);
     setSuggest(undefined);
     setOpen(false);
@@ -128,26 +204,85 @@ export default function VariableConnect(props: VariableConnectProps) {
       return;
     }
     const next = withChosen(chosen);
+    // A pick ends the session: a preview still in flight must not land after it. The canvas keeps the
+    // preview for the write to settle; the field shows the pick once its value arrives.
+    epochRef.current += 1;
     openedRef.current = undefined;
+    canvas.handOver();
+    // The field keeps showing the pick until its own value arrives (the effect on the field's value
+    // below), so no frame paints the value the pick replaced.
+    setPreviewText(next);
     onPick(next);
     setChipTarget(undefined);
     setOpen(false);
   };
-  const preview = (chosen: string): void => {
+  // Where the pick would land in the field's expression: the filter judges each variable's
+  // computed value there (valueSlot.ts), not against the property alone.
+  const pickSlot = (): ValueSlot | undefined => {
+    const base = openedRef.current?.value ?? liveValue();
+    if (suggest !== undefined) {
+      return slotOfMarked(completeTypedVariable(liveValue(), suggest, SLOT_MARK).value);
+    }
+    if (chipTarget !== undefined) {
+      return slotOfMarked(replaceVariableAt(base, chipTarget.index, SLOT_MARK));
+    }
+    return slotOfMarked(insertBindingAt(base, SLOT_MARK, selectionRef.current));
+  };
+  // A preview carries the epoch it was asked in. Restoring bumps the epoch, so a preview that was
+  // scheduled (a hover waiting for its frame) or sent before the restore is dropped when it arrives
+  // and can never be applied after it.
+  const preview = (chosen: string, epoch: number): void => {
     const opened = openedRef.current;
-    if (opened === undefined) {
+    if (opened === undefined || epoch !== epochRef.current) {
       return;
     }
     openedRef.current = { ...opened, previewed: true };
-    draftTo(withChosen(chosen));
+    // Flushed: a preview arrives from an animation frame or a key, outside React's batching, and the
+    // field and the canvas should show it in the same frame.
+    flushSync(() => draftTo(withChosen(chosen), 'preview'));
   };
+  // THE restore: the value goes back to the one the chooser opened on, which was captured once, at
+  // opening, and is the only source of truth for it. Idempotent, and it wins over any preview still in
+  // flight (the epoch). `now` flushes the field before the caller's own event goes on, so the blur a
+  // press causes commits the original; `batched` is for places already inside a render or an effect.
+  // The preview is only ever a draft (draftTo), never a write, history entry or save.
+  const restore = ({ when }: { readonly when: 'now' | 'batched' }): void => {
+    epochRef.current += 1;
+    const opened = openedRef.current;
+    if (opened === undefined || !opened.previewed) {
+      return;
+    }
+    openedRef.current = { ...opened, previewed: false };
+    if (when === 'now') {
+      flushSync(() => draftTo(opened.value, 'restore'));
+    } else {
+      draftTo(opened.value, 'restore');
+    }
+  };
+  const restoreRef = useRef(restore);
+  restoreRef.current = restore;
+  // Unmounting with a preview still showing (the selection changed, the project switched) puts the original back too.
+  useEffect(() => () => restoreRef.current({ when: 'batched' }), []);
+  // Every other way out (a press anywhere, the canvas, Escape, Tab, focus, scroll, selection): ahead of the close.
+  useExitRestore({ active: open || suggest !== undefined, restore: () => restoreRef.current({ when: 'now' }) });
+  // The press that opened the large editor on a clipped chip also opens the chooser, once, here.
+  const openOnMountRef = useRef({ chip: props.initialChip, open: openChooser, disabled });
+  openOnMountRef.current = { chip: props.initialChip, open: openChooser, disabled };
+  useEffect(() => {
+    const { chip, open: openNow, disabled: off } = openOnMountRef.current;
+    if (chip !== undefined && off !== true) {
+      setChipTarget(chip);
+      openNow();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once, on mount
+  }, []);
   const extraClassName = props.className ? ` ${props.className}` : '';
   const tokenClassName = showToken ? ' is-token' : '';
   return (
     <span
       ref={wrapRef}
       className={`embed-editor_varconnect${extraClassName}${tokenClassName}`}
-      {...connectWrapperHandlers({ showToken, field, readCaret })}
+      {...connectWrapperHandlers({ showToken, field, readCaret, onCaretMoved: refreshSuggest })}
       {...composeKeyDownCapture(
         bigEditorTriggers({
           disabled,
@@ -156,7 +291,11 @@ export default function VariableConnect(props: VariableConnectProps) {
           open,
           wrapRef,
           liveValue,
-          onOpen: setBig,
+          closedByThisPress: (press) => closedAtRef.current !== undefined && closedAtRef.current === press.timeStamp,
+          onOpen: (rect, chip) => {
+            bigChipRef.current = chip;
+            setBig(rect);
+          },
         }),
         (event) => suggestKeyDown(event, { suggest, navigationRef, onDismiss: () => setSuggest(undefined) }),
       )}
@@ -182,10 +321,29 @@ export default function VariableConnect(props: VariableConnectProps) {
           field={field}
           editorRef={editorRef}
           setActive={connect.setActive}
+          guard={{
+            restoredValue: () => {
+              const opened = openedRef.current;
+              if (opened === undefined || !opened.previewed) {
+                return undefined;
+              }
+              restore({ when: 'batched' });
+              return opened.value;
+            },
+          }}
           onChip={(chip) => {
+            // The chip is a toggle: pressing the one whose chooser is open closes it and leaves it
+            // closed. The chip sits inside the chooser's anchor, so the dismiss logic does not also
+            // treat the press as an outside press (popupDismiss.ts), which would reopen it.
+            if (open && chipTarget?.index === chip.index) {
+              closeChooser();
+              return;
+            }
             setSuggest(undefined);
             setChipTarget(chip);
-            openChooser();
+            if (!open) {
+              openChooser();
+            }
           }}
         />
       ) : undefined}
@@ -211,6 +369,7 @@ export default function VariableConnect(props: VariableConnectProps) {
         />
       ) : undefined}
       <ConnectPopups
+        trigger={props.trigger}
         picker={pickerOf({ open, anchor, suggest, chipTarget, applied, navigationRef })}
         applied={applied}
         prop={prop}
@@ -223,9 +382,18 @@ export default function VariableConnect(props: VariableConnectProps) {
         // the caret was, or over what was selected, so picking one inside a
         // calc() no longer throws the calc away. See insertBinding.ts.
         onPick={pick}
+        slot={open || suggest !== undefined ? pickSlot() : undefined}
         onPreview={preview}
+        previewEpoch={() => epochRef.current}
+        onPreviewEnd={(timing) => restore(timing)}
         onClosePicker={closeChooser}
-        onCloseBig={() => setBig(undefined)}
+        openChip={bigChipRef.current}
+        onCloseBig={closeBig}
+        // Escape closes the editor and puts the caret back in the field it came from.
+        onCancelBig={() => {
+          setBig(undefined);
+          editorRef.current?.focus();
+        }}
         onSave={onPick}
       />
     </span>
@@ -236,12 +404,17 @@ export default function VariableConnect(props: VariableConnectProps) {
 // holds, the input it wraps, and where the caret was last seen.
 function useVariableConnect({ prop, code, children }: VariableConnectProps) {
   const [open, setOpen] = useState(false);
+  // The variable the chooser previews (hovered or arrowed), shown in place of the field's own value.
+  const [previewText, setPreviewText] = useState<string | undefined>(undefined);
   // True while the token editor's contentEditable holds focus — keeps it mounted even if
   // the user edits the value down to a non-variable mid-type (so focus/caret aren't lost).
   const [active, setActive] = useState(false);
   const dotRef = useRef<HTMLButtonElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
-  const value = childValue(children);
+  const ownValue = childValue(children);
+  const value = previewText ?? ownValue;
+  // The field's own value moved (a pick's save landed, the selection changed): it is what to show.
+  useEffect(() => setPreviewText(undefined), [ownValue]);
   const placeholder = childPlaceholder(children);
   // A variable hint uses the same catalog and chips, but stays outside the
   // editable value so reading or focusing it cannot create a local declaration.
@@ -259,7 +432,11 @@ function useVariableConnect({ prop, code, children }: VariableConnectProps) {
   const navigationRef = useRef<PickerNavigation | undefined>(undefined);
   // The value the chooser opened on, and whether the arrows have previewed another.
   const openedRef = useRef<{ readonly value: string; readonly previewed: boolean } | undefined>(undefined);
+  // Bumped by every restore and pick: a preview asked before it is stale.
+  const epochRef = useRef(0);
   const [big, setBig] = useState<DOMRect | undefined>(undefined);
+  // The chip whose press opened the large editor, if the press was on one.
+  const bigChipRef = useRef<PressedChip | undefined>(undefined);
   const wrapRef = useRef<HTMLSpanElement>(null);
   return {
     open,
@@ -282,10 +459,19 @@ function useVariableConnect({ prop, code, children }: VariableConnectProps) {
     setSuggest,
     navigationRef,
     openedRef,
+    epochRef,
+    setPreviewText,
+    bigChipRef,
     big,
     setBig,
     wrapRef,
   };
+}
+
+// What a field's commit asks the chooser first: with a preview showing, the original value (and the
+// preview put away), so a blur never commits what was only being looked at.
+interface PreviewGuard {
+  readonly restoredValue: () => string | undefined;
 }
 
 // The rich token editor over the wrapped input, wired to stand in for it.
@@ -299,9 +485,11 @@ function ConnectTokenField({
   field,
   editorRef,
   setActive,
+  guard,
   onChip,
 }: {
   connect: VariableConnectProps;
+  guard: PreviewGuard;
   ariaLabel: string;
   value: string;
   chips: Chip[];
@@ -326,7 +514,7 @@ function ConnectTokenField({
         placeholder={hintValue ? '' : childPlaceholder(connect.children)}
         {...(disabled === undefined ? {} : { disabled })}
         editorRef={editorRef}
-        {...tokenFieldHandlers({ field, setActive, disabled, onChip })}
+        {...tokenFieldHandlers({ field, guard, setActive, disabled, onChip })}
         {...(code === undefined ? {} : { code })}
         {...(stepMin === undefined ? {} : { stepMin })}
       />
@@ -354,11 +542,18 @@ function ConnectPopups({
   value,
   liveValue,
   onPick,
+  slot,
   onPreview,
+  previewEpoch,
+  onPreviewEnd,
   onClosePicker,
   onCloseBig,
+  onCancelBig,
+  openChip,
   onSave,
+  trigger,
 }: {
+  trigger: DOMRect | undefined;
   picker: PickerOpening | undefined;
   applied: ReturnType<typeof useAppliedVariable>;
   prop: string | undefined;
@@ -368,9 +563,14 @@ function ConnectPopups({
   value: string;
   liveValue: () => string;
   onPick: (binding: string) => void;
-  onPreview: (binding: string) => void;
+  slot: ValueSlot | undefined;
+  onPreview: (binding: string, epoch: number) => void;
+  previewEpoch: () => number;
+  onPreviewEnd: (timing: PreviewEndTiming) => void;
   onClosePicker: () => void;
   onCloseBig: () => void;
+  onCancelBig: () => void;
+  openChip: PressedChip | undefined;
   onSave: (value: string) => void;
 }) {
   return (
@@ -378,12 +578,17 @@ function ConnectPopups({
       {picker ? (
         <VariablePicker
           anchor={picker.anchor}
+          within={wrapRef.current ?? undefined}
+          {...(trigger === undefined ? {} : { trigger })}
           vars={applied.vars}
           loading={applied.loading}
           {...(prop === undefined ? {} : { prop })}
           {...(picker.selectedBinding === undefined ? {} : { selectedBinding: picker.selectedBinding })}
           {...(picker.typing === undefined ? {} : { typing: picker.typing })}
+          {...(slot === undefined ? {} : { slot })}
           onPreview={onPreview}
+          previewEpoch={previewEpoch}
+          onPreviewEnd={onPreviewEnd}
           onPick={onPick}
           onClose={onClosePicker}
         />
@@ -396,7 +601,8 @@ function ConnectPopups({
           prop={prop}
           anchor={big}
           anchorEl={wrapRef.current ?? undefined}
-          onCancel={onCloseBig}
+          onCancel={onCancelBig}
+          {...(openChip === undefined ? {} : { openChip })}
           onSave={(next: string) => {
             onCloseBig();
             // The same path a picked variable takes — one way in and out of a
@@ -490,14 +696,15 @@ function valueChips({
     return {
       text: match[0],
       name: known?.name ?? bindingName(match[0]),
-      type: known?.type ?? 'Size',
+      type: known?.type ?? 'Size', // i18n-ignore: a variable type id.
+      ...(known === undefined ? {} : { value: known.value }),
     };
   });
   if (chips.length) {
     return chips;
   }
   const chipName = current?.name ?? (embedVar ? bindingName(embedVar) : raw);
-  return [{ text: varText, name: chipName, type: current?.type ?? 'Size' }];
+  return [{ text: varText, name: chipName, type: current?.type ?? 'Size' }]; // i18n-ignore: a variable type id.
 }
 
 // The wrapped child: an <input> in a panel field, a <textarea> in the big editor.
@@ -576,11 +783,13 @@ function pushDraft(field: WrappedField, next: string): void {
 // and a chip press that opens the picker.
 function tokenFieldHandlers({
   field,
+  guard,
   setActive,
   disabled,
   onChip,
 }: {
   field: WrappedField;
+  guard: PreviewGuard;
   setActive: (active: boolean) => void;
   disabled: boolean | undefined;
   onChip: (chip: PressedChip) => void;
@@ -590,17 +799,25 @@ function tokenFieldHandlers({
       setActive(true);
       field.childHandlers?.onFocus?.(field.fakeEvent());
     },
-    onCommit: (final: string) => {
+    onCommit: (shown: string) => {
+      // A blur while a preview shows commits the value the chooser opened on, never the preview.
+      const final = guard.restoredValue() ?? shown;
       const input = field.inputRef.current;
+      // Only text that differs from the field's goes through its change. A change is an edit to
+      // the field (LiveTextInput's blur commits after one), so pushing the text it already held
+      // made every blur a write: a chip pressed twice to toggle its picker passes focus through
+      // the field, and that blur wrote the shown value into the rule (soak SP-10).
       if (input) {
-        // Drive the controlled field directly. This guarantees its draft becomes
-        // the serialized expression before the latest blur closure commits it;
-        // a synthetic DOM input event could remain batched and commit the original
-        // bare variable instead.
-        flushSync(() => {
-          setInputValue(input, final);
-          field.childHandlersRef.current?.onChange?.(field.fakeEvent());
-        });
+        if (input.value !== final) {
+          // Drive the controlled field directly. This guarantees its draft becomes
+          // the serialized expression before the latest blur closure commits it;
+          // a synthetic DOM input event could remain batched and commit the original
+          // bare variable instead.
+          flushSync(() => {
+            setInputValue(input, final);
+            field.childHandlersRef.current?.onChange?.(field.fakeEvent());
+          });
+        }
       }
       field.childHandlersRef.current?.onBlur?.(field.fakeEvent());
       setActive(false);
@@ -624,12 +841,29 @@ function tokenFieldHandlers({
 // stayed dark unless it also had focus. Hand enter and leave over the same way
 // focus and blur are handed over, and only while the editor is the thing on top;
 // otherwise the input hears them itself.
-function connectWrapperHandlers({ showToken, field, readCaret }: { showToken: boolean; field: WrappedField; readCaret: () => void }) {
+function connectWrapperHandlers({
+  showToken,
+  field,
+  readCaret,
+  onCaretMoved,
+}: {
+  showToken: boolean;
+  field: WrappedField;
+  readCaret: () => void;
+  /** Called after the caret moved by key or press (not by typing): the chooser follows it. */
+  onCaretMoved: (change: { readonly key: string | undefined }) => void;
+}) {
   return {
     onMouseEnter: showToken ? (event: React.MouseEvent) => field.childHandlersRef.current?.onMouseEnter?.(event) : undefined,
     onMouseLeave: showToken ? (event: React.MouseEvent) => field.childHandlersRef.current?.onMouseLeave?.(event) : undefined,
-    onKeyUp: readCaret,
-    onMouseUp: readCaret,
+    onKeyUp: (event: React.KeyboardEvent) => {
+      readCaret();
+      onCaretMoved({ key: event.key });
+    },
+    onMouseUp: () => {
+      readCaret();
+      onCaretMoved({ key: undefined });
+    },
     onSelect: readCaret,
     onFocus: readCaret,
   };
@@ -652,6 +886,7 @@ function bigEditorTriggers({
   open,
   wrapRef,
   liveValue,
+  closedByThisPress,
   onOpen,
 }: {
   disabled: boolean | undefined;
@@ -660,13 +895,20 @@ function bigEditorTriggers({
   open: boolean;
   wrapRef: RefObject<HTMLSpanElement>;
   liveValue: () => string;
-  onOpen: (rect: DOMRect) => void;
+  /** Whether the large editor closed on this very press: then the press was the toggle that closed it. */
+  closedByThisPress: (press: Event) => boolean;
+  onOpen: (rect: DOMRect, chip: PressedChip | undefined) => void;
 }) {
-  const openBig = () => {
+  const openBig = (chip?: PressedChip) => {
     const wrap = wrapRef.current;
     if (wrap) {
-      onOpen(wrap.getBoundingClientRect());
+      onOpen(wrap.getBoundingClientRect(), chip);
     }
+  };
+  // The chip under a press or a key, in this field's token editor.
+  const chipAt = (target: EventTarget): PressedChip | undefined => {
+    const field = wrapRef.current?.querySelector<HTMLElement>('.embed-editor_varconnect-editor');
+    return field === null || field === undefined ? undefined : pressedChip(field, target);
   };
   return {
     onKeyDownCapture: (event: React.KeyboardEvent) => {
@@ -676,6 +918,16 @@ function bigEditorTriggers({
         event.preventDefault();
         event.stopPropagation();
         openBig();
+        return;
+      }
+      // Enter or Space on a chip acts as a press on it.
+      if ((event.key === 'Enter' || event.key === ' ') && !disabled && !big && !expanded && !open) {
+        const chip = chipAt(event.target);
+        if (chip !== undefined && wrapRef.current !== null && doesNotFit(wrapRef.current, liveValue())) {
+          event.preventDefault();
+          event.stopPropagation();
+          openBig(chip);
+        }
       }
     },
     onMouseDownCapture: (event: React.MouseEvent) => {
@@ -683,12 +935,22 @@ function bigEditorTriggers({
       // React CHILD, so its presses capture through here: on a value long enough to
       // open the big editor, choosing a variable was taken as a press on the field —
       // the pick never landed and the big editor opened over it instead.
+      const target = event.target;
+      // The press on the field that closed its large editor (the chip it opened from, pressed again)
+      // is that close and nothing more: it must not open the editor, or the chip's chooser, again.
+      // Checked first: whether the field has rendered the close yet depends on the browser's order.
+      if (closedByThisPress(event.nativeEvent)) {
+        if (target instanceof Element && target.closest('.var-custom, .embed-editor_varpicker') === null) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
       if (disabled || big || expanded || open) {
         return;
       }
       // The dot and the swatch are their own controls; a press on those means
       // what it has always meant.
-      const target = event.target;
       if (
         target instanceof Element &&
         target.closest('.embed-editor_varconnect-dot, .embed-editor_varconnect-hint, ' + '.u-color-swatch, .embed-editor_varpicker, .var-custom')
@@ -703,7 +965,8 @@ function bigEditorTriggers({
       }
       event.preventDefault();
       event.stopPropagation();
-      openBig();
+      // The same measurement decided both: a clipped chip opens the editor AND its chooser.
+      openBig(chipAt(event.target));
     },
   };
 }
@@ -796,6 +1059,17 @@ function useCaretTracker(editorRef: RefObject<HTMLDivElement>, inputRef: Mutable
 // serialized value. Each chip serializes to its OWN binding — a value can hold
 // several, and they need not be the same variable — so the lengths are read off
 // the chips themselves rather than assumed equal.
+const CARET_KEYS: readonly string[] = ['ArrowLeft', 'ArrowRight', 'Home', 'End', 'Backspace', 'Delete'];
+
+function sameTyped(left: TypedVariable | undefined, right: TypedVariable | undefined): boolean {
+  if (left === undefined || right === undefined) {
+    return left === right;
+  }
+  return left.start === right.start && left.end === right.end && left.query === right.query;
+}
+
+const ZERO_WIDTH_SPACE = '\u200B';
+
 function serializedOffset(editor: HTMLElement, at: number): number {
   const bindings = Array.from(editor.querySelectorAll<HTMLElement>('[data-chip]')).map((node) => node.dataset['binding'] ?? '');
   let length = 0;
@@ -803,7 +1077,10 @@ function serializedOffset(editor: HTMLElement, at: number): number {
   for (const ch of fieldText(editor).slice(0, at)) {
     if (ch === CHIP_MARK) {
       length += (bindings[chip++] ?? '').length;
-    } else {
+    } else if (ch !== ZERO_WIDTH_SPACE) {
+      // The zero-width spaces that hold a caret beside a chip are text in the field but
+      // nothing in the value (serializeTokens strips them), so they add no offset. Counted,
+      // they pushed the caret one past the reference being typed and the chooser never opened.
       length += 1;
     }
   }

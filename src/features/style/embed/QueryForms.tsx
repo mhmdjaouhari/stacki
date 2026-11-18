@@ -1,5 +1,6 @@
 import { centralIcon } from '../../../ui/central/CentralIcon';
-import { chevronDown as centralChevronDown } from '../../../ui/central/centralGeometry';
+import { useTranslate } from '../../../lib/i18n/useTranslate';
+import { check as centralCheck, chevronDown as centralChevronDown } from '../../../ui/central/centralGeometry';
 import type { InlineChip, InlineCodeView } from './useInlineTarget';
 import { InlineBranchEditor, InlineBranchPicker } from './InlineBranchEditor';
 import { CodeBlock } from '../../../ui/CodeBlock';
@@ -14,7 +15,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, ReactNode } from 'react';
 import { CodeEditor } from '../components/CssCodeEditor';
 import { ruleChainText, ruleTextFromChain } from '../model/cssRuleText';
-import SegmentedControl from '../components/SegmentedControl';
+import SegmentedControl, { type SegmentedOption } from '../../../ui/SegmentedControl';
+import { useProjectBreakpoints } from '../../../ipc/useProjectBreakpoints';
+import { getHost } from '../model/host';
+import { breakpointLabel } from '../../../lib/breakpointLabel';
+import { iconFor } from '../../../../shared/properties/breakpointIcon';
+import { deviceIcon } from './breakpointIcons';
+import { defaultDirection, parseCustom, suggestionMatches, suggestionsFor, type CustomQuery, type QueryDirection } from './addQueryModel';
 import { type MatchedRule, type RuleModel } from '../model/cascade';
 import { cssTokens } from '../model/cssCode';
 import { buildCssRuleView, type CssRuleRange, type CssRuleView } from '../model/cssRuleView';
@@ -31,9 +38,10 @@ import {
 import { selectorLayerOf } from '../model/selectors';
 import type { ElementSnapshot, ParsedRule } from '../model/styleTypes';
 import { type LiveSetProp } from './EditorBasics';
+import type { PreviewProp } from '../connectFieldHelpers';
 import { usePanelLayer } from './editorModel';
 import { type SourceOption, type SelectorSuggestion } from './LayoutRows';
-import { useHighlightInView, QUERY_MODES, type QuerySuggestion, type QueryComboProps } from './SelectorPicker';
+import { useHighlightInView, queryModes, type QuerySuggestion, type QueryComboProps } from './SelectorPicker';
 
 export function QueryCombo(props: QueryComboProps) {
   const { draft, setDraft, onSubmit, onCancel, suggestions, ariaLabel } = props;
@@ -123,8 +131,17 @@ export function QuerySuggestionList({
   setHighlight: (index: number) => void;
   submit: (text: string) => void;
 }) {
+  const translate = useTranslate();
   return (
-    <Popup mode="popover" portal={false} onClose={onClose} className="embed-editor_selector-suggest" ref={listRef} role="listbox" label="Query suggestions">
+    <Popup
+      mode="popover"
+      portal={false}
+      onClose={onClose}
+      className="embed-editor_selector-suggest"
+      ref={listRef}
+      role="listbox"
+      label={translate('styleModel.embed.query.suggestions')}
+    >
       {filtered.map((suggestion, i) => (
         <button
           key={`${suggestion.kind}:${suggestion.query}`}
@@ -203,52 +220,204 @@ export function queryKeyDown(
   }
 }
 
-// Inline form to add a custom query (@media/@container/@supports) to the current
-// selector, choosing whether it WRAPS the selector (a new at-rule block) or NESTS
-// inside the selector's existing rule (CSS nesting). Nesting needs a picked selector.
-// The controls sit ABOVE the input so the suggestion list (opened below it) can't
-// cover them; the input pre-fills `@` and offers project + common queries.
+// Inline form to add a query to the current selector, choosing whether it WRAPS the selector (a
+// new at-rule block) or NESTS inside the selector's existing rule (CSS nesting; needs a picked
+// selector). It is suggestion-first: the project's breakpoints, each with the exact condition it
+// would write for the chosen direction (Mobile first `width >= X`, Desktop first `width < X`), in
+// the preview bar's order, then a Custom row for any width the Settings editor accepts (or a whole
+// at-rule typed by hand, as the old field allowed). Only Enter or a click writes; browsing and
+// typing never do. A condition that exists already is checked and only switches the edit target.
 export function AddQueryForm({
   canNest,
-  suggestions,
+  contexts,
   onAdd,
+  onExisting,
   onCancel,
 }: {
   canNest: boolean;
-  suggestions: QuerySuggestion[];
+  contexts: readonly StyleContext[];
   onAdd: (query: string, mode: 'wrap' | 'nest') => void;
+  onExisting: (key: ContextKey) => void;
   onCancel: () => void;
 }) {
-  const [draft, setDraft] = useState('@');
+  const translate = useTranslate();
+  const { resolved } = useProjectBreakpoints(getHost().projectPath);
+  const lengthUnit = getHost().lengthUnit;
   const [mode, setMode] = useState<'wrap' | 'nest'>('nest');
-  const submit = (text: string) => onAdd(text, canNest ? mode : 'wrap');
-
+  const [direction, setDirection] = useState<QueryDirection>(() => defaultDirection(contexts.map((context) => context.embedAtContext ?? '')));
+  const [draft, setDraft] = useState('');
+  const [highlight, setHighlight] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => listRef.current?.focus(), []);
+  const suggestions = useMemo(() => suggestionsFor(resolved, direction, contexts), [resolved, direction, contexts]);
+  const shown = suggestions.filter((suggestion) => suggestionMatches(suggestion, draft, breakpointLabel(suggestion.breakpoint, translate)));
+  const custom = parseCustom(draft, { direction, lengthUnit, contexts });
+  const active = shown[Math.min(highlight, shown.length - 1)];
+  const write = (query: string, existingKey: ContextKey | undefined) => {
+    if (existingKey === undefined) {
+      onAdd(query, canNest ? mode : 'wrap');
+    } else {
+      onExisting(existingKey);
+    }
+  };
+  const addCustom = () => {
+    if (custom.kind === 'width') {
+      write(custom.query, custom.existingKey);
+    } else if (custom.kind === 'raw') {
+      onAdd(custom.query, canNest ? mode : 'wrap');
+    }
+  };
+  const onListKey = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setHighlight((previous) => Math.min(previous + 1, shown.length - 1));
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setHighlight((previous) => Math.max(previous - 1, 0));
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      if (active !== undefined) {
+        write(active.query, active.existingKey);
+      }
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      onCancel();
+    }
+  };
+  const directionOptions: SegmentedOption<QueryDirection>[] = [
+    { value: 'up', label: translate('styleModel.embed.query.mobileFirst') },
+    { value: 'down', label: translate('styleModel.embed.query.desktopFirst') },
+  ];
   return (
-    <div className="embed-editor_add-query">
+    <div className="embed-editor_add-query is-suggested">
       <div className="embed-editor_add-query-controls">
         <SegmentedControl
           className="embed-editor_add-query-mode"
-          options={QUERY_MODES}
+          options={queryModes(translate)}
           value={canNest ? mode : 'wrap'}
           onChange={setMode}
-          ariaLabel="How to add the query"
+          ariaLabel={translate('styleModel.embed.query.howToAdd')}
           disabled={!canNest}
           widthMode="hug"
         />
         <div className="embed-editor_add-query-actions">
           <button type="button" className="u-button is-ghost is-small" onClick={onCancel}>
-            Cancel
-          </button>
-          <button type="button" className="u-button is-primary is-small" onClick={() => submit(draft)} disabled={draft.trim() === '' || draft.trim() === '@'}>
-            Add
+            {translate('ui.cancel')}
           </button>
         </div>
       </div>
-      {!canNest ? <p className="embed-editor_add-query-note">Pick a selector to nest inside it.</p> : undefined}
-      <QueryCombo draft={draft} setDraft={setDraft} onSubmit={submit} onCancel={onCancel} suggestions={suggestions} ariaLabel="Query to add" />
+      {!canNest ? <p className="embed-editor_add-query-note">{translate('styleModel.embed.query.pickToNest')}</p> : undefined}
+      <SegmentedControl
+        className="embed-editor_add-query-direction"
+        options={directionOptions}
+        value={direction}
+        onChange={(next) => {
+          setDirection(next);
+          setHighlight(0);
+        }}
+        ariaLabel={translate('styleModel.embed.query.direction')}
+        widthMode="hug"
+      />
+      <div
+        ref={listRef}
+        className="embed-editor_aq-list"
+        role="listbox"
+        tabIndex={0}
+        aria-label={translate('styleModel.embed.query.breakpoints')}
+        aria-activedescendant={active === undefined ? undefined : `aq-${active.breakpoint.id}`}
+        onKeyDown={onListKey}
+      >
+        {shown.map((suggestion, index) => {
+          const name = breakpointLabel(suggestion.breakpoint, translate);
+          const added = suggestion.existingKey !== undefined;
+          return (
+            <div
+              key={suggestion.breakpoint.id}
+              id={`aq-${suggestion.breakpoint.id}`}
+              role="option"
+              aria-selected={added}
+              aria-label={added ? `${name}, ${suggestion.condition}, ${translate('styleModel.embed.query.alreadyAdded')}` : `${name}, ${suggestion.condition}`}
+              className={['embed-editor_aq-row', index === Math.min(highlight, shown.length - 1) ? 'is-active' : '', added ? 'is-added' : '']
+                .filter(Boolean)
+                .join(' ')}
+              onMouseEnter={() => setHighlight(index)}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => write(suggestion.query, suggestion.existingKey)}
+            >
+              <span className="embed-editor_aq-icon">{deviceIcon(iconFor(suggestion.breakpoint, resolved))}</span>
+              <span className="embed-editor_aq-name">{name}</span>
+              <span className="embed-editor_aq-detail">{added ? translate('styleModel.embed.query.alreadyAdded') : suggestion.condition}</span>
+              <span className="embed-editor_aq-check">{added ? <CheckGlyph /> : undefined}</span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="embed-editor_aq-custom">
+        <input
+          className="u-input embed-editor_aq-input"
+          value={draft}
+          placeholder={translate('styleModel.embed.query.customPlaceholder')}
+          spellCheck={false}
+          aria-label={translate('styleModel.embed.query.custom')}
+          aria-invalid={custom.kind === 'invalid'}
+          onChange={(event) => {
+            setDraft(event.target.value);
+            setHighlight(0);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              addCustom();
+            } else if (event.key === 'Escape') {
+              event.preventDefault();
+              onCancel();
+            }
+          }}
+        />
+        <button type="button" className="u-button is-primary is-small" onClick={addCustom} disabled={custom.kind !== 'width' && custom.kind !== 'raw'}>
+          {translate('styleModel.embed.query.add')}
+        </button>
+      </div>
+      <p className={custom.kind === 'invalid' ? 'embed-editor_aq-preview is-invalid' : 'embed-editor_aq-preview'} role="status" aria-live="polite">
+        {customPreview(custom, translate)}
+      </p>
     </div>
   );
 }
+
+// The Custom row's live line: what will be added, or why nothing will be.
+function customPreview(custom: CustomQuery, translate: ReturnType<typeof useTranslate>): string {
+  switch (custom.kind) {
+    case 'empty':
+      return '';
+    case 'raw':
+      return translate('styleModel.embed.query.willAdd', { query: custom.query });
+    case 'width':
+      if (custom.existingKey !== undefined) {
+        return translate('styleModel.embed.query.alreadyAdded');
+      }
+      return translate(custom.converted ? 'styleModel.embed.query.willAddRem' : 'styleModel.embed.query.willAdd', { query: custom.query });
+    case 'invalid':
+      switch (custom.code) {
+        case 'pxWhole':
+          return translate('styleModel.embed.query.invalidPxWhole');
+        case 'range':
+          return translate('styleModel.embed.query.invalidRange');
+        case 'syntax':
+          return translate('styleModel.embed.query.invalidSyntax');
+        default: {
+          const exhaustive: never = custom.code;
+          return exhaustive;
+        }
+      }
+    default: {
+      const exhaustive: never = custom;
+      return exhaustive;
+    }
+  }
+}
+
+const CheckGlyph = centralIcon(centralCheck, 12);
 
 // Rename a query wherever this stylesheet spells it. A breakpoint is one idea
 // written in several places — this component's four `@media (width >= 64rem)`
@@ -269,6 +438,7 @@ export function EditQueryForm({
   onRename: (from: string, to: string) => void;
   onCancel: () => void;
 }) {
+  const translate = useTranslate();
   const [draft, setDraft] = useState(query);
   const changed = draft.trim() !== '' && draft.trim() !== '@' && draft.trim() !== query;
   const submit = (text: string) => {
@@ -281,15 +451,15 @@ export function EditQueryForm({
   return (
     <div className="embed-editor_add-query is-rename">
       <div className="embed-editor_add-query-controls">
-        <span className="embed-editor_add-query-count" title={`${uses === 1 ? '1 block' : `${uses} blocks`} in ${sourceLabel}`}>
-          {uses === 1 ? '1 block' : `${uses} blocks`} in {sourceLabel}
+        <span className="embed-editor_add-query-count" title={translate('styleModel.embed.query.blocksIn', { count: uses, source: sourceLabel })}>
+          {translate('styleModel.embed.query.blocksIn', { count: uses, source: sourceLabel })}
         </span>
         <div className="embed-editor_add-query-actions">
           <button type="button" className="u-button is-ghost is-small" onClick={onCancel}>
-            Cancel
+            {translate('ui.cancel')}
           </button>
           <button type="button" className="u-button is-primary is-small" onClick={() => submit(draft)} disabled={!changed}>
-            Rename
+            {translate('styleModel.embed.query.rename')}
           </button>
         </div>
       </div>
@@ -299,7 +469,7 @@ export function EditQueryForm({
         onSubmit={submit}
         onCancel={onCancel}
         suggestions={suggestions}
-        ariaLabel="Query"
+        ariaLabel={translate('styleModel.embed.query.query')}
         initial={query}
         selectOnFocus
       />
@@ -422,6 +592,7 @@ export function EditableCssRule({
   readonly busy: boolean;
   readonly onSave: (rule: ParsedRule, css: string) => void;
 }) {
+  const translate = useTranslate();
   // Flush left with a tab per level, whatever the <style> block's own indentation
   // (replaceRuleCss puts the block's indentation back on save), inside the selectors
   // and queries it is written in. Those are read-only: they may hold other rules,
@@ -466,7 +637,7 @@ export function EditableCssRule({
     <CodeEditor
       value={draft}
       language="css"
-      ariaLabel={`Editable CSS for ${rule.nestedDisplay ?? rule.selectorText}; changes save automatically`}
+      ariaLabel={translate('styleModel.embed.query.editableCss', { rule: rule.nestedDisplay ?? rule.selectorText })}
       // A whole rule: `--` offers variables in each declaration's value. There is
       // no one property to bind the whole text to, so it has no bind dot.
       variables={{ kind: 'declarations' }}
@@ -493,15 +664,16 @@ export type CssCodeSectionProps = {
 };
 
 export function CssCodeHeader({ open, sourceLabel, onToggle }: { readonly open: boolean; readonly sourceLabel: string; readonly onToggle: () => void }) {
+  const translate = useTranslate();
   return (
     <button
       type="button"
       className="embed-editor_css-code-header embed-editor_css-code-toggle"
       aria-expanded={open}
-      aria-label={`${open ? 'Collapse' : 'Expand'} CSS Code`}
+      aria-label={open ? translate('styleModel.embed.query.codeCollapse') : translate('styleModel.embed.query.codeExpand')}
       onClick={onToggle}
     >
-      <span className="embed-editor_css-code-title">CSS Code</span>
+      <span className="embed-editor_css-code-title">{translate('styleModel.embed.query.codeTitle')}</span>
       {sourceLabel ? (
         <span className="embed-editor_css-code-source" title={sourceLabel}>
           {sourceLabel}
@@ -515,6 +687,7 @@ export function CssCodeHeader({ open, sourceLabel, onToggle }: { readonly open: 
 }
 
 export function CssCodeSection({ model, activeSelector, visibleSelectors, editableRule, busy, open, onToggle, onSave, inlineCode }: CssCodeSectionProps) {
+  const translate = useTranslate();
   const layer = usePanelLayer();
   const rules = useMemo(() => {
     const visible = [...model.base, ...model.conditional].filter((rule) => cssRuleMatchesVisibleSelector(rule, visibleSelectors));
@@ -523,7 +696,8 @@ export function CssCodeSection({ model, activeSelector, visibleSelectors, editab
   }, [model, activeSelector, visibleSelectors, layer]);
   const view = useMemo(() => buildCssRuleView(rules), [rules]);
   const sources = useMemo(() => [...new Set(rules.map((entry) => entry.rule.embedLabel))], [rules]);
-  const sourceLabel = inlineCode !== undefined ? 'style attribute' : activeSelector ? (editableRule?.embedLabel ?? sources.join(', ')) : '';
+  const sourceLabel =
+    inlineCode !== undefined ? translate('styleModel.embed.query.attributeSource') : activeSelector ? (editableRule?.embedLabel ?? sources.join(', ')) : '';
 
   return (
     <section className={`embed-editor_css-code ${open ? 'is-open' : 'is-collapsed'}`}>
@@ -536,14 +710,19 @@ export function CssCodeSection({ model, activeSelector, visibleSelectors, editab
           ) : inlineCode?.kind === 'readonly' ? (
             <>
               <p className="embed-editor_inline-writes-to">{inlineCode.reason}</p>
-              <CodeBlock text={inlineCode.code} language="css" className="embed-editor_css-code-preview" label="The style attribute, read-only" />
+              <CodeBlock
+                text={inlineCode.code}
+                language="css"
+                className="embed-editor_css-code-preview"
+                label={translate('styleModel.embed.query.attributeReadOnly')}
+              />
             </>
           ) : activeSelector && editableRule ? (
             <EditableCssRule key={editableRule.ruleId} rule={editableRule} busy={busy} onSave={onSave} />
           ) : view.code ? (
-            <CssCodePreview view={view} ariaLabel="CSS matching this element" />
+            <CssCodePreview view={view} ariaLabel={translate('styleModel.embed.query.matching')} />
           ) : (
-            <p className="embed-editor_css-code-empty">No matching CSS rules.</p>
+            <p className="embed-editor_css-code-empty">{translate('styleModel.embed.query.noRules')}</p>
           )}
         </div>
       ) : undefined}
@@ -557,6 +736,12 @@ export type StyleCardProps = {
   activePicked: boolean;
   /** Whether the selected element's chips have finished landing (ScanState.settled). */
   selectionSettled: boolean;
+  /**
+   * The selected element has not been read yet: nothing about its rules is known, so a field
+   * drawn now would be the plain default that the real answer then replaces. The sections
+   * draw placeholders in the fields' shape until it lands.
+   */
+  selectionAwaiting: boolean;
   cssCodeOpen: boolean;
   onToggleCssCode: () => void;
   model: RuleModel;
@@ -565,6 +750,8 @@ export type StyleCardProps = {
   contextInfos: ContextInfo[];
   context: ContextKey;
   onContext: (context: ContextKey) => void;
+  /** Whether the edit target follows the canvas width or is held (contextFollow.ts), and how to change that; absent where no canvas width is known. */
+  contextFollow: { readonly following: boolean; readonly onFollow: () => void; readonly onHold: () => void } | undefined;
   onAddQuery: (query: string, mode: 'wrap' | 'nest') => void;
   onRenameQuery: (from: string, to: string) => void;
   /** How many blocks in the source stylesheet each query is written in — the
@@ -596,8 +783,10 @@ export type StyleCardProps = {
   busy: boolean;
   pending: boolean;
   setProp: (prop: string, value: string, important: boolean) => void;
-  clearProp: (prop: string | string[]) => void;
+  clearProp: (prop: string | string[]) => Promise<void>;
   liveSetProp: LiveSetProp;
+  /** The picker's hover preview: shown on the canvas, never written (connectFieldHelpers' PreviewProp). */
+  previewProp: PreviewProp;
   onSelectSelector: (selector: string, prop?: string) => void;
   onAdd: (prop: string, value: string, important: boolean) => void;
   onSaveCssRule: (rule: ParsedRule, css: string) => void;

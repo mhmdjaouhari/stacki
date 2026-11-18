@@ -37,6 +37,13 @@
   /* Popover/menu surface. Aliased to `raised` so the ramp has one fewer near-duplicate
      grey (it was #363636, a hair off raised's #3b3b3b). */
   --color-bg-surface-overlay: var(--color-bg-surface-raised);
+  /* Attribute-selector chips in the element tooltip ([data-x], [style="…"]) only: a saturated purple
+     with white text, as the blue class chip beside them is a saturated blue with white text. White on
+     the fill is 5.5:1 at rest. The fill cannot also reach 3:1 against the grey tooltip, since that needs a
+     fill so bright that white text falls to about 3.7:1; it stands off the tooltip as far as the blue
+     chip does. Other purple chips (spacing, variables) keep their own colours. */
+  --color-attribute-chip-bg: #6c4fe0;
+  --color-attribute-chip-text: #ffffff;
   --color-bg-hover: rgba(255, 255, 255, 0.05);
   --color-bg-active: rgba(255, 255, 255, 0.08);
 
@@ -98,9 +105,15 @@
   --color-component-tag-bg: rgba(37, 157, 77, 0.4);
   --color-component-tag-bg-hover: rgba(37, 157, 77, 0.55);
   --color-component-tag-bg-active: #16783c;
+  /* The fill of a chip styled only in another query. The chip keeps its full-strength text and says
+     "not here" through a darker fill; it used to be the whole chip at half opacity, which washed the text
+     out to about 4:1 in blue and 2:1 in grey. Each is the family's resting fill, one step darker. */
+  --color-class-tag-bg-dimmed: #001e39;
+  --color-component-tag-bg-dimmed: rgba(37, 157, 77, 0.2);
   --color-selector-context-bg: var(--color-bg-surface);
   --color-selector-context-bg-hover: var(--color-bg-surface-raised);
   --color-selector-context-bg-active: #636363; /* Clearly brighter than hover (#3b3b3b), so the selected grey chip stands out. */
+  --color-selector-context-bg-dimmed: var(--color-bg-page);
   /* The "Inline styles" chip (InlineStyleChip.tsx): a muted amber, apart from every
      selector family, because the style attribute is not a selector and outranks them. */
   --color-inline-tag: #f6d38a;
@@ -226,4 +239,11 @@
   --z-overlay: 100;
   --z-modal: 1000;
   --z-tooltip: 10000;
+
+  /* Style-panel layering, lowest to highest. Controls and the variable-connect dot sit in
+     one stacking context (the wrappers that hold them create none), so their z-indexes
+     compete directly and a closed field must never outrank the dot that overlaps it. */
+  --z-style-field: var(--z-raised);
+  --z-style-connect: calc(var(--z-raised) + 10);
+  --z-style-popover: calc(var(--z-modal) + 1);
 }

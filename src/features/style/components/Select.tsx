@@ -66,7 +66,7 @@ function useSelectState<T extends string>(props: Props<T>) {
   const optionsState = useSelectOptions({ options, value, query, searchable });
   const { selectedOption, displayed, firstSelectable, lastSelectable, selectedIndex } = optionsState;
   const highlight = usePreviewHighlight(selectedIndex);
-  const { activeIndex, activity: previewActivity, activateIndex } = highlight;
+  const { activeIndex, activity: previewActivity, activateIndex, sourceRef } = highlight;
 
   const preview = useHoverPreview({
     open,
@@ -104,7 +104,7 @@ function useSelectState<T extends string>(props: Props<T>) {
     setActiveIndex: activateIndex,
     setQuery,
   });
-  const dropUp = useListPlacement({ open, activeIndex, query, variant, refs });
+  const dropUp = useListPlacement({ open, activeIndex, query, variant, refs, sourceRef });
   return {
     open,
     setOpen,
@@ -129,7 +129,12 @@ function useSelectState<T extends string>(props: Props<T>) {
   };
 }
 
+// The least margin a list keeps from the window's edge, and the gap between trigger and list.
+const LIST_EDGE_PX = 8;
+const LIST_TRIGGER_GAP_PX = 8;
+
 type PreviewActivity = 'active' | 'paused';
+type HighlightSource = 'keyboard' | 'pointer';
 
 function usePreviewDismiss({
   setOpen,
@@ -154,12 +159,16 @@ function usePreviewDismiss({
 function usePreviewHighlight(selectedIndex: number) {
   const [activeIndex, setActiveIndex] = useState(selectedIndex);
   const [activity, setActivity] = useState<PreviewActivity>('active');
-  const activateIndex = useCallback((index: number) => {
+  // Who moved the highlight. A pointer crossing rows must never scroll the list (the row is
+  // already under the pointer); only the keyboard and a new filter bring the row into view.
+  const sourceRef = useRef<HighlightSource>('keyboard');
+  const activateIndex = useCallback((index: number, source: HighlightSource = 'keyboard') => {
+    sourceRef.current = source;
     setActivity('active');
     setActiveIndex(index);
   }, []);
   const pause = useCallback(() => setActivity('paused'), []);
-  return { activeIndex, activity, activateIndex, pause };
+  return { activeIndex, activity, activateIndex, pause, sourceRef };
 }
 
 function useSelectOptions<T extends string>({
@@ -175,7 +184,9 @@ function useSelectOptions<T extends string>({
 }) {
   // The trigger always reflects the real selected value, independent of any filter.
   const selectedOption = useMemo(
-    () => options.find((option) => !option.heading && option.value === value) ?? options.find((option) => !option.heading),
+    () =>
+      options.find((option) => !option.heading && option.value === value) ??
+      options.find((option) => !option.heading && option.header !== true && option.footer !== true),
     [options, value],
   );
   const displayed = useMemo(() => filterOptions(options, query, { searchable }), [options, query, searchable]);
@@ -287,19 +298,45 @@ function useHoverPreview<T extends string>({
   // conclude there was nothing to undo and leave the preview applied. The consumer knows
   // what the preview overwrote, so asking it to restore is always safe.
   const emittedRef = useRef(false);
+  // The highlight is local state and paints on its own; the preview it implies is a write
+  // (canvas message, file save, undo bookkeeping) that must not run in the same task as that
+  // commit, or each row the pointer crosses waits on the previous row's work. So the preview
+  // goes out on the next animation frame, and rows crossed within one frame send only the last.
+  const wantedRef = useRef<T | undefined>(undefined);
+  const frameRef = useRef<number | undefined>(undefined);
+  const dropFrame = useCallback(() => {
+    if (frameRef.current !== undefined) {
+      window.cancelAnimationFrame(frameRef.current);
+      frameRef.current = undefined;
+    }
+    wantedRef.current = undefined;
+  }, []);
+  const flush = useCallback(() => {
+    frameRef.current = undefined;
+    const wanted = wantedRef.current;
+    wantedRef.current = undefined;
+    if (wanted === undefined || wanted === shownRef.current) {
+      return;
+    }
+    shownRef.current = wanted;
+    emittedRef.current = true;
+    onPreviewRef.current?.(wanted);
+  }, []);
   const cancelPreview = useCallback(() => {
+    dropFrame();
     shownRef.current = undefined;
     if (!emittedRef.current) {
       return;
     }
     emittedRef.current = false;
     onPreviewRef.current?.(undefined);
-  }, []);
-  // A pick replaces the preview: nothing to revert.
+  }, [dropFrame]);
+  // A pick replaces the preview: nothing to revert, and none still waiting for its frame.
   const commit = useCallback(() => {
+    dropFrame();
     shownRef.current = undefined;
     emittedRef.current = false;
-  }, []);
+  }, [dropFrame]);
 
   // Emit as the highlight moves. Headings can't be highlighted, so anything landed on
   // is a real option; re-emitting the committed value is exactly how scrubbing back to
@@ -315,23 +352,22 @@ function useHoverPreview<T extends string>({
     if (shownRef.current === undefined) {
       shownRef.current = value;
     } // baseline for this session
-    if (option.value === shownRef.current) {
-      return;
+    wantedRef.current = option.value;
+    if (option.value !== shownRef.current && frameRef.current === undefined) {
+      frameRef.current = window.requestAnimationFrame(flush);
     }
-    shownRef.current = option.value;
-    emittedRef.current = true;
-    onPreviewRef.current(option.value);
-  }, [open, activity, activeIndex, displayed, value]);
+  }, [open, activity, activeIndex, displayed, value, flush]);
 
   // A preview must never outlive the menu: revert if this control unmounts (the section
   // collapsed, the selection changed) while one is showing.
   useEffect(
     () => () => {
+      dropFrame();
       if (emittedRef.current) {
         onPreviewRef.current?.(undefined);
       }
     },
-    [],
+    [dropFrame],
   );
   return { cancelPreview, commit };
 }
@@ -410,6 +446,9 @@ function useMenuActions<T extends string>(input: MenuActionsInput<T>) {
       }
       commitPreview(); // committed — the pick replaces the preview, no revert
       onChange(option.value);
+      if (option.switch === true) {
+        return; // A switch changes the list in place: the list stays open where it is.
+      }
       setOpen(false);
       window.requestAnimationFrame(() => refs.button.current?.focus({ preventScroll: true }));
     },
@@ -543,12 +582,14 @@ function useListPlacement({
   query,
   variant,
   refs,
+  sourceRef,
 }: {
   readonly open: boolean;
   readonly activeIndex: number;
   readonly query: string;
   readonly variant: 'default' | 'link';
   readonly refs: SelectRefs;
+  readonly sourceRef: RefObject<HighlightSource>;
 }): boolean {
   const [dropUp, setDropUp] = useState(false);
   // Distinguishes the open transition from in-list navigation (drives the one-time
@@ -566,20 +607,30 @@ function useListPlacement({
     wasOpenRef.current = true;
     if (trigger && list) {
       const rect = trigger.getBoundingClientRect();
-      const listHeight = list.offsetHeight;
       const spaceBelow = window.innerHeight - rect.bottom;
       const spaceAbove = rect.top;
-      setDropUp(spaceBelow < listHeight + 8 && spaceAbove > spaceBelow);
+      const region = scrollRegionOf(list);
+      // A list with a pinned footer measures what it WANTS (all its rows), not what its cap
+      // allows: the cap is set from the room, so measuring the capped list would flip the
+      // direction as the cap changed. It then takes the room on its side, less the gap to the
+      // trigger and the window's edge, as the room it may grow into (`--select-room`).
+      const natural = region === list ? list.offsetHeight : list.offsetHeight - region.clientHeight + region.scrollHeight;
+      const up = spaceBelow < natural + LIST_EDGE_PX && spaceAbove > spaceBelow;
+      setDropUp(up);
+      if (region !== list) {
+        list.style.setProperty('--select-room', `${Math.max(0, Math.floor((up ? spaceAbove : spaceBelow) - LIST_EDGE_PX - LIST_TRIGGER_GAP_PX))}px`);
+      }
       if (variant === 'link') {
         clampLinkMenu(trigger, list);
       }
     }
-    if (list) {
+    if (list && (opening || sourceRef.current !== 'pointer')) {
       scrollActiveIntoList(list, { opening });
     }
     // `activeIndex` and `query` are what move the active row; the effect reads it
     // from the DOM rather than from them.
-  }, [open, activeIndex, query, variant, rootRef, listRef]);
+  }, [open, activeIndex, query, variant, rootRef, listRef, sourceRef]);
+  useKeepScroll({ open }, listRef);
   return dropUp;
 }
 
@@ -612,33 +663,78 @@ function clampLinkMenu(trigger: HTMLDivElement, listElement: HTMLDivElement): vo
   assert(listElement.style.transform === '', 'clampLinkMenu: the open motion owns transform');
 }
 
-// Vertical scroll — only the LIST's own overflow (never scrollIntoView, whose inline
+// The element that scrolls: the list itself, or its scrolling region when a pinned footer
+// sits beside it (the footer must never scroll away, nor rows slide under it).
+function scrollRegionOf(listElement: HTMLDivElement): HTMLElement {
+  return listElement.querySelector<HTMLElement>(':scope > .u-select-scroll') ?? listElement;
+}
+
+// Vertical scroll — only the list's own overflow (never scrollIntoView, whose inline
 // axis would slide the whole panel sideways). On OPEN, bring the selected option's
-// group heading right under the (sticky) search so the selection sits near the top;
-// while navigating, just keep the active option in view.
+// group (its card, or its heading) to the top, but only when the selection is not already
+// inside the first screenful: a list that fits opens at rest, at scrollTop 0. Offsets, not
+// rects: the popup scales open, and a rect measured mid-motion is a few pixels off, which
+// scrolled a list that needed no scrolling. While navigating by key, just keep the active
+// option in view, with no animation and no move at all when it is already visible.
 function scrollActiveIntoList(listElement: HTMLDivElement, moment: { readonly opening: boolean }): void {
-  const active = listElement.querySelector<HTMLElement>('[data-active="true"]');
+  const region = scrollRegionOf(listElement);
+  const active = region.querySelector<HTMLElement>('[data-active="true"]');
   if (!active) {
     return;
   }
-  const searchHeight = listElement.querySelector<HTMLElement>('.u-select-search')?.offsetHeight ?? 0;
+  const searchHeight = region.querySelector<HTMLElement>('.u-select-search')?.offsetHeight ?? 0;
   if (moment.opening) {
-    let node = active.previousElementSibling;
-    while (isHTMLElementInDocument(node, active.ownerDocument) && !node.classList.contains('u-select-heading')) {
-      node = node.previousElementSibling;
+    const card = active.closest<HTMLElement>('.u-select-group');
+    let anchor: HTMLElement = active;
+    if (card !== null && region.contains(card)) {
+      anchor = card;
+    } else {
+      let node = active.previousElementSibling;
+      while (isHTMLElementInDocument(node, active.ownerDocument) && !node.classList.contains('u-select-heading')) {
+        node = node.previousElementSibling;
+      }
+      anchor = isHTMLElementInDocument(node, active.ownerDocument) ? node : active;
     }
-    const heading = isHTMLElementInDocument(node, active.ownerDocument) ? node : undefined;
-    const anchor = heading ?? active;
-    listElement.scrollTop = Math.max(0, anchor.offsetTop - searchHeight);
+    const paddingTop = Number.parseFloat(window.getComputedStyle(region).paddingTop) || 0;
+    const top = anchor.offsetTop - region.offsetTop;
+    const bottom = active.offsetTop - region.offsetTop + active.offsetHeight;
+    // Already inside the first screenful: nothing to scroll to.
+    region.scrollTop = bottom <= region.clientHeight ? 0 : Math.max(0, top - paddingTop - searchHeight);
     return;
   }
-  const listRect = listElement.getBoundingClientRect();
+  const regionRect = region.getBoundingClientRect();
   const activeRect = active.getBoundingClientRect();
-  if (activeRect.top < listRect.top + searchHeight) {
-    listElement.scrollTop -= listRect.top + searchHeight - activeRect.top;
-  } else if (activeRect.bottom > listRect.bottom) {
-    listElement.scrollTop += activeRect.bottom - listRect.bottom;
+  if (activeRect.top < regionRect.top + searchHeight) {
+    region.scrollTop -= regionRect.top + searchHeight - activeRect.top;
+  } else if (activeRect.bottom > regionRect.bottom) {
+    region.scrollTop += activeRect.bottom - regionRect.bottom;
   }
+}
+
+// If the scrolling element is replaced while the list stays open (a remount under it), the
+// new one starts at 0 and the rows jump. The position is remembered as the person scrolls
+// and put back on the replacement, so a re-render never moves what they were reading.
+function useKeepScroll({ open }: { readonly open: boolean }, listRef: RefObject<HTMLDivElement>): void {
+  const remembered = useRef<{ readonly element: HTMLElement; scrollTop: number } | undefined>(undefined);
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!open || !list) {
+      remembered.current = undefined;
+      return undefined;
+    }
+    const region = scrollRegionOf(list);
+    const previous = remembered.current;
+    if (previous !== undefined && previous.element !== region) {
+      region.scrollTop = previous.scrollTop;
+    }
+    const record = { element: region, scrollTop: region.scrollTop };
+    remembered.current = record;
+    const onScroll = () => {
+      record.scrollTop = region.scrollTop;
+    };
+    region.addEventListener('scroll', onScroll, { passive: true });
+    return () => region.removeEventListener('scroll', onScroll);
+  });
 }
 
 type KeyInput = {

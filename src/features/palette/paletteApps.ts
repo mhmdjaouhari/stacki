@@ -10,6 +10,7 @@ import { assert } from '../../../shared/core/assert';
 import { APP_LIMITS } from '../../../shared/properties/apps';
 import { MARKETPLACE_LIMITS } from '../../../shared/properties/appMarketplace';
 import { appAccessFeature } from '../../../shared/properties/appsRpc';
+import type { MessageKey } from '../../../shared/properties/i18n/messageRef';
 import { can, type RoleView } from '../../../shared/properties/projectRoles';
 
 /** One installed app, as the palette lists it. */
@@ -56,42 +57,55 @@ export interface PaletteAppsSource {
   readonly list: PaletteAppList;
   /** Switches the rail to the Apps panel: the empty state's "Open Apps panel" row. */
   readonly browse: () => void;
-  /** Starts an app file upload, as the Apps panel's own button does; absent opens the Apps panel instead. */
-  readonly upload?: (() => void) | undefined;
   /** Opens the Apps panel's "Load App From GitHub" popup; absent opens the Apps panel instead. */
   readonly connect?: (() => void) | undefined;
-  /** Copies the "Build an app" prompt, as the Apps panel's row does; absent opens the Apps panel instead. */
-  readonly copyPrompt?: (() => void) | undefined;
+  /** Opens the AI chat with the "Build an app" prompt waiting unsent, as the Apps panel's item does; absent opens the Apps panel instead. */
+  readonly buildApp?: (() => void) | undefined;
   /** Approved marketplace apps not installed here, for a role that may see the marketplace; `open` shows one in the Apps panel. */
   readonly marketplace?: readonly PaletteApp[] | undefined;
 }
 
 /** One row of the empty Apps tab: something to do instead of an app to open. */
 export interface PaletteAppsAction {
-  readonly key: 'connect' | 'copyPrompt' | 'upload' | 'browse';
+  readonly key: 'connect' | 'buildApp' | 'browse';
+  /** English label: logs and tests. */
   readonly label: string;
+  /** What the row draws, translated by the renderer. */
+  readonly labelKey: MessageKey;
   readonly run: () => void;
 }
 
 /**
- * The empty Apps tab's rows, first highlighted: connecting a release, copying the prompt that builds an
- * app, uploading a file, then the panel itself. Installing is an admin's (the Apps panel offers it to no
+ * The empty Apps tab's rows, first highlighted: connecting a release, opening the AI chat on the prompt
+ * that builds an app, then the panel itself. Installing is an admin's (the Apps panel offers it to no
  * one else), so another role is offered the prompt and the panel. An action the host does not expose
  * opens the panel, where the person finishes it.
  */
 export function paletteAppsActions(source: PaletteAppsSource, role: RoleView): readonly PaletteAppsAction[] {
   assert(canSeePaletteApps(role), 'paletteApps: only a role with the Apps panel has an Apps tab');
-  const browse: PaletteAppsAction = { key: 'browse', label: 'Open Apps panel', run: source.browse };
-  const copyPrompt: PaletteAppsAction = { key: 'copyPrompt', label: '“Build an app” prompt', run: source.copyPrompt ?? source.browse };
+  // The English labels are for logs and tests; the row draws `labelKey` in the active language.
+  // i18n-ignore: English beside its labelKey.
+  const browse: PaletteAppsAction = { key: 'browse', label: 'Open Apps panel', labelKey: 'palette.apps.action.browse', run: source.browse };
+  // i18n-ignore: English beside its labelKey.
+  const buildApp: PaletteAppsAction = {
+    key: 'buildApp',
+    // i18n-ignore: English beside its labelKey.
+    label: 'Build an app',
+    labelKey: 'palette.apps.action.buildApp',
+    run: source.buildApp ?? source.browse,
+  };
   if (!role.isAdmin) {
-    return [copyPrompt, browse];
+    return [buildApp, browse];
   }
-  const actions: readonly PaletteAppsAction[] = [
-    { key: 'connect', label: 'Load App From GitHub', run: source.connect ?? source.browse },
-    copyPrompt,
-    { key: 'upload', label: 'Upload app file', run: source.upload ?? source.browse },
-    browse,
-  ];
+  // i18n-ignore: English beside its labelKey.
+  const connect: PaletteAppsAction = {
+    key: 'connect',
+    // i18n-ignore: English beside its labelKey.
+    label: 'Load App From GitHub',
+    labelKey: 'palette.apps.action.connect',
+    run: source.connect ?? source.browse,
+  };
+  const actions: readonly PaletteAppsAction[] = [connect, buildApp, browse];
   assert(actions.at(-1) === browse, 'paletteApps: the panel is the last way on');
   return actions;
 }

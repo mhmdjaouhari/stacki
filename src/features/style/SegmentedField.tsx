@@ -2,10 +2,13 @@ import Popup from '../../ui/Popup';
 import { useEffect, useRef, useState } from 'react';
 import { useHighlight } from './model/computedStyle';
 import type { ReactNode } from 'react';
+import { useTranslate } from '../../lib/i18n/useTranslate';
 import SegmentPill from './components/SegmentPill';
 import { ChevronIcon, MenuItem } from './components/MenuParts';
 import { useCustomFocus } from './model/fieldHooks';
 import { parseImportant, withImportant } from './model/styleDisplay';
+import VariableConnect from './VariableConnect';
+import KeywordConnect, { VariableMenuItem } from './KeywordConnect';
 
 // A segmented button-list with a trailing dropdown arrow whose menu offers a
 // "Custom" escape hatch (writes `unset` and reveals a focused text field), and —
@@ -18,18 +21,21 @@ export type SegOption = { value: string; label: ReactNode; menuLabel: string; ar
 
 // Editable text field for a custom value (defaults to `unset` when just entered).
 function CustomField({
+  prop,
   value,
   important,
   busy,
   inputRef,
   onCommit,
 }: {
+  prop: string;
   value: string;
   important: boolean;
   busy: boolean;
   inputRef: React.RefObject<HTMLInputElement>;
   onCommit: (value: string, important: boolean) => void;
 }) {
+  const translate = useTranslate();
   const [draft, setDraft] = useState(withImportant({ value, important }));
   const focused = useRef(false);
   useEffect(() => {
@@ -43,29 +49,42 @@ function CustomField({
       onCommit(parsed.value, parsed.important);
     }
   };
+  // Wrapped like every other field: a `var(--x)` reads as the purple chip.
   return (
-    <input
-      ref={inputRef}
-      className="embed-editor_value-input embed-editor_display-input"
-      value={draft}
-      onChange={(event) => setDraft(event.target.value)}
-      onFocus={() => {
-        focused.current = true;
-      }}
-      onBlur={() => {
-        focused.current = false;
-        commit();
-      }}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter') {
-          event.currentTarget.blur();
-        }
-      }}
+    <VariableConnect
+      className="is-fill"
+      prop={prop}
+      canvasProperty={prop}
       disabled={busy}
-      spellCheck={false}
-      aria-label="Value"
-      placeholder="custom value"
-    />
+      ariaLabel={translate('styleModel.shared.connectVariable', { label: translate('style.segmentedField.value') })}
+      onPick={(binding) => {
+        setDraft(withImportant({ value: binding, important }));
+        onCommit(binding, important);
+      }}
+    >
+      <input
+        ref={inputRef}
+        className="embed-editor_value-input embed-editor_display-input"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onFocus={() => {
+          focused.current = true;
+        }}
+        onBlur={() => {
+          focused.current = false;
+          commit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter') {
+            event.currentTarget.blur();
+          }
+        }}
+        disabled={busy}
+        spellCheck={false}
+        aria-label={translate('style.segmentedField.value')}
+        placeholder={translate('style.segmentedField.customValuePlaceholder')}
+      />
+    </VariableConnect>
   );
 }
 
@@ -74,8 +93,9 @@ type SegmentedFieldProps = {
   important: boolean;
   options: readonly SegOption[];
   /** The CSS property this bar edits — when nothing is authored, the page's own
-   *  computed value is highlighted (inherited, a `*` rule, a UA default). */
-  prop?: string;
+   *  computed value is highlighted (inherited, a `*` rule, a UA default), and the
+   *  variable picker offers the variables that fit it. */
+  prop: string;
   /** Value selected/shown when the property is unset and the page can't be asked. */
   fallback: string;
   busy: boolean;
@@ -90,7 +110,7 @@ export default function SegmentedField({ value, important, options, prop, fallba
   const customMode = !((supported.has(current) || !current) && !important);
   const active = useHighlight(
     current,
-    prop ?? '',
+    prop,
     options.map((option) => option.value),
     fallback,
   );
@@ -112,24 +132,33 @@ export default function SegmentedField({ value, important, options, prop, fallba
   };
 
   return (
-    <div ref={rootRef} className={`embed-editor_display ${customMode ? 'is-custom' : ''}`} role="group" aria-label={ariaLabel}>
-      <SegmentPill />
-      {customMode ? (
-        <CustomField value={value} important={important} busy={busy} inputRef={inputRef} onCommit={onCommit} />
-      ) : (
-        <SegmentButtons options={options} active={active} busy={busy} onPick={pick} />
-      )}
-      <SegmentMenu
-        open={open}
-        busy={busy}
-        customMode={customMode}
-        current={current}
-        options={options}
-        onToggle={() => setOpen((previous) => !previous)}
-        onPick={pick}
-        onEnterCustom={enterCustom}
-      />
-    </div>
+    <KeywordConnect
+      prop={prop}
+      value={value}
+      ariaLabel={ariaLabel ?? prop}
+      disabled={busy}
+      dot={customMode ? 'field' : 'wrapper'}
+      onPick={(binding) => onCommit(binding, important)}
+    >
+      <div ref={rootRef} className={`embed-editor_display ${customMode ? 'is-custom' : ''}`} role="group" aria-label={ariaLabel}>
+        <SegmentPill />
+        {customMode ? (
+          <CustomField prop={prop} value={value} important={important} busy={busy} inputRef={inputRef} onCommit={onCommit} />
+        ) : (
+          <SegmentButtons options={options} active={active} busy={busy} onPick={pick} />
+        )}
+        <SegmentMenu
+          open={open}
+          busy={busy}
+          customMode={customMode}
+          current={current}
+          options={options}
+          onToggle={() => setOpen((previous) => !previous)}
+          onPick={pick}
+          onEnterCustom={enterCustom}
+        />
+      </div>
+    </KeywordConnect>
   );
 }
 
@@ -154,6 +183,7 @@ function SegmentMenu({
   onPick: (value: string) => void;
   onEnterCustom: () => void;
 }) {
+  const translate = useTranslate();
   return (
     <>
       <button
@@ -161,7 +191,7 @@ function SegmentMenu({
         className="embed-editor_display-arrow"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label="More options"
+        aria-label={translate('style.segmentedField.moreOptions')}
         disabled={busy}
         onClick={onToggle}
       >
@@ -170,12 +200,13 @@ function SegmentMenu({
 
       {open ? (
         <Popup mode="popover" portal={false} onClose={onToggle} className="embed-editor_display-menu" role="menu">
+          <VariableMenuItem onClose={onToggle} />
           {customMode ? (
             options.map((option) => (
               <MenuItem key={option.value} label={option.menuLabel} selected={current === option.value} onClick={() => onPick(option.value)} />
             ))
           ) : (
-            <MenuItem label="Custom" selected={false} onClick={onEnterCustom} />
+            <MenuItem label={translate('style.segmentedField.custom')} selected={false} onClick={onEnterCustom} />
           )}
         </Popup>
       ) : undefined}

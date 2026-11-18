@@ -52,6 +52,9 @@ button.primary {
 button.primary:hover:not(:disabled) {
   background: var(--accent-hover);
 }
+button.primary:active:not(:disabled) {
+  background: var(--accent-pressed);
+}
 button.ghost {
   background: transparent;
   color: var(--text-dim);
@@ -118,4 +121,11 @@ textarea {
   font-size: 12px;
   line-height: 1.5;
   resize: none;
+}
+/* Scroll containers the browser or CodeMirror makes without a rule of ours: a textarea scrolls by default and
+   CodeMirror gives `.cm-scroller` `overflow: auto`. Both keep the scrollbar's room whether or not it shows, so a
+   field that grows past its height never re-wraps its text (docs/scroll-gutter.md). */
+textarea,
+.cm-scroller {
+  scrollbar-gutter: stable;
 }

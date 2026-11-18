@@ -4,6 +4,7 @@
 // composes the hook groups in order; each later group takes the earlier
 // groups' results.
 
+import { useTranslateDescribed } from '../../../lib/i18n/useTranslate';
 import { assert } from '../../../../shared/core/assert';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { loadEmbedSource } from '../model/toolPreferences';
@@ -24,7 +25,10 @@ import {
   type EmbedScan,
 } from '../model/webflow';
 import type { ElementSnapshot, NativeModel } from '../model/styleTypes';
+import type { ManualSourcePick } from '../model/selectorHome';
 import { type ScanState, type Phase } from './EditorBasics';
+import { rememberScanSnapshot, scanSnapshotKey } from './scanSnapshotCache';
+import { elementSelectionKey } from '../model/webflowElement';
 import {
   streamDocs,
   loadComponentDocs,
@@ -86,6 +90,9 @@ export function useEditorRefs() {
   const primedRef = useRef<{ target: MatchTarget; key: string } | undefined>(undefined);
   const lastSnapSigRef = useRef('');
   const lastScanAtRef = useRef(editorSession.scan?.scanAt ?? 0);
+  // The element whose settled answer is on screen ('' while none is): an unsettled pass
+  // for it (source-only, a streamed partial) is a step back and is not drawn over it.
+  const settledElementKeyRef = useRef('');
   return {
     appliedKeyRef,
     busyRef,
@@ -106,6 +113,7 @@ export function useEditorRefs() {
     selectedElementKeyRef,
     selectedRef,
     seqRef,
+    settledElementKeyRef,
     targetRef,
   };
 }
@@ -268,6 +276,10 @@ export function useNativeState(selectionState: ReturnType<typeof useSelectionSta
     sourceSelectionRef.current = sourceSelection;
   }, [sourceSelection]);
   const previousInComponentRef = useRef(false);
+  // The person's own pick of "Add custom styles in", with the selection it was made for, and
+  // the current selection: a pick holds until the element or selector changes (model/selectorHome.ts).
+  const manualSourcePickRef = useRef<ManualSourcePick | undefined>(undefined);
+  const selectionKeyRef = useRef('');
   // The page pick, stashed while in a component.
   const pageSourceRef = useRef<string | undefined>(undefined);
   const wantCompSourceRef = useRef(false); // pending switch until the component embed loads
@@ -288,12 +300,14 @@ export function useNativeState(selectionState: ReturnType<typeof useSelectionSta
   const activeSelectorRef = useRef('');
   return {
     activeSelectorRef,
+    manualSourcePickRef,
     nativeIdentityRef,
     nativeModel,
     nativeModelRef,
     pageSourceRef,
     pendingKeys,
     previousInComponentRef,
+    selectionKeyRef,
     setNativeModel,
     setPendingKeys,
     setSourceSelection,
@@ -310,6 +324,7 @@ export function usePendingWrites(
   scanState: ReturnType<typeof useScanState>,
   nativeState: ReturnType<typeof useNativeState>,
 ) {
+  const translateDescribed = useTranslateDescribed();
   const { docsRef, inComponentRef, pendingKeysRef } = editorRefs;
   const { setSaveError } = busyState;
   const { scan, setStatus } = scanState;
@@ -352,10 +367,10 @@ export function usePendingWrites(
         setStatus(`Held — this ${held} lives in the page, so the canvas shows it once you ` + 'leave the component.');
         return false;
       }
-      setSaveError(result.error);
+      setSaveError(translateDescribed({ message: result.error, messageRef: result.errorRef }));
       return false;
     },
-    [clearPending, markPending, inComponentRef, setSaveError, setStatus],
+    [clearPending, markPending, inComponentRef, setSaveError, setStatus, translateDescribed],
   );
 
   const documentByKey = useMemo(() => {
@@ -516,7 +531,7 @@ function useFlushPending(
     }
     pendingKeysRef.current = new Set();
     setPendingKeys(new Set());
-    setStatus(failed ? `Saved your page-embed edits — ${failed} couldn't be written.` : 'Saved the page-embed edits you made inside the component.');
+    setStatus(failed ? `Saved your page-embed edits — ${failed} couldn't be written.` : 'Saved the page-embed edits you made inside the component.'); // i18n-ignore: write-only status, never rendered.
   }, [pageDocsRef, pendingKeysRef, setPendingKeys, setStatus]);
 }
 
@@ -576,7 +591,7 @@ export function useContentRebuild(
 
 // Resolve the selected element against the cached content.
 export function useApplyResolve(editorRefs: ReturnType<typeof useEditorRefs>, scanState: ReturnType<typeof useScanState>) {
-  const { appliedKeyRef, classListRef, pageDocsRef, primedRef, seqRef, targetRef } = editorRefs;
+  const { appliedKeyRef, classListRef, docsRef, pageDocsRef, primedRef, seqRef, settledElementKeyRef, targetRef } = editorRefs;
   const { setPhase, setScan, setScanningMore, setStatus } = scanState;
 
   // The cheap part — resolve the selected element against cached content.
@@ -588,6 +603,22 @@ export function useApplyResolve(editorRefs: ReturnType<typeof useEditorRefs>, sc
       const asked = options.sourceOnly ? ({ kind: 'unasked' } as const) : await askCanvasAbout(serializeElementId(element), content.rules);
       const { target, rootSnapshot } = await resolveTarget(element, content.scan, asked);
       if (seq !== seqRef.current) {
+        return;
+      }
+      // A streamed partial is a step on the way (EditorBasics.tsx). So is every
+      // source-only pass, even one that read the element's classes: the source
+      // matcher cannot see past a component's edge or a class added at runtime, so a
+      // rule only the page can match (`.section .title { font-weight: var(--w) }`)
+      // is missing from it. Drawn, it showed the plain Weight dropdown until the
+      // canvas answered and the chip replaced it; replacing a remembered answer, it
+      // flipped a chip to that dropdown and back on every switch. Only the canvas's
+      // answer (or its deadline passing, which answers `undefined`) settles.
+      const settled = !content.partial && options.sourceOnly !== true;
+      // Keyed with its document (elementSelectionKey): the same path in another file is another element.
+      const elementKey = elementSelectionKey(element);
+      // This element's settled answer is already drawn (a remembered one, or an earlier
+      // pass): a step on the way to the next one must not replace it with less.
+      if (!settled && settledElementKeyRef.current === elementKey) {
         return;
       }
       targetRef.current = target;
@@ -610,21 +641,29 @@ export function useApplyResolve(editorRefs: ReturnType<typeof useEditorRefs>, sc
       // Scaffolds come from the current context's own (writable) embeds — the
       // component's embeds while inside one, the page's otherwise.
       classListRef.current = rootSnapshot.classList;
-      // A streamed partial is a step on the way (EditorBasics.tsx). So is a
-      // source-only pass that could not read the element's classes (markup a
-      // component renders): its list is the page's global selectors alone, and
-      // drawing it flashed them between two elements' chips. One that did read
-      // them is a real answer, shown while a busy canvas is still answering.
-      const sourceKnown = rootSnapshot.classList.length > 0;
-      const settled = !content.partial && (options.sourceOnly !== true || sourceKnown);
-      setScan(scanStateFor(content, { rootSnapshot, model, settled }, pageDocsRef.current.length));
+      // Still waiting for this element's first settled answer if the selection reset said so
+      // and this step is not it: a rescan of an element already shown never sets it.
+      const landed: ScanState = {
+        ...scanStateFor(content, { rootSnapshot, model, settled }, pageDocsRef.current.length),
+        awaitingFirstAnswer: false,
+      };
+      setScan((previous) => ({ ...landed, awaitingFirstAnswer: !settled && previous?.awaitingFirstAnswer === true }));
+      if (settled) {
+        settledElementKeyRef.current = elementKey;
+        rememberScanSnapshot(scanSnapshotKey(elementKey, docsRef.current), {
+          scan: landed,
+          target,
+          classList: rootSnapshot.classList,
+          primed: options.sourceOnly ? undefined : { target, key: selectorKeyOf(content.rules) },
+        });
+      }
       setPhase('ready');
       setScanningMore(!!content.partial);
       if (!options.silent) {
         setStatus(resolveStatus(content, model));
       }
     },
-    [appliedKeyRef, classListRef, pageDocsRef, primedRef, seqRef, setPhase, setScan, setScanningMore, setStatus, targetRef],
+    [appliedKeyRef, classListRef, docsRef, pageDocsRef, primedRef, seqRef, setPhase, setScan, setScanningMore, setStatus, settledElementKeyRef, targetRef],
   );
   return { applyResolve };
 }

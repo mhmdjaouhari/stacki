@@ -36,6 +36,9 @@ import { answerPreviewQuery } from './previewQueries';
 import { createHotContext } from '/@vite/client';
 import { createOutlines, type OutlineTarget } from './previewOutlines';
 import { listenForCanvasMoves, revertCanvasMoves, showCanvasMove } from '../../../vendor/stacki/electron/preload/frameMove';
+import { listenForCanvasInserts, revertCanvasInserts, showCanvasInsert } from '../../../vendor/stacki/electron/preload/framePendingInsert';
+import { clearPendingDeletes, hidePendingDelete, listenForPendingDeletes } from '../../../vendor/stacki/electron/preload/framePendingDelete';
+import { parseCanvasInsert } from '../../../vendor/stacki/shared/page/canvasInsert';
 import { parseCanvasMove, renumberedCanvasPath, type CanvasMove } from '../../../vendor/stacki/shared/page/canvasMove';
 const studioOrigin = document.querySelector<HTMLMetaElement>('meta[name=studio-parent-origin]')?.content || location.origin;
 const post = (message: unknown) => window.parent.postMessage(message, studioOrigin);
@@ -125,7 +128,7 @@ function target(id: string, occurrence?: number): OutlineTarget | undefined {
   return id
     ? {
         id: scope + id,
-        label: labels[id]?.label ?? 'Element',
+        label: labels[id]?.label ?? 'Element', // i18n-ignore: runs inside the preview frame, which has no catalog; the label is a fallback outline name.
         component: labels[id]?.component ?? false,
         nodeKind: labels[id]?.nodeKind ?? 'element',
         ...(occurrence === undefined ? {} : { occurrence }),
@@ -315,6 +318,20 @@ window.addEventListener('message', (event) => {
   if (data.type === 'avb:move-revert') {
     revertCanvasMoves();
   }
+  // A palette pick drawn at once (framePendingInsert.ts), and taken away when its write is refused.
+  if (data.type === 'avb:optimistic-insert' && 'insert' in data) {
+    const insert = parseCanvasInsert(data.insert);
+    if (insert !== undefined) {
+      showCanvasInsert(insert);
+    }
+  }
+  if (data.type === 'avb:hide-pending' && 'path' in data && typeof data.path === 'string') {
+    hidePendingDelete(data.path);
+  }
+  if (data.type === 'avb:insert-revert') {
+    revertCanvasInserts();
+    clearPendingDeletes();
+  }
   if (data.type === 'studio:labels' && 'labels' in data && Array.isArray(data.labels)) {
     setLabels(data.labels);
   }
@@ -353,6 +370,8 @@ window.addEventListener('message', (event) => {
 // over the open file's own paths. The selection, hover and labels follow the paths it
 // renumbers, so the outline stays on the moved node until the server's answer names it.
 listenForCanvasMoves();
+listenForCanvasInserts();
+listenForPendingDeletes();
 function showMove(input: unknown): void {
   const parsed = parseCanvasMove(input);
   if (parsed === undefined) {

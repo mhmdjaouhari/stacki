@@ -1,18 +1,22 @@
 // The content collections' IPC: the project's content config, its entries,
 // validation, renames across references, and sample data for the canvas.
 import path from 'node:path';
+import { englishText, messageRef } from '../../shared/properties/i18n/messageRef';
 
 import { definedFields, record } from '../../shared/core/boundary';
 import { assert } from '../../shared/core/assert';
 import { parseValidationResult, parseContentConfig, parseSampleEntry, parseSampleValue } from '../app/mainValidation';
 import { resolveImport } from '../content/cmsRefs';
 import { readContentConfig, validateEntry } from '../content/contentConfig';
-import { listEntries, writeEntry, countEntries, coveredPaths } from '../content/contentEntries';
+import { listEntriesSliced, writeEntry, countEntriesSliced, coveredPathsSliced } from '../content/contentEntries';
+import { createSliceClock } from '../lib/slicedWork';
 import { planRename, applyRename } from '../content/contentRefs';
 import { astroRemoteService, firstImageField, type AstroRemoteService } from '../content/astroRemoteService';
 import { entryImage } from '../content/astroRecordReferences';
 import type { AstroRemoteEdit, AstroRemoteEditAnswer, AstroRemoteRead, AstroRemoteReadAnswer } from '../../shared/properties/astroContent';
 import type { RemoteResult } from '../../shared/properties/cmsRemote';
+import { DescribedError } from '../../shared/properties/describedError';
+import { described } from '../../shared/properties/i18n/messageRef';
 import { errorMessage, toPosix } from '../lib/mainHelpers';
 import { collectionOf } from './cmsFiles';
 import type { MainHost } from './mainHost';
@@ -92,8 +96,16 @@ async function answered<T>(run: () => Promise<T>): Promise<RemoteResult<T>> {
   try {
     return { ok: true, value: await run() };
   } catch (error: unknown) {
+    // A described refusal keeps its reference so the panel can say it in the language on screen.
+    if (error instanceof DescribedError) {
+      return {
+        ok: false,
+        message: error.problem.message.slice(0, 900),
+        ...(error.problem.messageRef === undefined ? {} : { messageRef: error.problem.messageRef }),
+      };
+    }
     const message = errorMessage(error).slice(0, 900);
-    return { ok: false, message: message || 'The content collection could not be read.' };
+    return message ? { ok: false, message } : { ok: false, ...described('cmsBackend.content.unreadable') };
   }
 }
 
@@ -110,18 +122,23 @@ function registerContentConfigHandlers({ ipcMain, noteAppWrite, send }: Pick<Mai
     if (config.missing || config.error) {
       return { ...config, collections: [] };
     }
-    const collections = (config.collections || []).map((collection) => ({
-      name: collection.name,
-      editable: collection.editable,
-      loader: collection.loader,
-      hasSchema: !!collection.schema,
-      freeform: !!collection.freeform,
-      error: collection.error || undefined,
-      count: countEntries(projectPath, collection),
-    }));
+    // One collection at a time, each counted in slices, so a project with many large collections
+    // never holds the main thread for the whole panel.
+    const collections = [];
+    for (const collection of config.collections || []) {
+      collections.push({
+        name: collection.name,
+        editable: collection.editable,
+        loader: collection.loader,
+        hasSchema: !!collection.schema,
+        freeform: !!collection.freeform,
+        error: collection.error || undefined,
+        count: await countEntriesSliced(projectPath, collection),
+      });
+    }
     return {
       collections,
-      covered: coveredPaths(projectPath, config.collections || []),
+      covered: await coveredPathsSliced(projectPath, config.collections || []),
       configPath: config.configPath,
     };
   });
@@ -130,12 +147,15 @@ function registerContentConfigHandlers({ ipcMain, noteAppWrite, send }: Pick<Mai
   // field names), so a list of entries to pick from can show them.
   ipcMain.handle('content:entries', async (_event, { projectPath, name }) => {
     const { collection } = await collectionOf(projectPath, name);
-    const listed = listEntries(projectPath, collection);
+    const listed = await listEntriesSliced(projectPath, collection);
     const imageField = firstImageField(collection);
-    const entries = listed.entries.map((entry) => {
+    const clock = createSliceClock();
+    const entries = [];
+    for (const entry of listed.entries) {
       const imageFile = entryImage(projectPath, entry, imageField);
-      return imageFile === undefined ? entry : { ...entry, imageFile };
-    });
+      entries.push(imageFile === undefined ? entry : { ...entry, imageFile });
+      await clock.yieldIfDue();
+    }
     assert(entries.length === listed.entries.length, 'Every entry is listed');
     return { collection, ...listed, entries };
   });
@@ -196,7 +216,7 @@ function registerContentRenameHandlers({ ipcMain, noteAppWrite, send }: Pick<Mai
   // reference field offers instead of asking the user to remember ids.
   ipcMain.handle('content:targets', async (_event, { projectPath, name }) => {
     const { collection } = await collectionOf(projectPath, name);
-    const { entries } = listEntries(projectPath, collection);
+    const { entries } = await listEntriesSliced(projectPath, collection);
     return { targets: entries.map((entry) => ({ id: entry.id, title: entry.title })) };
   });
 
@@ -308,7 +328,7 @@ async function fetchSampleValue(url: string): Promise<ReturnType<typeof parseSam
   try {
     const response = await fetch(url, { signal: AbortSignal.timeout(SAMPLE_VALUE_MS_MAX) });
     if (!response.ok) {
-      return { value: undefined, error: `Dev server returned ${response.status}` };
+      return { value: undefined, error: englishText(messageRef('error.pages.devServerStatus', { status: response.status })) };
     }
     const input: unknown = await response.json();
     return parseSampleValue(input);
@@ -321,7 +341,7 @@ async function fetchSampleEntry(url: string): Promise<ReturnType<typeof parseSam
   assert(url.includes('/__avb/data?'), 'A sample is read from the data route');
   const response = await fetch(url);
   if (!response.ok) {
-    return { entry: undefined, error: `Dev server returned ${response.status}` };
+    return { entry: undefined, error: englishText(messageRef('error.pages.devServerStatus', { status: response.status })) };
   }
   const input: unknown = await response.json();
   return parseSampleEntry(input);

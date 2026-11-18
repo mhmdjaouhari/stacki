@@ -154,9 +154,56 @@ Before inviting clients, verify GitHub login and denied access for an uninvited 
 
 Do not enable public access to the preview Container directly. The Worker is its authentication and origin boundary. The internal storage/AI/GitHub routes require the Container token.
 
+### App frames and signed file links
+
+App frames are sandboxed without `allow-same-origin`, so their own loads (stylesheets, scripts,
+the SDK) carry no session cookie. A signed-in load of `/studio/api/apps/files/<id>/<file>`
+therefore redirects to `/studio/api/apps/files/<id>/~<expires>.<signature>/<file>`, and the
+frame's relative loads stay under that link. A link serves GET and HEAD for that one app's folder,
+on the Studio host only, for at most eight hours and never past the session that made it. Every
+other request under it answers 404. The Worker forwards it to the container with the container
+token alone, no user. The signature is an HMAC under a key derived from `SESSION_SECRET` for this
+purpose, so rotating the secret ends every link. Anyone holding a link can read that app's
+bundle until it expires, which is exactly what the frame's own code can read. Bundle files are not
+made public, because a bundle is not guaranteed to be free of secrets.
+`src/cloudflare/appFileLinks.ts` states the full threat model. A top-level file or folder whose
+name starts with `~` cannot be loaded from an app folder.
+
+### Identities and project roles
+
+The Worker forwards the signed-in GitHub login as `x-studio-user`, and the container trusts
+it only alongside the container token. Project roles (`.stacki/roles.json`) name GitHub logins,
+and the container parses every forwarded login as a GitHub username (`parseGitHubLogin` in
+`shared/properties/projectRoles.ts`). A request without a valid GitHub login never gets a role,
+so every role-gated write is refused, even when no roles file exists. A deployment that issues
+its own sign-in names (for example from a custom handoff route) must forward a GitHub login;
+otherwise every role-gated write is refused. Carrying other identities is not supported yet.
+
 ## Local server configuration
 
 For local GitHub publishing, supply `GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, `GITHUB_PRIVATE_KEY`, `GITHUB_REPOSITORY`, and optionally `GITHUB_BRANCH` in the server environment. The starting local checkout's Git HEAD becomes the baseline. Use a clean checkout corresponding to that repository and branch. No credentials are required for the ordinary local editor demo.
+
+## GitHub changes a running workspace cannot take
+
+Automatic GitHub sync writes site source under `src/` and the `.stacki` metadata the server reads
+on demand (`.stacki/roles.json`, `audits.json`, `instructions.json`, `variables.json`,
+`styles.json`, `components.json`, `component-sources.json`, `guide.json`, `pages.json` and
+`publish.json`). The reason for each file is in `src/features/github/syncPaths.ts`. Any other
+change (dependencies, Astro or Vite configuration, `public/` files, `.stacki/folders.json`, which
+the component preview reads once at startup) stops the sync with "Restart from a fresh repository
+revision". Studio keeps editing from its current revision.
+
+Studio has no button that restarts a workspace from a newer revision. A container start
+restores the revision Studio last recorded in R2, not GitHub's newest commit:
+
+- **The workspace has Git history** (someone has used the Git panel): **Pull from GitHub** merges
+  the commit with Git, runtime files included, and records the new remote head. The next container
+  start begins from that revision and runs `npm ci` when dependencies changed. A container starts
+  again after it sleeps (three idle minutes) or after a redeploy.
+- **The workspace has no Git history**: the recorded baseline (`metadata/base-sha` in R2) only
+  advances through a sync that succeeds, so a blocked change stays blocked across restarts. Make one
+  Git panel action (for example **Pull from GitHub**) to give the workspace Git history, then
+  follow the step above.
 
 ## Draft storage cleanup
 

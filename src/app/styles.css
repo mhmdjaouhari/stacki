@@ -1,5 +1,6 @@
 /* Shared component sheets, first so the cascade is the one they had inline here.
    The app UI kit builds from the same files (scripts/build/appUiKit.mts). */
+@import '../ui/choiceDialog.css';
 @import '../ui/controls.css';
 @import '../ui/dropdown.css';
 @import '../ui/resetLabel.css';
@@ -11,6 +12,9 @@
   --bg-input: rgba(255, 255, 255, 0.06);
   --bg-hover: rgba(255, 255, 255, 0.05);
   --bg-active: rgba(255, 255, 255, 0.09);
+  /* A toggle that is switched on (the preview toolbar's pointer and guide buttons, the title bar's terminal and Play):
+     one fill, so every pressed icon button reads the same. A step lighter than --bg-active, which is only hover. */
+  --bg-pressed: rgba(255, 255, 255, 0.18);
   --border: rgba(255, 255, 255, 0.08);
   --border-strong: rgba(255, 255, 255, 0.14);
   /* Scrollbar thumbs: low contrast at rest, a step brighter under the pointer
@@ -26,8 +30,14 @@
   --text-dim: #b8b8b8;
   --text-faint: #989898;
   --accent: #0099ff;
+  /* One height for the title bar's own controls: the Publish split button, the branch chip and the Play button
+     beside them. Before this the Play button was a separate 28px, so it stood taller than Publish. */
+  --titlebar-control-height: 1.5rem;
   /* A hovered accent button: the accent a step brighter, never a grey. */
   --accent-hover: color-mix(in srgb, var(--accent), #fff 14%);
+  /* A pressed accent button: the accent a step darker. Hover and pressed stay in the blue family (test/renderer/app/accentButtonStates.test.js).
+     A disabled accent button is the same blue dimmed by the global button:disabled opacity, never a grey fill. */
+  --accent-pressed: color-mix(in srgb, var(--accent), #000 16%);
   --accent-soft: rgba(0, 153, 255, 0.16);
   /* Selected text, everywhere. A saturated blue rather than the accent, which
      is too light to carry white text — this one clears 5:1 against white, so a
@@ -42,6 +52,11 @@
   /* Pages Astro generates from a collection ([id], [...slug]) read in this
      purple wherever pages are listed. */
   --collection-purple: #c4afff;
+  /* Flow purple: loops and conditionals (if, else) are one family, as everywhere else in the app (the insert
+     palette, the linked bars, the conditional chip), told apart by icon, not hue. The soft fill is a selected
+     row; a subtree block mixes the solid colour at --subtree-tint. */
+  --flow-purple: #c4afff;
+  --flow-purple-soft: rgba(146, 116, 255, 0.32);
   --red: #ff453a;
   --amber: #ffd60a;
   --orange: #ff9f0a;
@@ -260,6 +275,7 @@ html[data-platform='win32'] .titlebar {
 .page-menu-list {
   max-height: 320px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -336,6 +352,10 @@ html[data-platform='win32'] .titlebar {
   color: var(--text-dim);
   border-radius: 8px;
 }
+.titlebar-actions .titlebar-btn {
+  /* The cluster sits beside Publish, so it takes Publish's height (the width stays a comfortable target). */
+  height: var(--titlebar-control-height);
+}
 .titlebar-btn:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text);
@@ -343,12 +363,15 @@ html[data-platform='win32'] .titlebar {
 .titlebar-btn:disabled {
   opacity: 0.4;
 }
-.preview-btn.on {
-  background: var(--accent);
-  color: white;
-}
-.preview-btn.on:hover:not(:disabled) {
-  background: #24a8ff;
+/* Pressed: terminal open, preview on. The same fill and text as the preview toolbar's pressed pointer and guide
+   buttons (--bg-pressed, guide.css), held on hover too so the button does not flicker between two lights.
+   Focus keeps the app-wide focus ring (controls.css). */
+.titlebar-btn.on,
+.titlebar-btn[aria-pressed='true'],
+.titlebar-btn.on:hover:not(:disabled),
+.titlebar-btn[aria-pressed='true']:hover:not(:disabled) {
+  background: var(--bg-pressed);
+  color: var(--text);
 }
 
 /* Interactive preview mode — the site fills everything below the title bar */
@@ -492,6 +515,7 @@ html[data-platform='win32'] .titlebar {
 .conflict-files {
   border-right: 1px solid var(--border);
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 12px 8px;
 }
 .merge-files-heading {
@@ -590,6 +614,7 @@ html[data-platform='win32'] .titlebar {
 }
 .merge-result-editor .cm-scroller {
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 .merge-result-editor .cm-line {
   white-space: pre;
@@ -617,6 +642,7 @@ html[data-platform='win32'] .titlebar {
   padding: 12px 20px 16px;
   max-height: 35%;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 .merge-change-toolbar {
   display: flex;
@@ -711,6 +737,12 @@ html[data-platform='win32'] .titlebar {
   background: var(--accent);
   color: white;
 }
+.conflict-choice button.on:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.conflict-choice button.on:active:not(:disabled) {
+  background: var(--accent-pressed);
+}
 @media (max-width: 800px) {
   .conflict-split {
     grid-template-columns: 150px minmax(0, 1fr);
@@ -767,6 +799,7 @@ html[data-platform='win32'] .titlebar {
 /* One side of a merge conflict: a short, wrapped excerpt. */
 .merge-source-code {
   overflow: auto;
+  scrollbar-gutter: stable;
   max-height: 84px;
   padding: 6px 8px;
   white-space: pre-wrap;
@@ -1373,6 +1406,7 @@ html[data-platform='win32'] .titlebar {
   border-radius: 6px;
   max-height: 220px;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 .style-editor:focus-within {
   border-color: var(--accent);
@@ -1402,6 +1436,7 @@ html[data-platform='win32'] .titlebar {
   border-radius: 6px;
   max-height: 200px;
   overflow: auto;
+  scrollbar-gutter: stable;
   transition:
     border-color 0.1s,
     background 0.1s;
@@ -1499,6 +1534,7 @@ html[data-platform='win32'] .titlebar {
    the indentation) or growing the box off the window. */
 .var-src .var-src-code .cm-scroller {
   overflow: auto;
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
 }
 .var-src .var-src-code .cm-content {
@@ -1647,6 +1683,7 @@ html[data-platform='win32'] .titlebar {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 6px;
 }
 .insert-results.insert-results-grid {
@@ -1668,6 +1705,7 @@ html[data-platform='win32'] .titlebar {
   gap: 8px;
   max-height: 72px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   /* The bottom pad matches the visible gap above the pills (the tab row's 6px pad plus this 10px top pad),
      so the grid scrolls under a clean edge instead of flush against the pills. */
   padding: 10px 12px var(--space-6, 16px); /* The token lives in the style panel's sheet: hold the gap without it. */
@@ -1875,17 +1913,64 @@ html[data-platform='win32'] .titlebar {
   box-shadow: inset 0 0 0 2px var(--text);
   pointer-events: none;
 }
-.insert-frame {
+.insert-snapshot {
   position: absolute;
   inset: 0;
-  display: block;
-  width: 100%;
-  height: 100%;
-  border: none;
   background: #f2f2f2;
-  /* A live picture: the pointer reaches the page so hover states show, and the page refuses presses and
-     reports them to the card, which inserts (componentPreview.ts, ComponentPreviewFrame). */
-  pointer-events: auto;
+}
+/* The rendered component, cut to its own box and fitted into the tile (previewSnapshot.ts fitSnapshot). */
+.insert-snapshot-clip {
+  position: absolute;
+  overflow: hidden;
+}
+/* A picture: the pointer passes through to the card, which highlights and inserts. */
+.insert-snapshot-frame {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border: none;
+  background: transparent;
+  transform-origin: 0 0;
+  pointer-events: none;
+  opacity: 0;
+}
+.insert-snapshot[data-loaded='true'] .insert-snapshot-frame {
+  opacity: 1;
+  transition: opacity 0.18s ease-out;
+}
+/* The tile before its picture exists: the tile's own size, so the picture replaces it without anything moving. */
+.insert-skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, var(--bg-panel-2) 30%, var(--bg-hover) 50%, var(--bg-panel-2) 70%);
+  background-size: 300% 100%;
+  animation: insert-skeleton 1.6s ease-in-out infinite;
+}
+@keyframes insert-skeleton {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: 0 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .insert-skeleton {
+    animation: none;
+  }
+}
+.insert-surface-retry {
+  margin-top: 2px;
+  padding: 3px 9px;
+  border: none;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.insert-surface-retry:hover {
+  background: var(--bg-active);
 }
 .insert-surface-note {
   position: absolute;
@@ -2053,9 +2138,9 @@ html[data-platform='win32'] .titlebar {
   white-space: nowrap;
 }
 
-/* A node that renders nothing: the label keeps its colour (it's a real node
-   in the file, not disabled) and the struck-through eye rides the right edge,
-   the way a hidden layer reads. */
+/* A node that renders nothing keeps its label colour (it's a real node in the
+   file, not disabled); its dashed-frame mark rides the right edge. The slashed
+   eye is only for an element the page reports as display:none. */
 /* The markers at the end of a navigator row: renders nothing, display:none,
    pointer-events:none. More than one can be true at once (a hidden element that
    is also inert), so they sit in a row with a gap rather than one slot. */
@@ -2368,6 +2453,8 @@ html[data-platform='win32'] .titlebar {
   display: flex;
   flex-direction: column;
   align-items: center;
+  /* Settings above the AI button: the rail's own spacing between buttons. */
+  gap: 4px;
 }
 /* A pinned app's own tile, centred in its button. */
 .rail-btn.rail-app {
@@ -2388,6 +2475,10 @@ html[data-platform='win32'] .titlebar {
 }
 .rail-btn:hover:not(:disabled) {
   background: var(--bg-hover);
+  color: var(--text);
+}
+.rail-btn[data-open='true'] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--text);
 }
 .rail-btn.on,
@@ -2522,6 +2613,10 @@ html[data-platform='win32'] .titlebar {
   font-size: 10.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Cut from the start so the file name stays visible; the <bdi dir="ltr"> inside keeps
+     the path's own order (a leading "/" or "." would otherwise move to the far end). */
+  direction: rtl;
+  text-align: left;
 }
 .code-panel-lines {
   flex-shrink: 0;
@@ -2544,6 +2639,7 @@ html[data-platform='win32'] .titlebar {
 }
 .code-panel-editor .cm-scroller {
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 .code-panel-editor .cm-code-muted {
   opacity: 0.5;
@@ -2960,6 +3056,7 @@ body > .embed-editor_provenance {
 .expr-menu {
   max-height: 260px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 /* This menu drives selection on click, not on hover like Dropdown does, so
    the hover feedback is plain CSS — matching .highlight so the two read the
@@ -3005,6 +3102,11 @@ body > .embed-editor_provenance {
     border-color 0.1s,
     background 0.1s;
 }
+/* The code editor's version of the field (CodeBindInput.tsx) is the .expr-input
+   inside it: this wrapper only carries focus and key events, so it takes no box. */
+.code-bind-input {
+  display: contents;
+}
 .bind-input:hover {
   background: rgba(255, 255, 255, 0.08);
 }
@@ -3029,6 +3131,15 @@ body > .embed-editor_provenance {
 .bind-menu {
   padding: 0;
   overflow: hidden;
+}
+/* The picker's rows carry their own inset; the Property settings form a
+   "New … property" row opens in its place does not, and leans on the pop-up's
+   10px padding, as it does in the loop Source pop-up (.loop-settings-popup).
+   Without it the form's fields, Required row and buttons sat on the edges. */
+.bind-menu.is-form {
+  padding: 10px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .data-picker {
   display: flex;
@@ -3263,6 +3374,7 @@ body > .embed-editor_provenance {
 .dp-property-settings {
   max-height: 340px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 /* What the value IS, down the right — the column you actually read to find
    the field you mean. Dim, and the first thing to give up space. */
@@ -3568,6 +3680,7 @@ body > .embed-editor_provenance {
   width: 260px;
   max-height: 320px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   background: #1d1d1d;
   border: 1px solid var(--border-strong);
   border-radius: 10px;
@@ -3699,22 +3812,50 @@ body > .embed-editor_provenance {
   font-size: 12px;
 }
 
-/* Structure tree — flat Framer-style layer rows */
+/* Structure tree — dense layer rows.
+   Every density knob of the navigator lives here: tune these, not the rules
+   below. StructureTree.tsx and TreeDragDrop.tsx read the indent. */
+.navigator {
+  --navigator-row-height: 32px;
+  --navigator-row-padding: 6px;
+  --navigator-row-gap: 4px;
+  --navigator-row-radius: 4px;
+  --navigator-indent: 12px;
+  --navigator-font-size: 12px;
+  --navigator-font-weight: 400;
+  --navigator-label-color: var(--text);
+  --navigator-icon-color: var(--text-dim);
+}
 .structure-node {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 6px;
-  border-radius: 6px;
+  gap: var(--navigator-row-gap, 6px);
+  height: var(--navigator-row-height, 28px);
+  padding: 0 var(--navigator-row-padding, 6px);
+  font-size: var(--navigator-font-size, 12px);
+  border-radius: var(--navigator-row-radius, 6px);
   border: 1px solid transparent;
   cursor: pointer;
-  color: var(--text-dim);
+  color: var(--navigator-label-color, var(--text-dim));
   /* Rows are at least panel-width but grow with deep indentation + long
      labels, so horizontal scrolling reveals the full text. */
   width: fit-content;
   min-width: 100%;
   white-space: nowrap;
+}
+/* The navigator's rows sit in one box as wide as the widest of them (and at
+   least the panel): each row and each tinted subtree block stretches to it, so
+   a selected row and the block under it share both edges even when one label
+   runs past the panel. flow-root keeps the drop gaps' negative margins inside,
+   as the scrolling panel body did before. */
+.structure-tree {
+  display: flow-root;
+  width: max-content;
+  min-width: 100%;
+}
+.structure-tree .structure-node {
+  width: auto;
+  min-width: 0;
 }
 .structure-node:hover {
   background: var(--bg-hover);
@@ -3724,6 +3865,41 @@ body > .embed-editor_provenance {
   background: var(--accent-soft);
   color: var(--text);
 }
+/* The selected row is a capsule. With an open subtree it becomes the head of a
+   block: its bottom corners square off and the subtree below rounds them. */
+.structure-node.selected:has(+ .structure-subtree) {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+/* Tint strength of the subtree block: raise the percentage for a stronger
+   background, lower it for a more transparent one. */
+.structure-subtree {
+  --subtree-tint: 8%;
+  /* flow-root keeps the overlay drop gaps' negative margins inside the block;
+     without it the first gap pulls the block up over the selected row and the
+     two tints add up in a visible band. */
+  display: flow-root;
+  /* Clip the square hover of the last row to the block's rounded corners. */
+  overflow: clip;
+  background: color-mix(in srgb, var(--accent) var(--subtree-tint), transparent);
+  border-radius: 0 0 var(--navigator-row-radius, 6px) var(--navigator-row-radius, 6px);
+  /* No margin here: only the selected subtree is a block, so any extra space
+     would shift every row below it each time the selection moves. */
+}
+/* Inside the open block the hover is square: it fills the block edge to edge
+   instead of floating as a capsule. Rows elsewhere keep their radius. */
+.structure-subtree .structure-node:hover {
+  border-radius: 0;
+}
+.structure-subtree.is-component {
+  background: color-mix(in srgb, var(--component-green) var(--subtree-tint), transparent);
+}
+.structure-subtree.is-loop {
+  background: color-mix(in srgb, var(--flow-purple) var(--subtree-tint), transparent);
+}
+.structure-subtree.is-cond {
+  background: color-mix(in srgb, var(--flow-purple) var(--subtree-tint), transparent);
+}
 /* Hovering must not repaint the selected row's icon — the :hover rule below
    has the same specificity and would otherwise win on source order. */
 .structure-node.selected .icon,
@@ -3731,12 +3907,13 @@ body > .embed-editor_provenance {
   color: var(--accent);
 }
 .structure-node.layout-node {
-  color: var(--text-dim);
+  color: var(--navigator-label-color, var(--text-dim));
 }
 .structure-node .icon {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
-  color: var(--text-faint);
+  color: var(--navigator-icon-color, var(--text-faint));
 }
 .structure-node:hover .icon {
   color: var(--text-dim);
@@ -3757,6 +3934,34 @@ body > .embed-editor_provenance {
   color: var(--text-faint);
   opacity: 0.6;
 }
+/* A leaf's empty slot: it holds the width, never the pointer. */
+.structure-node .drag-handle.is-empty {
+  display: flex;
+  flex-shrink: 0;
+  width: 18px;
+  align-self: stretch;
+  margin: 0 -2px 0 -4px;
+  pointer-events: none;
+}
+/* Hierarchy guides, as in Webflow: a thin line from each open parent's
+   chevron down past its last child, shown while the pointer is over the tree. */
+.structure-children {
+  position: relative;
+}
+.structure-guide {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-strong, var(--border));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+  z-index: 1;
+}
+.navigator .panel-body:hover .structure-guide {
+  opacity: 0.4;
+}
 .tree-drag-row .drag-handle:hover {
   opacity: 1;
   color: var(--text);
@@ -3764,7 +3969,7 @@ body > .embed-editor_provenance {
 .structure-node .label {
   flex: 1;
   white-space: nowrap;
-  font-weight: 500;
+  font-weight: var(--navigator-font-weight, 500);
 }
 .structure-node .prop-preview {
   font-size: 10.5px;
@@ -3791,22 +3996,38 @@ body > .embed-editor_provenance {
   background: var(--bg-hover);
 }
 
-/* Map/loop layers — purple */
-.structure-node.is-map,
-.structure-node.is-map:hover,
-.structure-node.is-map.selected {
-  color: #c4afff;
+/* Loop layers, conditions and their else (and rows bound to data) — one purple, one token. */
+.structure-node.is-loop,
+.structure-node.is-loop:hover,
+.structure-node.is-loop.selected {
+  color: var(--flow-purple);
 }
-.structure-node.is-map .icon,
-.structure-node.is-map:hover .icon,
-.structure-node.is-map.selected .icon {
-  color: #c4afff;
+.structure-node.is-loop .icon,
+.structure-node.is-loop:hover .icon,
+.structure-node.is-loop.selected .icon {
+  color: var(--flow-purple);
 }
-.structure-node.is-map:hover {
+.structure-node.is-loop:hover {
   background: var(--bg-active);
 }
-.structure-node.is-map.selected {
-  background: rgba(146, 116, 255, 0.32);
+.structure-node.is-loop.selected {
+  background: var(--flow-purple-soft);
+}
+.structure-node.is-cond,
+.structure-node.is-cond:hover,
+.structure-node.is-cond.selected {
+  color: var(--flow-purple);
+}
+.structure-node.is-cond .icon,
+.structure-node.is-cond:hover .icon,
+.structure-node.is-cond.selected .icon {
+  color: var(--flow-purple);
+}
+.structure-node.is-cond:hover {
+  background: var(--bg-active);
+}
+.structure-node.is-cond.selected {
+  background: var(--flow-purple-soft);
 }
 
 /* Component instances — Webflow-style green */
@@ -3846,6 +4067,25 @@ body > .embed-editor_provenance {
   margin-bottom: -3.5px;
   z-index: 1;
 }
+/* Navigator gaps take no room; they catch the pointer only during a drag
+   over the panel (StructurePanel.tsx sets .is-drag-over). */
+.navigator .nav-gap.nav-gap-overlay {
+  /* Zero height, not 7px with -3.5px margins: adjacent negative margins merge,
+     so each level of a subtree ending together left 3.5px of blank strip at
+     the bottom of the block. The 7px hit area lives in the ::before. */
+  height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  pointer-events: none;
+}
+.navigator .nav-gap.nav-gap-overlay::before {
+  content: '';
+  position: absolute;
+  inset: -3.5px 0;
+}
+.navigator .panel-body.is-drag-over .nav-gap.nav-gap-overlay {
+  pointer-events: auto;
+}
 .drop-indicator {
   /* The marker must not move the gap or become a new drag target. */
   position: absolute;
@@ -3872,6 +4112,39 @@ body > .embed-editor_provenance {
   color: var(--text);
 }
 
+/* Why the drag over the Navigator cannot land where it is (the placement rule), pinned to the panel's bottom edge. */
+.navigator-drop-note {
+  position: sticky;
+  bottom: 8px;
+  margin: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: var(--bg-panel-2);
+  color: var(--text);
+  font-size: 11.5px;
+  line-height: 1.4;
+  pointer-events: none;
+}
+.navigator-drop-note[data-tone='warning'] {
+  color: var(--text-dim);
+}
+
+/* An insert-palette item with no valid place for the current selection: still listed, dimmed, with the reason below the list. */
+.insert-placement {
+  display: contents;
+}
+.insert-placement[data-refused] .insert-item {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.insert-placement-note {
+  padding: 8px 12px;
+  background: var(--bg-panel-2);
+  color: var(--text-dim);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
 /* ------------------------------------------------------------------ */
 /* Custom dropdown                                                     */
 /* ------------------------------------------------------------------ */
@@ -3881,11 +4154,16 @@ body > .embed-editor_provenance {
 .dd-trigger.collection .dd-label,
 .dd-trigger.collection .dd-icon,
 .dd-popup.collection .dd-option-label,
-.dd-popup.collection .dd-icon {
+.dd-popup.collection .dd-icon,
+.dd-option.collection .dd-option-label,
+.dd-option.collection .dd-icon,
+.dd-group-label.collection {
   color: var(--collection-purple);
 }
 .dd-popup.collection .dd-option.highlight .dd-option-label,
-.dd-popup.collection .dd-option.highlight .dd-icon {
+.dd-popup.collection .dd-option.highlight .dd-icon,
+.dd-option.collection.highlight .dd-option-label,
+.dd-option.collection.highlight .dd-icon {
   color: white;
 }
 /* A leading glyph in an option row (the tag switcher's element/component
@@ -3903,22 +4181,35 @@ body > .embed-editor_provenance {
 }
 /* A row's hint (`.dd-hint`) is styled with the rows themselves, in src/ui/dropdown.css. */
 /* Two-line rows: the description sits under the label, in the type the Pages
-   panel gives a page's route, and the check stays at the end of the row. The
-   height is STACKED_OPTION_HEIGHT in Dropdown.tsx. */
+   panel gives a page's route, and the check stays at the end of the row. An
+   icon takes its own column at the left, centred across both lines; a row
+   without one leaves that column empty (zero wide), so labels still line up.
+   Every child is placed, so none can wrap onto a third line. The height is
+   STACKED_OPTION_HEIGHT in Dropdown.tsx. */
 .dd-stacked .dd-option {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 16px;
+  grid-template-columns: auto minmax(0, 1fr) auto 22px;
+  grid-template-rows: auto auto;
   align-content: center;
-  gap: 0 6px;
+  gap: 0;
   height: 40px;
 }
+.dd-stacked .dd-icon {
+  grid-area: 1 / 1 / 3 / 2;
+  align-self: center;
+  margin-right: 8px;
+}
+.dd-stacked .dd-hint {
+  grid-area: 1 / 3 / 3 / 4;
+  align-self: center;
+}
 .dd-stacked .dd-option-label {
-  grid-area: 1 / 1;
+  grid-area: 1 / 2;
   font-weight: 500;
   line-height: 1.2;
 }
 .dd-stacked .dd-description {
-  grid-area: 2 / 1;
+  grid-area: 2 / 2;
   overflow: hidden;
   margin-top: 3px;
   color: #fff;
@@ -3931,8 +4222,10 @@ body > .embed-editor_provenance {
   opacity: 0.8;
 }
 .dd-stacked .dd-check {
-  grid-area: 1 / 2 / 3 / 3;
+  grid-area: 1 / 4 / 3 / 5;
   align-self: center;
+  justify-self: end;
+  margin-left: 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -4173,6 +4466,7 @@ body > .embed-editor_provenance {
   padding: 5px;
   max-height: calc(100dvh - 16px);
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 /* The menu owns initial focus; arrow navigation highlights individual actions. */
 .ctx-menu:focus {
@@ -4564,6 +4858,7 @@ body > .embed-editor_provenance {
   max-width: min(720px, 90%);
   max-height: 34vh;
   overflow: auto;
+  scrollbar-gutter: stable;
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -4884,41 +5179,104 @@ body > .embed-editor_provenance {
   color: var(--text-dim);
 }
 
-/* A row per value the new component reads. A long list scrolls so the dialog keeps its
-   footer in view; most sections read one or two. */
-.extract-values {
-  margin-top: 12px;
-}
-.extract-value-list {
+/* The values the new component reads: a header (summary and the bulk control), one filled list
+   of compact rows, and a counts line. The dialog is a column capped to the window, so the footer
+   and its Create button never leave view; only the list scrolls, with soft shadows on the edges
+   that still have rows past them (the cover layers scroll with the content, the shadow layers
+   stay put) and padding at the end so the last row is never cut by the scroll edge. Fills, not borders. */
+.modal.create-component {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  max-height: 176px;
-  overflow-y: auto;
+  max-height: calc(100vh - 48px);
 }
-.extract-value-row {
+.modal.create-component .modal-body {
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+.extract-values {
+  --extract-list-fill: #252525;
+  margin-top: 4px;
+}
+.extract-values-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  min-height: 26px;
+  margin-bottom: 6px;
+}
+.extract-values-head label {
+  margin-bottom: 0;
+}
+.extract-value-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 212px;
+  padding: 4px 4px 12px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  scroll-snap-type: y proximity;
+  scroll-padding: 4px 0 12px;
+  border-radius: 8px;
+  background:
+    linear-gradient(var(--extract-list-fill) 30%, transparent) top / 100% 24px no-repeat local,
+    linear-gradient(transparent, var(--extract-list-fill) 70%) bottom / 100% 24px no-repeat local,
+    linear-gradient(rgba(0, 0, 0, 0.35), transparent) top / 100% 12px no-repeat scroll,
+    linear-gradient(transparent, rgba(0, 0, 0, 0.35)) bottom / 100% 12px no-repeat scroll,
+    var(--extract-list-fill);
+}
+.extract-value {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 4px 0 8px;
+  border-radius: 6px;
+  scroll-snap-align: start;
+}
+.extract-value:hover {
+  background: var(--bg-hover);
 }
 .extract-value-name {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.extract-value-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  padding: 1px 4px 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-input);
+  color: var(--text-dim);
+  font-size: 10.5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
 .extract-value-choice {
-  flex: 0 0 190px;
+  flex: 0 0 168px;
+  margin-left: auto;
+}
+.ui-tabs.extract-bulk {
+  flex: 0 0 auto;
 }
 .extract-value-fixed {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
-  font-size: 12px;
+  margin-left: auto;
+  font-size: 11.5px;
   color: var(--text-dim);
 }
-.hint-text.extract-value-note {
-  margin-top: 2px;
+.hint-text.extract-values-foot {
+  margin-top: 6px;
   color: var(--text-dim);
 }
 
@@ -4929,6 +5287,7 @@ body > .embed-editor_provenance {
   list-style: none;
   max-height: 132px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   border-radius: 6px;
   background: var(--bg-input);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -5126,6 +5485,7 @@ body > .embed-editor_provenance {
 .create-log {
   max-height: 260px;
   overflow: auto;
+  scrollbar-gutter: stable;
   background: #0d0d0d;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -5716,6 +6076,7 @@ body > .embed-editor_provenance {
   min-width: 120px;
   max-height: 300px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 /* Component edit mode: a cutout that dims the whole canvas except the
@@ -5742,7 +6103,9 @@ body > .embed-editor_provenance {
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: hidden;
+  /* The label of a thin band is taller than the band, and must still be read: the overlay layer is
+     what clips, at the edge of the frame, and the band is cut to that edge so the label stays on it. */
+  overflow: visible;
   background-color: color-mix(in srgb, var(--band) 14%, transparent);
   background-image: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--band) 42%, transparent) 0 1px, transparent 1px 6px);
   outline: 1px solid color-mix(in srgb, var(--band) 45%, transparent);
@@ -5759,6 +6122,22 @@ body > .embed-editor_provenance {
    with either would say they were the same kind of space. */
 .spacing-band.is-gap {
   --band: #a855f7;
+}
+/* A margin that collapsed into a larger one holds no space open: a line at the box edge, its label
+   beside it on the element's side so the reason is read where the margin would have been. */
+.spacing-band.is-collapsed {
+  background-image: none;
+  background-color: var(--band);
+  outline: none;
+}
+.spacing-band.is-collapsed .spacing-band-label {
+  position: absolute;
+  left: 6px;
+  top: 4px;
+}
+.spacing-band.is-collapsed.is-bottom .spacing-band-label {
+  top: auto;
+  bottom: 4px;
 }
 .spacing-band-label {
   padding: 1px 5px 2px;
@@ -5804,25 +6183,73 @@ body:has(#stacki-canvas-text-editor:not([data-shared])) .node-outline.sel {
   outline-offset: -2px;
   opacity: 0.2;
 }
-body:has(#stacki-canvas-text-editor:not([data-shared])) .node-outline.sel .node-outline-tag {
+body:has(#stacki-canvas-text-editor:not([data-shared])) .node-outline.sel /* A node with no width or height is not a box: it is a crosshair at its position, so it never reads as sized.
+   The arms only make it findable; its tag says 0 x 0. A node with one empty side keeps its real (flat) box. */
+.node-outline.is-point {
+  outline: none;
+}
+.node-outline.is-point::before,
+.node-outline.is-point::after {
+  content: '';
+  position: absolute;
+  background: var(--accent);
+}
+.node-outline.is-point::before {
+  left: -7px;
+  top: -0.5px;
+  width: 14px;
+  height: 1px;
+}
+.node-outline.is-point::after {
+  left: -0.5px;
+  top: -7px;
+  width: 1px;
+  height: 14px;
+}
+.node-outline.is-point.component::before,
+.node-outline.is-point.component::after {
+  background: var(--green);
+}
+.node-outline.is-point.map::before,
+.node-outline.is-point.map::after,
+.node-outline.is-point.bound::before,
+.node-outline.is-point.bound::after {
+  background: #8b5cf6;
+}
+.node-outline-tag {
   display: none;
 }
-/* Typing in text a component instance shows: the text takes the band above,
-   tagless, and the instance keeps its parent outline and its tag — it is still
-   the selection, and the tag says what is being edited inside. */
+/* Typing in text: the selection keeps its outline, and its name tag above goes
+   (an element's, a component instance's parent tag, and a text mark's). The
+   text being typed in is what is edited, and a data-bound text's source cue
+   sits under it (CanvasTextSourceCue). Keyed on the editor marker
+   (canvasTextOverlay.ts), which the same message that opens and closes the
+   editor adds and removes, so the tag is never seen while typing and is back
+   in the first frame after. */
+body:has(#stacki-canvas-text-editor) .node-outline.sel .node-outline-tag {
+  display: none;
+}
 body:has(#stacki-canvas-text-editor:not([data-shared])) .node-outline.sel.parent {
   outline-width: 2px;
   outline-offset: -1px;
   opacity: 1;
 }
-body:has(#stacki-canvas-text-editor:not([data-shared])) .node-outline.sel.parent .node-outline-tag {
-  display: inline-flex;
-}
+/* Shared words are the exception: the tag stays as the warning that the edit
+   changes other uses too, with the name left out. */
 body:has(#stacki-canvas-text-editor[data-shared]) .node-outline.sel {
   outline-color: #8b5cf6;
 }
 body:has(#stacki-canvas-text-editor[data-shared]) .node-outline.sel .node-outline-tag {
+  display: inline-flex;
+  gap: 0;
+  font-size: 0;
   background: #8b5cf6;
+}
+body:has(#stacki-canvas-text-editor[data-shared]) .node-outline.sel .node-outline-tag > * {
+  display: none;
+}
+body:has(#stacki-canvas-text-editor[data-shared]) .node-outline.sel .node-outline-tag::after {
+  font-size: 10.5px;
 }
 body:has(#stacki-canvas-text-editor[data-shared='cms']) .node-outline.sel .node-outline-tag::after {
   content: 'Shared CMS content · changes other uses too';
@@ -6104,6 +6531,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 0 8px 12px;
 }
 
@@ -6211,6 +6639,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: var(--cms-body-inset) 24px 60px;
 }
 
@@ -6567,6 +6996,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
 .cms-modal-body {
   max-height: 60vh;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   gap: 0;
   padding-top: 12px;
 }
@@ -7276,6 +7706,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
   flex: 1;
   min-width: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 .content-body-editor .cm-editor {
   height: 100%;
@@ -7737,6 +8168,85 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.vars-visibility {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.3125rem;
+  background: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  /* Not shown: transparent and deaf to the pointer, but still focusable, so Tab from the value reaches it. */
+  opacity: 0;
+  pointer-events: none;
+}
+/* Shown only by states the browser keeps true by itself: the pointer over the value cell and keyboard focus on the
+   button. A hidden variable (aria-pressed) keeps its line-through eye on screen, dimmed, so it can be found and shown
+   again. No script flag can leave a button stuck on screen. */
+.vars-cell-host:hover .vars-visibility,
+.vars-visibility:focus-visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+.vars-visibility[aria-pressed='true'] {
+  opacity: 0.55;
+  pointer-events: auto;
+}
+.vars-cell-host:hover .vars-visibility[aria-pressed='true'],
+.vars-visibility[aria-pressed='true']:focus-visible {
+  opacity: 1;
+}
+/* The value cell reserves the button's width at its end (always, so nothing shifts when it appears) and the value stops
+   short of it. The button is out of flow, centred on the cell's height, with no fill and no box of its own. */
+.vars-cell-host {
+  position: relative;
+  min-width: 0;
+}
+.vars-cell-host > .var-cell {
+  padding-inline-end: 1.5rem;
+}
+.vars-cell-tools {
+  position: absolute;
+  top: 50%;
+  right: 0.125rem;
+  display: flex;
+  width: 1.25rem;
+  height: 1.25rem;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+/* A row being dragged has no button, wherever the pointer is. */
+.vars-row.is-dragging .vars-visibility {
+  opacity: 0;
+  pointer-events: none;
+}
+/* A phone or tablet has no hover: the button is simply there. */
+@media (hover: none) {
+  .vars-visibility {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.vars-visibility:hover {
+  color: var(--text);
+}
+.vars-visibility:focus-visible {
+  color: var(--text);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+/* The settings file could not be read: suggestions are unfiltered and hiding is paused. */
+.vars-notice {
+  flex: none;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 90, 90, 0.12);
+  color: var(--text);
+  font-size: 0.75rem;
 }
 
 /* Value, colour box and field: the box is beside the field, not in it, and the
@@ -8623,6 +9133,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
   flex: 1;
   min-height: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
   overscroll-behavior: contain;
   border-top: 1px solid var(--border);
   user-select: text;
@@ -8781,6 +9292,7 @@ body:has(#stacki-canvas-text-editor[data-shared='variable']) .node-outline.sel .
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   min-height: 92px;
   max-height: 40vh;
   line-height: 1.6;
@@ -9590,6 +10102,7 @@ viewBox='0 0 16 16' fill='none' stroke='%23999999' stroke-width='1.5'%3E\
   gap: 4px;
   max-height: 192px;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .git-create-branch-label {
   display: block;
@@ -9710,6 +10223,7 @@ viewBox='0 0 16 16' fill='none' stroke='%23999999' stroke-width='1.5'%3E\
 .git-commit-files-content .fb-list {
   max-height: min(440px, calc(100dvh - 240px));
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .git-commit-files-dialog .modal-footer {
   flex-shrink: 0;
@@ -9836,4 +10350,38 @@ viewBox='0 0 16 16' fill='none' stroke='%23999999' stroke-width='1.5'%3E\
 .attr-name-field > .bind-handle.on {
   opacity: 1;
   pointer-events: auto;
+}
+
+/* The source cue under a bound text being edited: purple like the data chips, a
+   background and no border, and no transition, so it never fades in or flashes. */
+.canvas-source-cue {
+  position: fixed;
+  z-index: 2147483000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(480px, calc(100vw - 16px));
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(146, 116, 255, 0.28);
+  color: #c4afff;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.canvas-source-cue-path {
+  min-width: 0;
+  overflow: hidden;
+  background: transparent;
+  font-size: 11px;
+}
+.canvas-source-cue-uses {
+  opacity: 0.85;
+}
+
+/* A data chip in a Navigator row: the chip keeps its own purple (never restyled); the row only lets it shrink. */
+.structure-node .label .data-chip {
+  vertical-align: middle;
+  margin: 0;
 }

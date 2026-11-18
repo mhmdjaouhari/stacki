@@ -17,7 +17,6 @@ import type { SyntaxNode } from '@lezer/common';
 import { assert } from '../../shared/core/assert';
 import { indentUnitOf, withIndentUnit } from '../../shared/core/indent';
 import { LIMITS } from '../../shared/core/limits';
-import { LOOP_SYNTAX_LIMITS } from './loopSyntax';
 
 const typescript = parser.configure({ dialect: 'ts' });
 
@@ -191,13 +190,9 @@ export function propsInterfaceEnd(frontmatter: string): number | undefined {
 
 // The `{ … }` of `interface Props`, if the frontmatter declares one.
 export function propsInterfaceBody(frontmatter: string): SyntaxNode | undefined {
-  const source = frontmatter.length > LOOP_SYNTAX_LIMITS.sourceCharsMax ? '' : frontmatter;
+  const source = frontmatter;
   const tree = typescript.parse(source);
-  for (
-    let statement = tree.topNode.firstChild, count = 0;
-    statement !== null && count < LOOP_SYNTAX_LIMITS.declarationsMax;
-    statement = statement.nextSibling, count++
-  ) {
+  for (let statement = tree.topNode.firstChild, count = 0; statement !== null && count <= source.length; statement = statement.nextSibling, count++) {
     const declaration = statement.name === 'ExportDeclaration' ? statement.getChild('InterfaceDeclaration') : statement;
     if (declaration?.name === 'InterfaceDeclaration' && textOf(source, declaration.getChild('TypeDefinition') ?? undefined) === 'Props') {
       return declaration.getChild('ObjectType') ?? undefined;
@@ -206,23 +201,48 @@ export function propsInterfaceBody(frontmatter: string): SyntaxNode | undefined 
   return undefined;
 }
 
+/**
+ * The spans of every top-level `type` and `interface` declaration. They name
+ * props without reading them, so a usage scan blanks them out.
+ */
+export function typeDeclarationSpans(frontmatter: string): readonly { readonly from: number; readonly to: number }[] {
+  const tree = typescript.parse(frontmatter);
+  const spans: { readonly from: number; readonly to: number }[] = [];
+  for (let statement = tree.topNode.firstChild, count = 0; statement !== null && count <= frontmatter.length; statement = statement.nextSibling, count++) {
+    const declaration =
+      statement.name === 'ExportDeclaration' ? (statement.getChild('InterfaceDeclaration') ?? statement.getChild('TypeAliasDeclaration')) : statement;
+    if (declaration?.name === 'InterfaceDeclaration' || declaration?.name === 'TypeAliasDeclaration') {
+      spans.push({ from: statement.from, to: statement.to });
+    }
+  }
+  return spans;
+}
+
 export function propsPattern(frontmatter: string): SyntaxNode | undefined {
-  const source = frontmatter.length > LOOP_SYNTAX_LIMITS.sourceCharsMax ? '' : frontmatter;
+  const source = frontmatter;
   const tree = typescript.parse(source);
-  for (
-    let statement = tree.topNode.firstChild, count = 0;
-    statement !== null && count < LOOP_SYNTAX_LIMITS.declarationsMax;
-    statement = statement.nextSibling, count++
-  ) {
+  for (let statement = tree.topNode.firstChild, count = 0; statement !== null && count <= source.length; statement = statement.nextSibling, count++) {
     if (statement.name === 'VariableDeclaration') {
       const pattern = statement.getChild('ObjectPattern');
-      const value = statement.getChild('MemberExpression');
-      if (pattern !== null && value !== null && source.slice(value.from, value.to).replace(/\s/g, '') === 'Astro.props') {
+      const equals = statement.getChild('Equals');
+      const value = equals?.nextSibling ?? undefined;
+      if (pattern !== null && value !== undefined && isAstroPropsValue(source.slice(value.from, value.to))) {
         return pattern;
       }
     }
   }
   return undefined;
+}
+
+// `Astro.props`, alone or typed: `Astro.props as AllProps`, `(Astro.props as AllProps)`,
+// `Astro.props satisfies AllProps` and `<AllProps>Astro.props` all read the same props.
+// Without this a typed destructure was not found and every prop looked unread.
+function isAstroPropsValue(text: string): boolean {
+  const bare = text
+    .replace(/\s/g, '')
+    .replace(/^<[^>]*>/, '')
+    .replace(/^\(+/, '');
+  return /^Astro\.props(\)*|(as|satisfies)[\s\S]*)$/.test(bare);
 }
 
 // `key: local = default`, `key = default`, `key: local` or `key`.

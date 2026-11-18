@@ -1,8 +1,10 @@
+import { useTranslate } from '../../../vendor/stacki/src/lib/i18n/useTranslate';
 import { useFrameAddress } from './frameAddress';
 import type { CanvasSitePages } from '../../../vendor/stacki/shared/properties/canvasInteraction';
 import { useCanvasText } from '../../../vendor/stacki/src/features/preview/useCanvasText';
 import { studioCanvasText } from './studioCanvasText';
 import { CanvasTextFormatBar } from '../../../vendor/stacki/src/app/shell/CanvasTextFormatBar';
+import { CanvasTextSourceCue } from '../../../vendor/stacki/src/app/shell/CanvasTextSourceCue';
 import { useCanvasInteraction } from '../../../vendor/stacki/src/features/preview/useCanvasInteraction';
 import './previewToolbar.css';
 import { PreviewLoading, usePreviewLoading } from './PreviewLoading';
@@ -19,6 +21,7 @@ import { outlineInfo, outlineNode } from './outlineInfo';
 import { useMemo, useRef, type CSSProperties } from 'react';
 import { PreviewToolbar, type PreviewDevice, type PreviewInspectorActions } from '../../../vendor/stacki/src/features/preview/PreviewToolbar';
 import CanvasView from '../../../vendor/stacki/src/features/preview/CanvasView';
+import { useProjectBreakpoints } from '../../../vendor/stacki/src/ipc/useProjectBreakpoints';
 import { usePreviewSizing } from '../../../vendor/stacki/src/features/preview/usePreviewSizing';
 import type { usePreviewDimensions } from '../../../vendor/stacki/src/features/preview/usePreviewSizing';
 import '../../../vendor/stacki/src/features/preview/previewViewport.css';
@@ -67,7 +70,8 @@ export function PreviewCanvas(props: Props) {
     offSite: { clearOverlays: props.preview.clearOverlays },
     pages: props.sitePages,
   });
-  const sizing = usePreviewSizing(props.device, props.dimensions, props.onDevice);
+  const { resolved: breakpoints } = useProjectBreakpoints(props.projectName);
+  const sizing = usePreviewSizing(props.device, props.dimensions, breakpoints, props.onDevice);
   useCursorScale(props.preview, sizing.viewport.scale);
   useCursorChatShortcut({
     preview: props.preview,
@@ -85,6 +89,7 @@ export function PreviewCanvas(props: Props) {
       <div className="studio-preview-toolbar">
         {props.leading}
         <PreviewToolbar
+          breakpoints={breakpoints}
           crumbs={[...(props.pageLabel ? [{ id: undefined, label: props.pageLabel }] : []), ...crumbsFor(props.nodes, props.selected)]}
           onCrumb={(id) => props.select(id ?? 'layout')}
           activeDevice={sizing.activeDevice}
@@ -111,6 +116,7 @@ export function PreviewCanvas(props: Props) {
       )}
       {/* Desktop's bar over words selected on the canvas; it portals to the body. */}
       <CanvasTextFormatBar />
+      <CanvasTextSourceCue />
     </main>
   );
 }
@@ -118,11 +124,18 @@ export function PreviewCanvas(props: Props) {
 // slot show marked and editable as on the page itself.
 function useStudioCanvasText(props: Props) {
   const components = useSameComponents(props.components);
+  const translate = useTranslate();
   useCanvasText({
-    document: studioCanvasText(props.file, props.document, props.nodes, {
-      components,
-      selected: props.selected,
-    }),
+    document: studioCanvasText(
+      props.file,
+      props.document,
+      props.nodes,
+      {
+        components,
+        selected: props.selected,
+      },
+      translate,
+    ),
     frame: props.preview.frame,
     url: props.preview.url,
     post: props.preview.send,
@@ -158,11 +171,18 @@ function PreviewSurface({
   readonly interactive?: boolean;
 }) {
   const loading = usePreviewLoading(props.preview.url, sizing.wrapRef, props.device === 'canvas', props.preview.retry);
+  const { resolved: breakpoints, desktopFramePx } = useProjectBreakpoints(props.projectName);
   return (
     <div className="preview-frame-wrap" ref={sizing.wrapRef} data-preview-loading={!loading.ready} aria-busy={!loading.ready}>
       {props.preview.url &&
         (props.device === 'canvas' ? (
-          <CanvasView key={loading.attempt} url={props.preview.renderURL ?? props.preview.url} refreshKey={loading.attempt} />
+          <CanvasView
+            breakpoints={breakpoints}
+            desktopFramePx={desktopFramePx}
+            key={loading.attempt}
+            url={props.preview.renderURL ?? props.preview.url}
+            refreshKey={loading.attempt}
+          />
         ) : (
           <DesignFrame key={loading.attempt} interactive={interactive ?? false} props={props} sizing={sizing} shownGuide={shownGuide} />
         ))}
@@ -181,6 +201,7 @@ function DesignFrame({
   readonly shownGuide: ShownGuide | undefined;
   readonly interactive?: boolean;
 }) {
+  const translate = useTranslate();
   // Later pages replace the frame's history entry: the canvas never adds back steps (frameAddress.ts).
   const frameAddress = useFrameAddress(props.preview.frame, props.preview.url);
   return (
@@ -204,7 +225,7 @@ function DesignFrame({
         <div className="frame-clip">
           <iframe
             ref={props.preview.frame}
-            title="Site preview"
+            title={translate('preview.pane.title')}
             src={frameAddress}
             onLoad={() => {
               props.preview.loaded({ preserveNavigation: interactive ?? false });

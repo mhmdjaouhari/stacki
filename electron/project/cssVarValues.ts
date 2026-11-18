@@ -38,7 +38,12 @@ export const NAMED_COLORS = new Set([
 
 export const COLOR_FUNCTION = /^(rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\(/i;
 
-export function resolveValue(value: unknown, map: Map<string, string>, depth = 0): string {
+/** What a value is resolved against: a name to its value. A Map is one; so is a layered lookup that copies nothing. */
+export interface ValueLookup {
+  get(name: string): string | undefined;
+}
+
+export function resolveValue(value: unknown, map: ValueLookup, depth = 0): string {
   if (depth > CSS_VARIABLE_LIMITS.resolveDepthMax) {
     return String(value);
   }
@@ -95,6 +100,10 @@ export function kindOf(value: unknown, resolved: unknown): string {
   // Unitless: a line height, a weight, a column count, a fluid-scale bound.
   if (/^-?\d*\.?\d+$/.test(text)) {
     return 'number';
+  }
+  // A plain percentage has its own glyph in the Variables panel; calc() holding a % stays a size.
+  if (/^[+-]?(?:\d+\.?\d*|\.\d+)%$/.test(text)) {
+    return 'percentage';
   }
   if (/^-?\d*\.?\d+([a-z%]+)$/i.test(text) || /^(calc|clamp|min|max)\(/i.test(text)) {
     return 'size';

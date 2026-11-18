@@ -3,11 +3,15 @@ import { isReservedShortcut, type AppReservedShortcut } from '../../../shared/pr
 import { parseContextPoint, type ContextPoint } from './contextPosition';
 import { canvasClickBox, coordinateOf, type CanvasClickBox } from '../../ui/canvasClickSlot';
 import type { Box } from './outlineBoxes';
-import type { Spacing } from './spacingBands';
+import type { MarginCollapse, Spacing } from './spacingBands';
 import { boolean, count, dictionary, digest, list, optional, pathText, record } from '../../../shared/core/boundary';
 import type { Digest } from '../../../shared/core/brand';
-import { parsePreviewRender, type PreviewRender } from '../../../shared/page/previewToken';
+import { LIMITS } from '../../../shared/core/limits';
+import { ITERATION_LIMITS, type PreviewIteration } from '../../../shared/page/previewIteration';
+import { parseFrameRenderProblem, parsePreviewRender, type FrameRenderProblem, type PreviewRender } from '../../../shared/page/previewToken';
 import type { PseudoLayer } from '../../../shared/page/pseudoPath';
+import { ENGLISH_TRANSLATE } from '../../../shared/properties/i18n/englishTranslator';
+import type { Translator } from '../../lib/i18n/localeContext';
 import { GUIDE_LIMITS, parseGuideVariableName, type GuideMetrics } from './guideModel';
 
 export type PreviewMessage =
@@ -33,7 +37,13 @@ export type PreviewMessage =
   | { readonly kind: 'modifiers'; readonly shiftKey: boolean; readonly altKey: boolean }
   /** `pseudo` names the ::before or ::after the pointer is on, when it is on one. */
   /** `deep` labels a deep hover's node inside a closed component (shared/properties/deepOutline.ts). */
-  | ({ readonly kind: 'hover-node'; readonly pseudo: PseudoLayer | undefined; readonly deep: DeepHoverNode | undefined } & LocatedEvent)
+  /** `boxes` are the node's boxes as the frame measured them with the hit, so the outline needs no second round trip; undefined when it measured none. */
+  | ({
+      readonly kind: 'hover-node';
+      readonly pseudo: PseudoLayer | undefined;
+      readonly deep: DeepHoverNode | undefined;
+      readonly boxes: readonly Box[] | undefined;
+    } & LocatedEvent)
   | ({
       readonly kind: 'click-node';
       readonly outside: boolean;
@@ -42,6 +52,12 @@ export type PreviewMessage =
       readonly x: number | undefined;
       readonly y: number | undefined;
       readonly box: CanvasClickBox | undefined;
+      /** The editor's click query this answers (`avb:click-query`), or undefined for a click the person made. */
+      readonly replay: number | undefined;
+      /** As for a hover: the boxes of the node the click named. */
+      readonly boxes: readonly Box[] | undefined;
+      /** The pass of each loop around the node the clicked copy is in; undefined from a page that marks none. */
+      readonly iterations: readonly PreviewIteration[] | undefined;
     } & LocatedEvent)
   | ({ readonly kind: 'open-node' } & LocatedEvent)
   | ({ readonly kind: 'context-node'; readonly outside: boolean; readonly pseudo: PseudoLayer | undefined } & LocatedEvent & ContextPoint)
@@ -50,6 +66,8 @@ export type PreviewMessage =
   | { readonly kind: 'guide'; readonly metrics: GuideMetrics }
   /** The rendering the canvas shows: its manifest and token (plan §9, step 7). */
   | { readonly kind: 'render'; readonly render: PreviewRender }
+  /** The frame shows a rendering it cannot name with a token, and why. */
+  | { readonly kind: 'render-problem'; readonly problem: FrameRenderProblem }
   /** The canvas reloaded instead of patching, and why (step 7). */
   | { readonly kind: 'preview-reload'; readonly reason: PreviewReloadReason }
   | { readonly kind: 'query-result'; readonly input: unknown }
@@ -86,12 +104,12 @@ export type PreviewReloadReason = (typeof PREVIEW_RELOAD_REASONS)[number];
 
 /** The notice for a reload a cap caused, or undefined for one the canvas could
  * never have avoided (those stay quiet, as they always were). */
-export function describePreviewReload(reason: PreviewReloadReason): string | undefined {
+export function describePreviewReload(reason: PreviewReloadReason, translate: Translator = ENGLISH_TRANSLATE): string | undefined {
   switch (reason) {
     case 'markers-over-cap':
-      return 'The canvas reloaded: this page has more elements than it updates in place.';
+      return translate('preview.reload.markersOverCap');
     case 'diff-over-cap':
-      return 'The canvas reloaded: the change was too large to update in place.';
+      return translate('preview.reload.diffOverCap');
     case 'scripts-changed':
     case 'patch-failed':
       return undefined;
@@ -197,7 +215,13 @@ function parseKnownMessage(value: Readonly<Record<string, unknown>>): PreviewMes
         altKey: boolean(value['altKey']),
       };
     case 'avb:hover-node':
-      return { kind: 'hover-node', ...parseLocatedMessage(value), pseudo: parseLocatedPseudo(value), deep: parseDeepHoverNode(value['deep']) };
+      return {
+        kind: 'hover-node',
+        ...parseLocatedMessage(value),
+        pseudo: parseLocatedPseudo(value),
+        deep: parseDeepHoverNode(value['deep']),
+        boxes: parseSentBoxes(value['boxes']),
+      };
     case 'avb:click-node':
       return {
         kind: 'click-node',
@@ -207,6 +231,9 @@ function parseKnownMessage(value: Readonly<Record<string, unknown>>): PreviewMes
         x: coordinateOf(value['x']),
         y: coordinateOf(value['y']),
         box: canvasClickBox(value['box']),
+        replay: optional(parseReplayId)(value['replay']),
+        boxes: parseSentBoxes(value['boxes']),
+        iterations: parseIterations(value['iterations']),
       };
     case 'avb:context-node':
       return {
@@ -224,6 +251,8 @@ function parseKnownMessage(value: Readonly<Record<string, unknown>>): PreviewMes
       return { kind: 'guide', metrics: parseGuideMetrics(value) };
     case 'avb:render':
       return { kind: 'render', render: parsePreviewRender(value) };
+    case 'avb:render-problem':
+      return { kind: 'render-problem', problem: parseRenderProblem(value['problem']) };
     case 'avb:preview-reload':
       return { kind: 'preview-reload', reason: parseReloadReason(value['reason']) };
     case 'avb:query-result':
@@ -297,6 +326,27 @@ function declaredCount(input: unknown): number | undefined {
   return optional(count)(input);
 }
 
+// The editor numbers its click queries from 1 (canvasClickRecovery.ts); the
+// frame echoes the number back, so anything else is not an answer to one.
+const REPLAY_ID_MAX = 2 ** 31;
+function parseReplayId(input: unknown): number {
+  if (typeof input !== 'number' || !Number.isSafeInteger(input)) {
+    throw new Error('Preview click: expected a replay id');
+  }
+  if (input < 1 || REPLAY_ID_MAX < input) {
+    throw new Error('Preview click: replay id out of range');
+  }
+  return input;
+}
+
+function parseRenderProblem(input: unknown): FrameRenderProblem {
+  const found = parseFrameRenderProblem(input);
+  if (found === undefined) {
+    throw new Error('Preview render problem: unknown value');
+  }
+  return found;
+}
+
 function parseReloadReason(input: unknown): PreviewReloadReason {
   const found = PREVIEW_RELOAD_REASONS.find((reason) => reason === input);
   if (found === undefined) {
@@ -329,6 +379,46 @@ function parseLocatedPseudo(value: Readonly<Record<string, unknown>>): PseudoLay
   return pseudo;
 }
 
+// The boxes a hover or click carries. They only save a round trip: the track and its rects
+// message stay the source of truth, so boxes that do not parse are dropped, never the event.
+function parseSentBoxes(input: unknown): readonly Box[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  try {
+    return list(parseBox)(input);
+  } catch {
+    return undefined;
+  }
+}
+
+// The passes a click names: they only point the data picker at an item, so a list that does not
+// parse is dropped (the occurrence is the fallback), never the click.
+function parseIterations(input: unknown): readonly PreviewIteration[] | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  try {
+    const passes = list(parseIteration)(input);
+    return passes.length > ITERATION_LIMITS.loopsMax ? undefined : passes;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseIteration(input: unknown): PreviewIteration {
+  const value = record(input);
+  const path = value['path'];
+  const index = value['index'];
+  if (typeof path !== 'string' || path.length === 0 || path.length > LIMITS.attrCharsMax) {
+    throw new Error('Preview iteration: expected a path');
+  }
+  if (typeof index !== 'number' || !Number.isSafeInteger(index) || index < -1) {
+    throw new Error('Preview iteration: expected an item index or -1');
+  }
+  return { path, index };
+}
+
 function parseBox(input: unknown): Box {
   const value = record(input);
   const width = finite(value['w']);
@@ -356,14 +446,32 @@ function parseSpacing(input: unknown): Spacing {
   // rects message, every outline and band with it, for a value the bands
   // already clamp to nothing (spacingBands.ts).
   const margin = optional(parseSides(finite))(value['margin']);
+  const collapse = optional(parseCollapse)(value['collapse']);
   const gaps = optional(list(parseGap))(value['gaps']);
   const units = optional(dictionary(nonnegativeFinite))(value['units']);
   return {
     ...(padding === undefined ? {} : { padding }),
     ...(margin === undefined ? {} : { margin }),
+    ...(collapse === undefined ? {} : { collapse }),
     ...(gaps === undefined ? {} : { gaps }),
     ...(units === undefined ? {} : { units }),
   };
+}
+
+function parseCollapse(input: unknown): NonNullable<Spacing['collapse']> {
+  const value = record(input);
+  const top = optional(parseMarginCollapse)(value['top']);
+  const bottom = optional(parseMarginCollapse)(value['bottom']);
+  return { ...(top === undefined ? {} : { top }), ...(bottom === undefined ? {} : { bottom }) };
+}
+
+function parseMarginCollapse(input: unknown): MarginCollapse {
+  const value = record(input);
+  const partner = value['partner'];
+  if (partner !== 'previous' && partner !== 'next' && partner !== 'parent') {
+    throw new Error('Preview margin collapse: unknown partner');
+  }
+  return { partner, margin: finite(value['margin']) };
 }
 
 function parseSides(side: (input: unknown) => number) {

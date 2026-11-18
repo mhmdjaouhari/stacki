@@ -18,8 +18,11 @@ import ProvenanceList from './ProvenanceList';
 import type { Contributor, ResolvedProp } from './model/resolved';
 import SegmentPill from './components/SegmentPill';
 import { ChevronIcon, MenuItem } from './components/MenuParts';
+import KeywordConnect, { VariableMenuItem } from './KeywordConnect';
 import { displayOf, type Display, withImportant } from './model/styleDisplay';
 import { LiveInput } from './LiveTextInput';
+import { useTranslate } from '../../lib/i18n/useTranslate';
+import { useSelectorState } from './model/selectorScope';
 export { LiveInput, type LiveInputProps, useLiveInputEditing, useDebouncedLive, stepLiveKey } from './LiveTextInput';
 
 export type SetProp = (prop: string, value: string, important: boolean) => void;
@@ -66,6 +69,7 @@ export function PropLabel({
   onProvenance: (prop: string, anchor: DOMRect) => void;
   onSelectSelector: (selector: string, prop?: string) => void;
 }) {
+  const translate = useTranslate();
   const tip = tipProps ?? [prop];
   if (display.present && !display.isSelected) {
     return <ProvenanceLabel label={label} props={tip} anchorProp={prop} busy={busy} onProvenance={onProvenance} />;
@@ -77,9 +81,9 @@ export function PropLabel({
       {...(display.present ? {} : { inheritedProp: prop })}
       disabled={busy}
       onReset={onClear}
-      resetLabel="Clear"
+      resetLabel={translate('style.typographyKit.clear')}
       tooltip={<PropTip props={tip} />}
-      {...(display.overridden ? { title: `Overridden by ${display.winnerSelector}` } : {})}
+      {...(display.overridden ? { title: translate('style.typographyKit.overriddenBy', { selector: display.winnerSelector }) } : {})}
       menuNote={(close) => (
         <ProvenanceList
           contributors={contributors}
@@ -275,11 +279,11 @@ export function SegBar(props: SegBarProps) {
   // `forceCustom` keeps the input open even when the seeded value happens to match a
   // segment (e.g. Order seeds `1`, which is also the "Last" preset) — the user
   // explicitly asked for a custom value, so don't collapse back to that segment.
-  const [forceCustom, setForceCustom] = useState(false);
+  const [forceCustom, setForceCustom] = useSelectorState(false);
   // The just-seeded custom value. `current` derives from the committed style, which
   // lags a beat behind the write (and won't sync into the focused input), so the seed
   // drives the field until the user edits it or picks a segment.
-  const [seed, setSeed] = useState<string | undefined>(undefined);
+  const [seed, setSeed] = useSelectorState<string | undefined>(undefined);
   const customMode = forceCustom || !supported.has(current);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -305,34 +309,36 @@ export function SegBar(props: SegBarProps) {
   };
 
   return (
-    <div ref={rootRef} className={`embed-editor_display ${customMode ? 'is-custom' : ''}`} role="group" aria-label={ariaLabel}>
-      <SegmentPill />
-      {customMode ? (
-        <SegBarCustomInput bar={props} seed={seed} inputRef={inputRef} onSeedDone={() => setSeed(undefined)} onBackToBar={() => setForceCustom(false)} />
-      ) : (
-        <SegBarSegments
-          segs={segs}
-          current={current}
+    <KeywordConnect prop={props.prop} value={current} ariaLabel={ariaLabel} disabled={busy} dot={customMode ? 'field' : 'wrapper'} onPick={pick}>
+      <div ref={rootRef} className={`embed-editor_display ${customMode ? 'is-custom' : ''}`} role="group" aria-label={ariaLabel}>
+        <SegmentPill />
+        {customMode ? (
+          <SegBarCustomInput bar={props} seed={seed} inputRef={inputRef} onSeedDone={() => setSeed(undefined)} onBackToBar={() => setForceCustom(false)} />
+        ) : (
+          <SegBarSegments
+            segs={segs}
+            current={current}
+            ariaLabel={ariaLabel}
+            busy={busy}
+            onPick={pick}
+            onMore={moreSegment ? () => enterCustom(moreValue) : undefined}
+          />
+        )}
+        <SegBarMenu
+          open={open}
+          dropUp={dropUp}
+          menuRef={menuRef}
           ariaLabel={ariaLabel}
           busy={busy}
+          customMode={customMode}
+          segs={segs}
+          current={current}
+          onToggle={() => setOpen((value) => !value)}
           onPick={pick}
-          onMore={moreSegment ? () => enterCustom(moreValue) : undefined}
+          onEnterCustom={() => enterCustom(moreValue)}
         />
-      )}
-      <SegBarMenu
-        open={open}
-        dropUp={dropUp}
-        menuRef={menuRef}
-        ariaLabel={ariaLabel}
-        busy={busy}
-        customMode={customMode}
-        segs={segs}
-        current={current}
-        onToggle={() => setOpen((value) => !value)}
-        onPick={pick}
-        onEnterCustom={() => enterCustom(moreValue)}
-      />
-    </div>
+      </div>
+    </KeywordConnect>
   );
 }
 
@@ -372,12 +378,13 @@ export function SegBarCustomInput({
   onSeedDone: () => void;
   onBackToBar: () => void;
 }) {
+  const translate = useTranslate();
   const supported = new Set(bar.segs.map((segment) => segment.value));
   return (
     <LiveInput
       value={seed ?? bar.current}
       busy={bar.busy}
-      placeholder="custom value"
+      placeholder={translate('style.typographyKit.customValuePlaceholder')}
       ariaLabel={bar.ariaLabel}
       className="embed-editor_value-input embed-editor_display-input"
       prop={bar.prop}
@@ -415,6 +422,7 @@ export function SegBarSegments({
   onPick: (value: string) => void;
   onMore: (() => void) | undefined;
 }) {
+  const translate = useTranslate();
   return (
     <>
       {segs.map((seg) => (
@@ -437,8 +445,8 @@ export function SegBarSegments({
           type="button"
           className="embed-editor_display-seg"
           disabled={busy}
-          aria-label={`Custom ${ariaLabel}`}
-          title={`Custom ${ariaLabel}`}
+          aria-label={translate('style.typographyKit.customAria', { name: ariaLabel })}
+          title={translate('style.typographyKit.customAria', { name: ariaLabel })}
           onClick={onMore}
         >
           <MoreIcon />
@@ -475,6 +483,7 @@ export function SegBarMenu({
   onPick: (value: string) => void;
   onEnterCustom: () => void;
 }) {
+  const translate = useTranslate();
   return (
     <>
       <button
@@ -482,7 +491,7 @@ export function SegBarMenu({
         className="embed-editor_display-arrow"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`More ${ariaLabel} options`}
+        aria-label={translate('style.typographyKit.moreOptions', { name: ariaLabel })}
         disabled={busy}
         onClick={onToggle}
       >
@@ -490,10 +499,11 @@ export function SegBarMenu({
       </button>
       {open ? (
         <Popup mode="popover" portal={false} onClose={onToggle} ref={menuRef} className={`embed-editor_display-menu ${dropUp ? 'is-up' : ''}`} role="menu">
+          <VariableMenuItem onClose={onToggle} />
           {customMode ? (
             segs.map((seg) => <MenuItem key={seg.value} label={seg.label} selected={current === seg.value} onClick={() => onPick(seg.value)} />)
           ) : (
-            <MenuItem label="Custom" selected={false} onClick={onEnterCustom} />
+            <MenuItem label={translate('style.typographyKit.custom')} selected={false} onClick={onEnterCustom} />
           )}
         </Popup>
       ) : undefined}

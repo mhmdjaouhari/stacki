@@ -1,14 +1,18 @@
+import { useTranslate } from '../../../lib/i18n/useTranslate';
 import { centralIcon } from '../../../ui/central/CentralIcon';
 import { check as centralCheck, chevronDown as centralChevronDown } from '../../../ui/central/centralGeometry';
 import Popup from '../../../ui/Popup';
+import { Switch } from '../../../ui/Switch';
 // What a Select draws: the trigger, the list and its rows, each row's action
 // (Select.tsx).
 
 const ChevronDownGlyph = centralIcon(centralChevronDown, 12);
 
-import { useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { useLayoutEffect, useRef, useState, type ComponentProps, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 import { assert } from '../../../../shared/core/assert';
 import { type SelectOption, type SelectTag, type Props } from './selectTypes';
+import { useHoverTip } from './CssPropertyTip';
+import { CodeInline } from '../../../ui/CodeBlock';
 
 // A ReactNode given as null by a caller means "none", the same as leaving it out.
 export const present = (node: ReactNode): boolean => (node ?? undefined) !== undefined;
@@ -28,17 +32,40 @@ export function OptionLabel({
   overline,
   tag,
   subline,
+  prefix,
+  detail,
 }: {
   readonly label: string;
   readonly overline: string | undefined;
   readonly tag?: SelectTag | undefined;
   readonly subline?: readonly string[] | undefined;
+  readonly prefix?: string | undefined;
+  readonly detail?: string | undefined;
 }) {
   const hasOverline = overline !== undefined && overline.length > 0;
   const hasFirstLine = hasOverline || tag !== undefined;
   const hasSubline = subline !== undefined && subline.length > 0;
+  if (prefix !== undefined && prefix.length > 0 && !hasFirstLine && !hasSubline) {
+    // One line: the prefix gives way (an ellipsis) so the label after it stays whole.
+    return (
+      <span className="u-select-label has-prefix">
+        <span className="u-select-prefix" onMouseEnter={titleWhenCut(prefix)}>
+          {prefix}
+        </span>
+        <span className="u-select-prefix-separator" aria-hidden="true">
+          ·
+        </span>
+        <span className="u-select-main">{label}</span>
+      </span>
+    );
+  }
   if (!hasFirstLine && !hasSubline) {
-    return <span className="u-select-label">{label}</span>;
+    return (
+      <span className="u-select-label" onMouseEnter={titleWhenCut(label)}>
+        {label}
+        {detail === undefined ? undefined : <span className="u-select-detail">{detail}</span>}
+      </span>
+    );
   }
   return (
     <span className="u-select-label has-overline">
@@ -48,10 +75,21 @@ export function OptionLabel({
           {hasOverline ? <span className="u-select-overline-text">{overline}</span> : undefined}
         </span>
       ) : undefined}
-      <span className="u-select-label-line">{label}</span>
+      <span className="u-select-label-line" onMouseEnter={titleWhenCut(label)}>
+        {label}
+      </span>
       {hasSubline ? <OptionSubline items={subline} /> : undefined}
     </span>
   );
+}
+
+// A label the row cuts with an ellipsis shows its whole text on hover; one shown whole
+// carries no title, so the pointer does not raise a tooltip that repeats the row.
+function titleWhenCut(label: string) {
+  return (event: { readonly currentTarget: HTMLElement }): void => {
+    const element = event.currentTarget;
+    element.title = element.scrollWidth > element.clientWidth ? label : '';
+  };
 }
 
 // Fitted after layout, before paint, and again whenever the row's width changes,
@@ -151,7 +189,8 @@ export function SelectTrigger<T extends string>({
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
 }) {
   const triggerLabel = selectedOption ? (selectedOption.triggerLabel ?? selectedOption.label) : '';
-  const triggerOverline = selectedOption?.overline;
+  const triggerOverline = selectedOption?.triggerOverline ?? selectedOption?.overline;
+  const triggerTag = selectedOption?.triggerTag ?? selectedOption?.tag;
   const triggerIcon = selectedOption?.triggerIcon ?? selectedOption?.icon;
   const shared = {
     ref: buttonRef,
@@ -177,22 +216,76 @@ export function SelectTrigger<T extends string>({
     );
   }
   if (props.variant === 'link') {
-    return (
-      <button {...shared} className="u-select-link" data-tone={selectedOption?.tone}>
-        {icon}
-        <span className="u-select-label">{triggerLabel}</span>
-        {CHEVRON}
-      </button>
-    );
+    return <LinkTrigger shared={shared} tone={selectedOption?.tone} icon={icon} label={triggerLabel} />;
   }
   return (
-    <button {...shared} className="u-select-button" data-tone={selectedOption?.tone}>
+    <button {...shared} className="u-select-button" data-tone={selectedOption?.tone} title={selectedOption?.title}>
       <span className="u-select-value">
         {icon}
-        <OptionLabel label={triggerLabel} overline={triggerOverline} tag={triggerOverline === undefined ? undefined : selectedOption?.tag} />
+        <OptionLabel
+          label={triggerLabel}
+          overline={triggerOverline}
+          tag={triggerOverline === undefined ? undefined : triggerTag}
+          prefix={selectedOption?.triggerPrefix}
+        />
+        {present(selectedOption?.triggerMark) ? <span className="u-select-mark">{selectedOption?.triggerMark}</span> : undefined}
       </span>
       {CHEVRON}
     </button>
+  );
+}
+
+// The link trigger: a one-line chip whose label is usually a file path. The path is cut
+// from its start, so the end (the file name) always stays visible; embedEditor.css says
+// how. A cut label shows its whole text in the app's tooltip after the panel's usual rest
+// (useHoverTip); a label that fits keeps the native title, as there is nothing more to
+// read. The label's own box does the cutting and is the tooltip's anchor.
+function LinkTrigger({
+  shared,
+  tone,
+  icon,
+  label,
+}: {
+  readonly shared: Omit<ComponentProps<'button'>, 'className' | 'ref'> & { readonly ref: RefObject<HTMLButtonElement> };
+  readonly tone: SelectOption<string>['tone'];
+  readonly icon: ReactNode;
+  readonly label: string;
+}) {
+  const [truncated, setTruncated] = useState(false);
+  const { ref, hoverProps, hide, tip } = useHoverTip<HTMLSpanElement>(<CodeInline text={label} className="u-select-link-tip-code" />);
+  return (
+    <>
+      <button
+        {...shared}
+        className="u-select-link"
+        data-tone={tone}
+        title={truncated ? undefined : label}
+        onClick={(event) => {
+          // A menu opening must not leave a tip standing over it.
+          hide();
+          shared.onClick?.(event);
+        }}
+      >
+        {icon}
+        <span
+          ref={ref}
+          className="u-select-label is-path"
+          onMouseEnter={(event) => {
+            // Measured here: the panel's width and the label both change under it.
+            const cut = event.currentTarget.scrollWidth > event.currentTarget.clientWidth;
+            setTruncated(cut);
+            if (cut) {
+              hoverProps.onMouseEnter?.();
+            }
+          }}
+          onMouseLeave={hoverProps.onMouseLeave}
+        >
+          <bdi dir="ltr">{label}</bdi>
+        </span>
+        {CHEVRON}
+      </button>
+      {tip}
+    </>
   );
 }
 
@@ -211,7 +304,7 @@ export type SelectListProps<T extends string> = {
   onQuery: (query: string) => void;
   onListKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
   onSearchKeyDown: (event: KeyboardEvent<HTMLInputElement>) => void;
-  onActivate: (index: number) => void;
+  onActivate: (index: number, source: 'pointer') => void;
   onLeave: () => void;
   onChoose: (index: number) => void;
   onCancel: () => void;
@@ -220,11 +313,42 @@ export type SelectListProps<T extends string> = {
 export const optionId = (baseId: string, index: number) => `${baseId}-opt-${index}`;
 
 export function SelectList<T extends string>(list: SelectListProps<T>) {
+  const translate = useTranslate();
   const { props, displayed } = list;
   const { ariaLabel, labelId, searchable = false } = props;
   // Read from the whole option list, not the filtered rows, so typing a search
   // never opens or closes the dot column under the pointer.
   const dotColumn = dotColumnFor(props.options);
+  const row = (index: number) => {
+    const option = displayed[index];
+    assert(option !== undefined, 'SelectList: a section names displayed rows');
+    return (
+      <SelectRow
+        key={option.value}
+        option={option}
+        id={optionId(list.baseId, index)}
+        selected={option.checked ?? option.value === props.value}
+        active={index === list.activeIndex}
+        dotColumn={dotColumn}
+        onActivate={() => list.onActivate(index, 'pointer')}
+        onChoose={() => list.onChoose(index)}
+        onCancel={list.onCancel}
+      />
+    );
+  };
+  const pinned = (key: 'header' | 'footer'): number[] => displayed.flatMap((option, index) => (option[key] === true ? [index] : []));
+  const headerIndexes = pinned('header');
+  const footerIndexes = pinned('footer');
+  const pinnedAway = (option: SelectOption<T> | undefined): boolean => option?.header === true || option?.footer === true;
+  const body =
+    displayed.length === 0 ? (
+      <div className="u-select-empty" role="presentation">
+        {translate('styleModel.components.select.noMatches')}
+      </div>
+    ) : (
+      displayed.flatMap((option, index) => (pinnedAway(option) ? [] : [row(index)]))
+    );
+  const framed = headerIndexes.length > 0 || footerIndexes.length > 0;
   return (
     <Popup
       mode="popover"
@@ -232,7 +356,9 @@ export function SelectList<T extends string>(list: SelectListProps<T>) {
       anchor={list.trigger}
       onClose={list.onCancel}
       ref={list.listRef}
-      className={['u-select-list', list.dropUp ? 'is-up' : ''].filter(Boolean).join(' ')}
+      className={['u-select-list', list.dropUp ? 'is-up' : '', framed ? 'has-footer' : '', headerIndexes.length > 0 ? 'has-header' : '']
+        .filter(Boolean)
+        .join(' ')}
       role="listbox"
       tabIndex={-1}
       label={ariaLabel}
@@ -247,34 +373,29 @@ export function SelectList<T extends string>(list: SelectListProps<T>) {
             ref={list.searchRef}
             type="text"
             className="u-select-search-input"
-            placeholder={props.searchPlaceholder ?? 'Search…'}
+            placeholder={props.searchPlaceholder ?? translate('ui.search')}
             value={list.query}
             onChange={(event) => list.onQuery(event.target.value)}
             onKeyDown={list.onSearchKeyDown}
-            aria-label={ariaLabel ? `Search ${ariaLabel}` : 'Search'}
+            aria-label={
+              ariaLabel ? translate('styleModel.components.select.searchNamed', { label: ariaLabel }) : translate('styleModel.components.select.search')
+            }
             spellCheck={false}
             autoComplete="off"
           />
         </div>
       ) : undefined}
-      {displayed.length === 0 ? (
-        <div className="u-select-empty" role="presentation">
-          No matches
-        </div>
+      {!framed ? (
+        body
       ) : (
-        displayed.map((option, index) => (
-          <SelectRow
-            key={option.value}
-            option={option}
-            id={optionId(list.baseId, index)}
-            selected={option.value === props.value}
-            active={index === list.activeIndex}
-            dotColumn={dotColumn}
-            onActivate={() => list.onActivate(index)}
-            onChoose={() => list.onChoose(index)}
-            onCancel={list.onCancel}
-          />
-        ))
+        // A pinned footer is a sibling of the scrolling region, never a row inside it: rows
+        // sliding under a sticky row left a strip of the last card peeking round it, and the
+        // scrollbar ran down behind it. Outside, the rows end exactly where the footer begins.
+        <>
+          {headerIndexes.length > 0 ? <div className="u-select-header">{headerIndexes.map(row)}</div> : undefined}
+          <div className="u-select-scroll">{body}</div>
+          {footerIndexes.length > 0 ? <div className="u-select-footer">{footerIndexes.map(row)}</div> : undefined}
+        </>
       )}
     </Popup>
   );
@@ -308,15 +429,20 @@ export function SelectRow<T extends string>({
   onChoose: () => void;
   onCancel: () => void;
 }) {
+  const translate = useTranslate();
   const icon = present(option.icon) ? <span className="u-select-icon">{option.icon}</span> : undefined;
   if (option.heading) {
     return (
-      <div className="u-select-heading" role="presentation">
+      <div id={id} className={option.tag === undefined ? 'u-select-heading' : 'u-select-heading has-tag'} role="presentation">
         {icon}
-        <span className="u-select-heading-label">{option.label}</span>
+        {option.tag === undefined ? undefined : <OptionTag tag={option.tag} />}
+        <span className="u-select-heading-label" title={option.label}>
+          {option.label}
+        </span>
       </div>
     );
   }
+  const hasStyles = translate('styleModel.components.select.hasStyles');
   return (
     <div
       id={id}
@@ -326,16 +452,21 @@ export function SelectRow<T extends string>({
         selected ? 'is-selected' : '',
         option.indent ? 'is-indented' : '',
         option.action ? 'has-action' : '',
+        option.footer ? 'is-footer' : '',
+        option.header ? 'is-header' : '',
         (option.subline?.length ?? 0) > 0 ? 'has-subline' : '',
       ]
         .filter(Boolean)
         .join(' ')}
       role="option"
       aria-selected={selected}
+      title={option.title}
       data-active={active || undefined}
       onMouseEnter={onActivate}
       onPointerDown={(event) => {
-        if (event.pointerType === 'mouse' && event.button === 0) {
+        // A switch row changes the list in place and acts on the click alone:
+        // acting on the press as well would toggle it twice.
+        if (event.pointerType === 'mouse' && event.button === 0 && option.switch !== true) {
           event.preventDefault();
           onChoose();
         }
@@ -343,23 +474,31 @@ export function SelectRow<T extends string>({
       onClick={onChoose}
     >
       {icon}
-      <OptionLabel label={option.label} overline={option.overline} tag={option.tag} subline={option.subline} />
+      <OptionLabel label={option.label} overline={option.overline} tag={option.tag} subline={option.subline} detail={option.detail} />
       {/* Fixed trailing slots, held open whether or not they are filled, so every
           row's dot stands in one column and every row's check or pencil in the
           one after it. The end slot ends the row, so icons align down the left
           edge (a rule across the app). */}
       {dotColumn === 'held' ? (
-        <span className="u-select-dot-slot" aria-hidden="true">
-          {option.marked ? <span className="u-select-dot" /> : undefined}
+        <span className="u-select-dot-slot">
+          {option.marked ? <span className="u-select-dot" role="img" title={hasStyles} aria-label={hasStyles} /> : undefined}
         </span>
       ) : undefined}
       <span className="u-select-check">
-        {selected ? CHECK : undefined}
+        {option.switch ? undefined : selected ? CHECK : undefined}
         {option.action ? <RowAction action={option.action} onCancel={onCancel} /> : undefined}
       </span>
+      {option.switch ? (
+        // The row is the control (a press anywhere on it toggles); the switch only shows the state.
+        <span className="u-select-switch">
+          <Switch label={option.label} checked={selected} onToggle={NOOP} />
+        </span>
+      ) : undefined}
     </div>
   );
 }
+
+const NOOP = (): void => undefined;
 
 const CheckIcon = centralIcon(centralCheck);
 export const CHECK = <CheckIcon />;

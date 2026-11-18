@@ -1,3 +1,5 @@
+import { useTranslate, useTranslateRich } from '../../lib/i18n/useTranslate';
+import type { MessageKey } from '../../../shared/properties/i18n/messageRef';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Attr } from '../../../shared/page/pageNode';
 import { assert } from '../../../shared/core/assert';
@@ -5,7 +7,9 @@ import { LIMITS } from '../../../shared/core/limits';
 import Dropdown from '../../ui/Dropdown';
 import AssetField from '../../ui/AssetField';
 import { ElementLinkIcon, FileIcon, PhoneIcon, ElementImageIcon } from '../../ui/Icons';
-import { anchorTargetExists, detectLinkType, linkPageOptions, type LinkPage, type LinkType, type LinkTypeContext } from './linkType';
+import LinkPageChooser from './LinkPageChooser';
+import type { LinkEntryLoader } from './linkEntries';
+import { anchorTargetExists, detectLinkType, type LinkPage, type LinkType, type LinkTypeContext } from './linkType';
 
 // Webflow-style link settings for href props: a Type segmented control
 // (URL / Page / Section / Email / Phone / Asset) whose fields all compile
@@ -14,13 +18,13 @@ import { anchorTargetExists, detectLinkType, linkPageOptions, type LinkPage, typ
 //
 // context: { pages: [{name, route, title}], sectionIds: [string], projectPath }
 
-const TYPES: ReadonlyArray<{ readonly id: LinkType; readonly title: string; readonly icon: React.ReactNode }> = [
-  { id: 'url', title: 'URL', icon: <ElementLinkIcon size={13} /> },
-  { id: 'page', title: 'Page', icon: <FileIcon size={13} /> },
-  { id: 'section', title: 'Page section', icon: <b style={{ fontSize: 12 }}>#</b> },
-  { id: 'email', title: 'Email', icon: <b style={{ fontSize: 12 }}>@</b> },
-  { id: 'phone', title: 'Phone', icon: <PhoneIcon size={13} /> },
-  { id: 'asset', title: 'File / asset', icon: <ElementImageIcon size={13} /> },
+const TYPES: ReadonlyArray<{ readonly id: LinkType; readonly title: MessageKey; readonly icon: React.ReactNode }> = [
+  { id: 'url', title: 'props.link.type.url', icon: <ElementLinkIcon size={13} /> },
+  { id: 'page', title: 'props.link.type.page', icon: <FileIcon size={13} /> },
+  { id: 'section', title: 'props.link.type.section', icon: <b style={{ fontSize: 12 }}>#</b> },
+  { id: 'email', title: 'props.link.type.email', icon: <b style={{ fontSize: 12 }}>@</b> },
+  { id: 'phone', title: 'props.link.type.phone', icon: <PhoneIcon size={13} /> },
+  { id: 'asset', title: 'props.link.type.asset', icon: <ElementImageIcon size={13} /> },
 ];
 
 function parseMailto(text: string) {
@@ -40,19 +44,26 @@ function parseMailto(text: string) {
 interface LinkContext {
   readonly pages?: readonly LinkPage[];
   readonly sectionIds?: readonly string[];
+  /** Resolves a template page's entries (its CMS entries as concrete routes); absent where the host cannot. */
+  readonly loadEntries?: LinkEntryLoader | undefined;
   readonly projectPath: string;
 }
 interface LinkFieldProps {
   readonly value?: Attr | undefined;
   readonly context: LinkContext;
+  /** What an unset link falls back to, shown muted in the URL box; "#" when the component says nothing. */
+  readonly placeholder?: string | undefined;
   readonly onChange: (value: Attr, immediate?: boolean) => void;
 }
 function linkTypeContext(context: LinkContext): LinkTypeContext {
   return { routes: (context.pages ?? []).map((page) => page.route), sectionIds: context.sectionIds ?? [] };
 }
 
+// One array for "no pages", so the page chooser's effects see the same value on every render.
+const NO_PAGES: readonly LinkPage[] = [];
+
 type Commit = (value: string, options?: { readonly immediate: boolean }) => void;
-export default function LinkField({ value, context, onChange }: LinkFieldProps) {
+export default function LinkField({ value, context, placeholder, onChange }: LinkFieldProps) {
   const text = value?.type === 'string' ? value.value : '';
   assert((context.pages?.length ?? 0) <= LIMITS.scanEntriesMax, 'LinkField: page limit exceeded');
   assert((context.sectionIds?.length ?? 0) <= LIMITS.treeNodesMax, 'LinkField: section limit exceeded');
@@ -74,7 +85,13 @@ export default function LinkField({ value, context, onChange }: LinkFieldProps) 
   return (
     <>
       <LinkTypes type={type} setType={setType} />
-      <LinkControl type={type} text={text} context={context} commit={commit} />
+      <LinkControl
+        type={type}
+        text={text}
+        context={context}
+        placeholder={placeholder === undefined || placeholder === '' ? '#' : placeholder}
+        commit={commit}
+      />
     </>
   );
 }
@@ -83,24 +100,26 @@ function LinkControl({
   type,
   text,
   context,
+  placeholder,
   commit,
 }: {
   readonly type: LinkType;
   readonly text: string;
   readonly context: LinkContext;
+  readonly placeholder: string;
   readonly commit: Commit;
 }) {
+  const translate = useTranslate();
   switch (type) {
     case 'url':
-      return <input value={text} placeholder="#" spellCheck={false} onChange={(event) => commit(event.target.value)} />;
+      return <input value={text} placeholder={placeholder} spellCheck={false} onChange={(event) => commit(event.target.value)} />;
     case 'page':
       return (
-        <Dropdown
-          value={(context.pages || []).some((page) => page.route === text) ? text : ''}
-          placeholder="Choose a page…"
-          optionLayout="stacked"
-          options={linkPageOptions(context.pages ?? [])}
-          onChange={(value) => commit(value, { immediate: true })}
+        <LinkPageChooser
+          text={text}
+          pages={context.pages ?? NO_PAGES}
+          loadEntries={context.loadEntries}
+          onPick={(route) => commit(route, { immediate: true })}
         />
       );
     case 'section':
@@ -111,7 +130,7 @@ function LinkControl({
       return (
         <input
           value={text.startsWith('tel:') ? text.slice(4) : ''}
-          placeholder="e.g. +14155551212"
+          placeholder={translate('props.link.examplePhone')}
           spellCheck={false}
           onChange={(event) => commit(`tel:${event.target.value.replace(/\s+/g, '')}`)}
         />
@@ -134,36 +153,35 @@ function LinkControl({
 }
 
 function LinkSection({ text, sections, commit }: { readonly text: string; readonly sections: readonly string[]; readonly commit: Commit }) {
+  const translate = useTranslate();
+  const translateRich = useTranslateRich();
   if (sections.length > 0) {
     return (
       <Dropdown
         value={anchorTargetExists(text, sections) ? text : ''}
-        placeholder="Choose a section…"
+        placeholder={translate('props.link.chooseSection')}
         options={sections.map((id) => ({ value: `#${id}`, label: `#${id}` }))}
         onChange={(value) => commit(value, { immediate: true })}
       />
     );
   }
-  return (
-    <div className="link-note">
-      No elements on this page have an <code>id</code> yet — set one in an element's attributes to anchor-link to it.
-    </div>
-  );
+  return <div className="link-note">{translateRich('props.link.noSections', { code: (text) => <code>{text}</code> })}</div>;
 }
 
 function LinkEmail({ text, commit }: { readonly text: string; readonly commit: Commit }) {
+  const translate = useTranslate();
   const { email, subject } = parseMailto(text);
   return (
     <>
       <input
         value={email}
-        placeholder="e.g. bob@gmail.com"
+        placeholder={translate('props.link.exampleEmail')}
         spellCheck={false}
         onChange={(event) => commit(`mailto:${event.target.value.trim()}${subject ? `?subject=${encodeURIComponent(subject)}` : ''}`)}
       />
       <input
         value={subject}
-        placeholder="Subject (optional)"
+        placeholder={translate('props.link.subject')}
         onChange={(event) => commit(`mailto:${email}${event.target.value ? `?subject=${encodeURIComponent(event.target.value)}` : ''}`)}
       />
     </>
@@ -171,6 +189,7 @@ function LinkEmail({ text, commit }: { readonly text: string; readonly commit: C
 }
 
 function LinkTypes({ type, setType }: { readonly type: LinkType; readonly setType: (type: LinkType) => void }) {
+  const translate = useTranslate();
   const { rowRef, btnRefs: buttonRefs, indicator } = useLinkIndicator(type);
   return (
     <div className="link-types" ref={rowRef}>
@@ -183,7 +202,7 @@ function LinkTypes({ type, setType }: { readonly type: LinkType; readonly setTyp
           }}
           type="button"
           className={type === option.id ? 'on' : ''}
-          title={option.title}
+          title={translate(option.title)}
           onClick={() => setType(option.id)}
         >
           {option.icon}

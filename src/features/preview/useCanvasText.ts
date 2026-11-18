@@ -1,15 +1,29 @@
+import { useTranslate } from '../../lib/i18n/useTranslate';
+import type { MessageKey, Translator } from '../../lib/i18n/localeContext';
+import type { CanvasTextRefusal } from '../../../shared/properties/canvasText';
+import { ENGLISH_TRANSLATE } from '../../../shared/properties/i18n/englishTranslator';
 import { cmsTransport } from '../../ipc/editorEnvironment';
 import { noteCanvasTextEditing } from '../../editor/canvasTextFocus';
 import type { CanvasEditFormat, CanvasTextEdit } from './canvasTextSource';
+import type { BoundTextBlockReason } from '../../editor/boundText';
 import { useEffect, useRef, type RefObject } from 'react';
-import { canvasTextUnfolded, parseCanvasTextEvent, type CanvasTextCatalog, type CanvasTextRunValue } from '../../../shared/properties/canvasText';
+import {
+  CANVAS_BLOCKED_LIMIT,
+  canvasTextUnfolded,
+  parseCanvasTextEvent,
+  type CanvasTextCatalog,
+  type CanvasTextRunValue,
+} from '../../../shared/properties/canvasText';
 import { applyCanvasText, applyCanvasTexts, canvasTextNodes, canvasTextPlans, type CanvasSourceNode } from './canvasTextSource';
 import { createCanvasTextOverlay } from './canvasTextOverlay';
+import { onCanvasTextRefresh } from './canvasTextRefresh';
+import { canvasSourceCue, clearCanvasSourceCue } from '../../ui/canvasTextSourceCue';
 import {
   CANVAS_FOCUS_PATHS_MAX,
   canvasTextFocus,
   parseCanvasTextOverlay,
   parseCanvasTextSelection,
+  type CanvasTextBox,
   type CanvasTextSelection,
   type CanvasTextSelectionRange,
 } from '../../../shared/properties/canvasTextOverlay';
@@ -48,11 +62,14 @@ interface Options {
   readonly url: string | undefined;
   readonly post: (message: unknown) => void;
   readonly subscribeLoad: (listener: () => void) => () => void;
+  /** Words the notices this module raises; English when absent (tests). */
+  readonly translate?: Translator | undefined;
 }
 
 export function useCanvasText(options: Options): void {
+  const translate = useTranslate();
   const current = useRef(options);
-  current.current = options;
+  current.current = { ...options, translate };
   const document = options.document;
   const file = document?.file;
   const source = document?.source;
@@ -101,6 +118,7 @@ function startCanvasText(current: RefObject<Options>) {
   };
   refresh();
   const unsubscribeContent = cmsTransport.onCmsChanged(refresh);
+  const unsubscribeRefresh = onCanvasTextRefresh(refresh);
   const unsubscribe = current.current?.subscribeLoad(send);
   const receive = createCanvasTextReceiver({
     current,
@@ -116,6 +134,8 @@ function startCanvasText(current: RefObject<Options>) {
     clearCanvasTextDraft(session);
     clearCanvasTextSelection(session);
     unsubscribeContent();
+    unsubscribeRefresh();
+    clearCanvasSourceCue(session);
     if (catalog) {
       current.current?.post({ ...catalog, session: crypto.randomUUID(), targets: [] });
     }
@@ -147,6 +167,7 @@ function createCanvasTextReceiver(options: CanvasTextReceiverOptions) {
     if (message.type === 'avb:text-active' || message.type === 'avb:text-inactive') {
       noteCanvasTextEditing(message.type === 'avb:text-active' ? 'active' : 'inactive');
       options.overlay.receive(message);
+      showSourceCue(message, options);
       if (!busy) {
         clearCanvasTextDraft(options.session);
       }
@@ -199,7 +220,7 @@ function saveCanvasText(
     return edit?.plan ? [{ plan: edit.plan, value: canvasTypedText(edit.target.value, value) }] : [];
   });
   if (edits.length !== message.also.length + 1) {
-    options.initial.report('The page changed while editing. The text was not saved; select it again.');
+    options.initial.report((options.current.current?.translate ?? ENGLISH_TRANSLATE)('preview.text.pageChanged'));
     return Promise.resolve();
   }
   const position = Math.min(...edits.map((edit) => edit.plan.start));
@@ -239,7 +260,8 @@ function canvasTextSessionMessage(event: MessageEvent<unknown>, options: CanvasT
     return undefined;
   }
   if (message.type === 'avb:text-refused') {
-    options.initial.report(message.message);
+    const translate = options.current.current?.translate ?? ENGLISH_TRANSLATE;
+    options.initial.report(blockedRefusal(message, options.plans(), options.initial.file, translate) ?? refusalText(message, translate));
     return undefined;
   }
   if (message.session !== options.session) {
@@ -293,16 +315,72 @@ async function publishCanvasTextSession(
   if (content.length) {
     // CMS refreshes invalidate only CMS tickets. Literal editing keeps its focus
     // while scans run; an old CMS commit cannot pick up a newer entry snapshot.
+    // Text printed from data is traced to its source here, so its target
+    // replaces the plain constant the page's own text pass already offered.
     const refreshed = content.map((plan) => ({
       ...plan,
-      target: { ...plan.target, key: `cms:${revision}:${plan.target.key}` },
+      target: plan.bound === undefined ? { ...plan.target, key: `cms:${revision}:${plan.target.key}` } : plan.target,
     }));
-    const combined = [...plans, ...refreshed].slice(0, 2_000);
+    const claimed = new Set(refreshed.filter((plan) => plan.bound !== undefined).map((plan) => plan.target.path));
+    const kept = plans.filter((plan) => !claimed.has(plan.target.path));
+    const combined = [...kept, ...refreshed].slice(0, 2_000);
+    const editable = combined.filter((plan) => plan.bound?.kind !== 'blocked');
+    const blocked = combined.filter((plan) => plan.bound?.kind === 'blocked').slice(0, CANVAS_BLOCKED_LIMIT);
     publish({
       plans: combined,
-      catalog: { ...catalog, targets: combined.map((plan) => plan.target) },
+      catalog: {
+        ...catalog,
+        targets: editable.map((plan) => plan.target),
+        ...(blocked.length === 0 ? {} : { blocked: blocked.map((plan) => ({ key: plan.target.key, path: plan.target.path })) }),
+      },
     });
   }
+}
+
+// The cue over the text being typed in: which source its words are written to.
+function showSourceCue(
+  message: { readonly type: string; readonly session: string; readonly key?: string; readonly rect?: CanvasTextBox },
+  options: CanvasTextReceiverOptions,
+) {
+  if (message.type !== 'avb:text-active' || message.key === undefined) {
+    clearCanvasSourceCue(options.session);
+    return;
+  }
+  const bound = options.plans().find((entry) => entry.target.key === message.key)?.bound;
+  const frame = options.current.current?.frame.current;
+  if (bound?.kind !== 'source' || message.rect === undefined || !frame) {
+    clearCanvasSourceCue(options.session);
+    return;
+  }
+  const origin = frame.getBoundingClientRect();
+  const scale = frame.clientWidth > 0 ? origin.width / frame.clientWidth : 1;
+  canvasSourceCue.set({
+    session: options.session,
+    expression: bound.expression,
+    file: bound.file,
+    uses: bound.uses,
+    box: { x: origin.left + message.rect.x * scale, y: origin.top + message.rect.y * scale, w: message.rect.w * scale, h: message.rect.h * scale },
+  });
+}
+
+// A double click on text whose source cannot be written: the file to edit instead, in the person's language.
+function blockedRefusal(
+  message: { readonly reason?: CanvasTextRefusal | undefined; readonly key?: string | undefined },
+  plans: readonly CanvasTextEdit[],
+  pageFile: string,
+  translate: Translator,
+): string | undefined {
+  if (message.reason !== 'source-blocked') {
+    return undefined;
+  }
+  const bound = plans.find((plan) => plan.target.key === message.key)?.bound;
+  if (bound?.kind !== 'blocked') {
+    return undefined;
+  }
+  const file = bound.file === '' ? pageFile : bound.file;
+  // The line goes with the file (`src/data/home.ts:104`), so every refusal says where to go without a sentence of its own.
+  const place = bound.line === undefined ? file : `${file}:${bound.line}`;
+  return translate(BLOCKED_KEYS[bound.reason], { file: place, path: bound.expression, name: bound.name ?? bound.expression });
 }
 
 interface Takeover {
@@ -355,7 +433,7 @@ function receiveCanvasSelection(message: CanvasTextSelection, options: CanvasSel
     press: (action) => {
       const selection = takeOver();
       if (selection.start >= selection.end || !format.apply(selection, action)) {
-        initial.report('This text can’t be formatted here. Use the Content field in Settings.');
+        initial.report((options.current.current?.translate ?? ENGLISH_TRANSLATE)('preview.text.cannotFormat'));
       }
       release();
     },
@@ -445,4 +523,34 @@ function windowBubble(frame: HTMLIFrameElement, rect: CanvasTextSelectionRange['
     top: box.top + rect.y * scale,
     bottom: box.top + (rect.y + rect.h) * scale,
   };
+}
+
+const REFUSAL_KEYS: Readonly<Record<CanvasTextRefusal, MessageKey>> = {
+  'waiting-render': 'preview.text.waitingRender',
+  'selection-reaches': 'preview.text.selectionReaches',
+  unsafe: 'preview.text.unsafe',
+  'page-changed': 'preview.text.pageChanged',
+  'source-blocked': 'preview.text.source.blocked.computed',
+};
+
+const BLOCKED_KEYS: Readonly<Record<BoundTextBlockReason, MessageKey>> = {
+  ambiguous: 'preview.text.source.blocked.ambiguous',
+  call: 'preview.text.source.blocked.call',
+  computed: 'preview.text.source.blocked.computed',
+  concatenation: 'preview.text.source.blocked.concatenation',
+  duplicate: 'preview.text.source.blocked.duplicate',
+  missing: 'preview.text.source.blocked.missing',
+  multiline: 'preview.text.source.blocked.multiline',
+  mutable: 'preview.text.source.blocked.mutable',
+  'not-text': 'preview.text.source.blocked.notText',
+  prop: 'preview.text.source.blocked.prop',
+  runtime: 'preview.text.source.blocked.computed',
+  template: 'preview.text.source.blocked.template',
+  unreadable: 'preview.text.source.blocked.unreadable',
+  unsupported: 'preview.text.source.blocked.unsupported',
+};
+
+// The frame sends the English sentence and a code; the sentence is shown when the frame is older than this editor and sent no code.
+function refusalText(message: { readonly message: string; readonly reason?: CanvasTextRefusal | undefined }, translate: Translator): string {
+  return message.reason === undefined ? message.message : translate(REFUSAL_KEYS[message.reason]);
 }

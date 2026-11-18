@@ -6,7 +6,7 @@ import type { PseudoKind, PseudoNodeIds, StructureTreeContext } from './Structur
 import type { ContextPosition } from './StructureContextMenu';
 import { ElementContextMenu } from './ElementContextMenu';
 import type { WrapperTag } from '../../editor/wrapRules';
-import { CollapseVerticalIcon, CodeIcon, DragIcon, ExpandVerticalIcon } from '../../ui/Icons';
+import { CollapseVerticalIcon, CodeIcon, ExpandVerticalIcon } from '../../ui/Icons';
 import { hidesChildRows } from '../../editor/treeSelection';
 import { navigatorArrowTarget } from './navigatorArrows';
 import {
@@ -23,8 +23,13 @@ import CodeEditor from '../../ui/CodeEditor';
 import { NodeList } from './StructureTree';
 import { clearDrag } from '../../editor/dragState';
 import { parseNavigatorDrop } from './navigatorDrop';
+import { dropPlacement, type DropPlacement } from './dropPlacement';
+import { documentOfPath, type PlacementEnvironment, type PlacementInsertable } from '../../editor/placementCheck';
+import { getDrag } from '../../editor/dragState';
+import type { PlacementMessage } from '../../../shared/page/placement';
 import { type LiveValue } from '../../ui/liveValue';
 import { assert } from '../../../shared/core/assert';
+import { useTranslate, useTranslateRich } from '../../lib/i18n/useTranslate';
 
 interface StructurePanelProps {
   readonly clientMode?: boolean;
@@ -36,9 +41,12 @@ interface StructurePanelProps {
         readonly kind: string;
         readonly route?: string;
         readonly from?: string;
+        readonly path?: string;
       }
     | undefined;
   readonly layouts: readonly unknown[];
+  /** The project's components, for the placement rule: a component is judged by the tag it renders. */
+  readonly insertables?: readonly PlacementInsertable[];
   readonly currentLayoutName: string;
   readonly selectedId: string | undefined;
   readonly emptyNodeIds?: ReadonlySet<string>;
@@ -75,12 +83,13 @@ interface StructurePanelProps {
 }
 
 export default function StructurePanel(props: StructurePanelProps) {
+  const translate = useTranslate();
   if (!props.pageState) {
     return <MissingPage currentPage={props.currentPage} />;
   }
   const projection = structureProjection(props.pageState);
   if (props.clientMode && projection.tag === 'parse-error') {
-    return <ErrorToast message="This page needs a Developer to fix its source before editing." />;
+    return <ErrorToast message={translate('structure.error.needsDeveloper')} />;
   }
   switch (projection.tag) {
     case 'valid':
@@ -95,21 +104,21 @@ export default function StructurePanel(props: StructurePanelProps) {
 }
 
 function MissingPage({ currentPage }: Pick<StructurePanelProps, 'currentPage'>) {
+  const translate = useTranslate();
+  const translateRich = useTranslateRich();
   const injected = currentPage?.kind === 'route';
   return (
     <div className="panel-section grow">
       <div className="panel-header">
-        <h2>Navigator</h2>
+        <h2>{translate('rail.navigator')}</h2>
       </div>
       <div className="props-empty">
-        {injected ? (
-          <>
-            <strong>{currentPage.route}</strong> comes from {currentPage.from ? <code>{currentPage.from}</code> : 'an integration'}, not from this project — it
-            can be previewed here, but its markup lives in a dependency and isn’t editable.
-          </>
-        ) : (
-          'Select a page to edit.'
-        )}
+        {injected
+          ? translateRich('structure.missing.injected', {
+              route: <strong>{currentPage.route}</strong>,
+              from: currentPage.from ? <code>{currentPage.from}</code> : translate('structure.missing.integration'),
+            })
+          : translate('structure.missing.select')}
       </div>
     </div>
   );
@@ -123,16 +132,23 @@ function ParseErrorPage({
 }: Pick<StructurePanelProps, 'devLog' | 'onCodeChange' | 'onOpenCodePanel'> & {
   readonly projection: Extract<StructureProjection, { readonly tag: 'parse-error' }>;
 }) {
+  const translate = useTranslate();
   const [diagnostic] = projection.diagnostics;
   return (
     <div className="panel-section grow">
       <div className="panel-header">
-        <h2>Code</h2>
+        <h2>{translate('rail.code')}</h2>
       </div>
       <div className="code-editor">
         <ErrorToast
-          message={diagnostic ? `${diagnostic.message}${diagnostic.near ? ` Near ${diagnostic.near}` : ''}` : 'This page contains a syntax error.'}
-          recovery={[{ label: 'Open code panel', run: onOpenCodePanel }]}
+          message={
+            diagnostic
+              ? diagnostic.near
+                ? translate('structure.error.syntaxNear', { message: diagnostic.message, near: diagnostic.near })
+                : diagnostic.message
+              : translate('structure.error.syntax')
+          }
+          recovery={[{ label: translate('structure.error.openCode'), run: onOpenCodePanel }]}
         />
         <div className="code-panel-editor">
           <CodeEditor language="astro" value={projection.state.source} onChange={onCodeChange} />
@@ -150,7 +166,7 @@ function EditableStructurePanel(props: EditableProps) {
   const state = useTreeState(props);
   const treeContext = treeContextOf(props, state);
   return (
-    <div className="panel-section grow">
+    <div className="panel-section grow navigator">
       <NavigatorHeader state={state} nodes={props.pageState.model.nodes} />
       <NavigatorBody props={props} state={state} treeContext={treeContext} />
       {state.contextMenu && (
@@ -160,7 +176,15 @@ function EditableStructurePanel(props: EditableProps) {
   );
 }
 
+/** What the Navigator says about the drop in flight (the placement rule): why a place refuses, where it lands instead, or a caution. */
+interface DropNote {
+  readonly tone: 'refused' | 'snapped' | 'warning';
+  readonly reason: PlacementMessage;
+}
+
 interface TreeState {
+  readonly dropNote: DropNote | undefined;
+  readonly setDropNote: React.Dispatch<React.SetStateAction<DropNote | undefined>>;
   readonly dropTarget: DropTarget | undefined;
   readonly setDropTarget: React.Dispatch<React.SetStateAction<DropTarget | undefined>>;
   readonly toggled: ReadonlyMap<string, boolean>;
@@ -177,6 +201,7 @@ interface TreeState {
 
 function useTreeState(props: EditableProps): TreeState {
   const [dropTarget, setDropTarget] = useState<DropTarget | undefined>(undefined);
+  const [dropNote, setDropNote] = useState<DropNote | undefined>(undefined);
   // The first frame already has the selected row's ancestors open: opening them in
   // an effect drew the tree folded for a frame, then pushed every row below the
   // selection down, on each open of the Navigator.
@@ -190,11 +215,14 @@ function useTreeState(props: EditableProps): TreeState {
   useTreeDragCleanup(() => {
     clearDrag();
     setDropTarget(undefined);
+    setDropNote(undefined);
   });
   useArrowNavigation(props, toggled, setToggled);
   useSelectionExpansion(props, setToggled);
   useRevealRow(bodyRef, props.revealTick ?? 0, props.selectedId, props.selectedPseudo);
   return {
+    dropNote,
+    setDropNote,
     dropTarget,
     setDropTarget,
     toggled,
@@ -401,6 +429,8 @@ function treeContextOf(props: EditableProps, state: TreeState): StructureTreeCon
     isCollapsed,
     isDndPayload,
     performDrop: (event, target) => dropOnTree(event, target, props, state),
+    placementFor: (location) => dropPlacement(props.pageState.model.nodes, getDrag(), location, placementEnvironment(props)),
+    noteDrop: (placement) => state.setDropNote((previous) => noteOf(placement, previous)),
     nodeById: (id) => findNavigatorNode(props.pageState.model.nodes, id) ?? undefined,
     onSelect: (id) => {
       if (canEditNode(props, id)) {
@@ -439,15 +469,24 @@ function dropOnTree(event: React.DragEvent<HTMLElement>, target: DropLocation, p
   if (drop === undefined) {
     return;
   }
+  // The rule is asked again at the drop, not trusted from the last dragover: a refused place writes nothing,
+  // and one with a valid neighbour lands there, as the indicator showed.
+  const drag = drop.kind === 'component' ? ({ kind: 'component', name: drop.name } as const) : ({ kind: 'node', id: drop.id, nodeKind: 'node' } as const);
+  const placement = dropPlacement(props.pageState.model.nodes, drag, target, placementEnvironment(props));
+  state.setDropNote(undefined);
+  if (placement.kind === 'refused') {
+    return;
+  }
+  const landing = placement.kind === 'snap' ? placement.to : target;
   switch (drop.kind) {
     case 'component':
-      props.onDropComponent(drop.path ?? drop.name, target);
+      props.onDropComponent(drop.path ?? drop.name, landing);
       return;
     case 'node':
       if (drop.id === props.editRootId || !canEditNode(props, drop.id)) {
         return;
       }
-      props.onMoveNode(drop.id, target);
+      props.onMoveNode(drop.id, landing);
       return;
     default: {
       const exhaustive: never = drop;
@@ -456,7 +495,48 @@ function dropOnTree(event: React.DragEvent<HTMLElement>, target: DropLocation, p
   }
 }
 
+function placementEnvironment(props: EditableProps): PlacementEnvironment {
+  return { insertables: props.insertables, document: documentOfPath(props.currentPage?.path) };
+}
+
+// The note a place's placement leaves; the same note again is the same state, so a drag over one row does not re-render the tree on every move.
+function noteOf(placement: DropPlacement, previous: DropNote | undefined): DropNote | undefined {
+  let next: DropNote | undefined = undefined;
+  switch (placement.kind) {
+    case 'refused':
+      next = { tone: 'refused', reason: placement.reason };
+      break;
+    case 'snap':
+      next = { tone: 'snapped', reason: placement.reason };
+      break;
+    case 'valid':
+      next = placement.warning === undefined ? undefined : { tone: 'warning', reason: placement.warning };
+      break;
+    case 'open':
+      break;
+    default: {
+      const exhaustive: never = placement;
+      return exhaustive;
+    }
+  }
+  return previous?.tone === next?.tone && previous?.reason.reason === next?.reason.reason ? previous : next;
+}
+
+function DropNoteChip({ note }: { readonly note: DropNote | undefined }) {
+  const translate = useTranslate();
+  if (note === undefined) {
+    return undefined;
+  }
+  const reason = translate(note.reason.messageKey, note.reason.params);
+  return (
+    <div className="navigator-drop-note" role="status" data-tone={note.tone}>
+      {note.tone === 'snapped' ? translate('structure.placement.snapped', { reason }) : reason}
+    </div>
+  );
+}
+
 function NavigatorHeader({ state, nodes }: { readonly state: TreeState; readonly nodes: readonly NavigatorNode[] }) {
+  const translate = useTranslate();
   const toggleAll = (): void => {
     state.setToggled(collapseMap(nodes, { collapsed: state.allExpanded }));
     state.setAllExpanded((expanded) => !expanded);
@@ -464,10 +544,10 @@ function NavigatorHeader({ state, nodes }: { readonly state: TreeState; readonly
   return (
     <>
       <div className="panel-header">
-        <h2>Navigator</h2>
+        <h2>{translate('rail.navigator')}</h2>
         <button
           className="ghost"
-          aria-label={state.allExpanded ? 'Collapse all' : 'Expand all'}
+          aria-label={state.allExpanded ? translate('structure.collapseAll') : translate('structure.expandAll')}
           onMouseEnter={state.showTooltip}
           onMouseLeave={state.hideTooltip}
           onClick={() => {
@@ -480,7 +560,7 @@ function NavigatorHeader({ state, nodes }: { readonly state: TreeState; readonly
       </div>
       {state.tooltip && (
         <div className="rail-tooltip below" style={state.tooltip}>
-          {state.allExpanded ? 'Collapse all' : 'Expand all'}
+          {state.allExpanded ? translate('structure.collapseAll') : translate('structure.expandAll')}
         </div>
       )}
     </>
@@ -497,10 +577,15 @@ function NavigatorBody({
   readonly treeContext: StructureTreeContext;
 }) {
   const nodes = props.pageState.model.nodes;
+  // Drop gaps overlap the row edges instead of taking room between rows, so
+  // they catch the pointer only while a drag is over the navigator. Otherwise
+  // a click on a row's edge would land on a gap and select nothing.
+  const [bodyDrag, setBodyDrag] = useState<BodyDrag>('idle');
   return (
     <div
-      className="panel-body"
+      className={bodyDrag === 'dragging' ? 'panel-body is-drag-over' : 'panel-body'}
       ref={state.bodyRef}
+      onDragEnter={() => setBodyDrag('dragging')}
       onDragOver={() => state.setDropTarget(undefined)}
       onDragLeave={(event) => {
         if (event.relatedTarget instanceof Node) {
@@ -508,17 +593,28 @@ function NavigatorBody({
             return;
           }
         }
+        setBodyDrag('idle');
         state.setDropTarget(undefined);
       }}
+      onDropCapture={() => setBodyDrag('idle')}
+      onDragEnd={() => setBodyDrag('idle')}
     >
-      {!props.clientMode && !props.editRootId && <FrontmatterRow props={props} />}
-      <NodeList nodes={nodes} parentId={undefined} depth={0} {...treeContext} />
+      {/* One box as wide as the widest row: every row, and the tinted block under a selected one, fill it, so a
+          selected row and its subtree share both edges however long a label runs (styles.css, .structure-tree). */}
+      <div className="structure-tree">
+        {!props.clientMode && !props.editRootId && <FrontmatterRow props={props} />}
+        <NodeList nodes={nodes} parentId={undefined} depth={0} {...treeContext} />
+      </div>
       {!props.clientMode && nodes.length === 0 && <EmptyDropTarget props={props} state={state} />}
+      <DropNoteChip note={state.dropNote} />
     </div>
   );
 }
 
+type BodyDrag = 'idle' | 'dragging';
+
 function FrontmatterRow({ props }: { readonly props: EditableProps }) {
+  const translate = useTranslate();
   const importCount = props.pageState.model.imports.length;
   const selectedClass = props.selectedId === 'frontmatter' ? 'selected' : '';
   return (
@@ -528,21 +624,17 @@ function FrontmatterRow({ props }: { readonly props: EditableProps }) {
       onClick={() => props.onSelect('frontmatter')}
       onDoubleClick={() => props.onOpenCode?.('frontmatter')}
     >
-      <span className="drag-handle" style={{ visibility: 'hidden' }}>
-        <DragIcon size={11} />
-      </span>
       <span className="icon">
         <CodeIcon size={12} />
       </span>
-      <span className="label">Frontmatter</span>
-      <span className="prop-preview">
-        {importCount} import{importCount === 1 ? '' : 's'}
-      </span>
+      <span className="label">{translate('structure.frontmatter')}</span>
+      <span className="prop-preview">{translate('structure.imports', { count: importCount })}</span>
     </div>
   );
 }
 
 function EmptyDropTarget({ props, state }: { readonly props: EditableProps; readonly state: TreeState }) {
+  const translate = useTranslate();
   const location = { parentId: undefined, index: 0 };
   const active = state.dropTarget?.kind === 'gap' && state.dropTarget.parentId === undefined && state.dropTarget.index === 0;
   return (
@@ -555,7 +647,7 @@ function EmptyDropTarget({ props, state }: { readonly props: EditableProps; read
         drop: (event) => dropOnTree(event, location, props, state),
       }}
     >
-      Drag components here
+      {translate('structure.dragHere')}
     </TreeDragRow>
   );
 }

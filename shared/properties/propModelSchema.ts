@@ -7,8 +7,9 @@
 // optional keys (`deprecated`, `usage`), never as renamed ones.
 
 import { assert } from '../core/assert';
-import type { CodeKind, PropDefault, PropShapeField, PropUnion } from './propSchema';
-import type { ComponentPropModel, PropControl, PropModel, PropUsage } from './propModel';
+import { LIMITS } from '../core/limits';
+import type { CodeKind, PropDefault, PropItemKind, PropShapeField, PropUnion } from './propSchema';
+import type { ComponentPropModel, PropControl, PropMember, PropModel, PropUsage } from './propModel';
 
 /** The schema's own word for each kind of value a field takes. */
 export type SchemaFieldType = 'enum' | 'attrs' | 'code' | 'string' | 'number' | 'boolean' | 'other';
@@ -34,6 +35,7 @@ export interface ModelSchemaField {
   readonly maxExclusive?: boolean;
   readonly shape?: readonly PropShapeField[];
   readonly shapeIsList?: boolean;
+  readonly itemKind?: PropItemKind;
   readonly unions?: readonly PropUnion[] | undefined;
   // The `@deprecated` text ('' for the bare tag); absent when the prop is not deprecated.
   readonly deprecated?: string;
@@ -131,10 +133,13 @@ function schemaFieldOf(prop: PropModel, unions: readonly PropUnion[]): ModelSche
 
 function declaredField(prop: PropModel, type: SchemaFieldType, codeKind: CodeKind | undefined, unions: readonly PropUnion[]): ModelSchemaField {
   const control = prop.control;
-  const choice = control.kind === 'choice' ? control : undefined;
+  // A list of plain values states its items' kind; a list of choices lists the words.
+  const items = control.kind === 'list' ? control.item : undefined;
+  const choice = control.kind === 'choice' ? control : items?.kind === 'choice' ? items : undefined;
+  const itemKind = items === undefined ? undefined : itemKindOf(items);
   const written =
     choice === undefined || choice.numeric ? [] : choice.options.filter((option) => option.written === 'expression').map((option) => option.value);
-  const shape = shapeOf(control);
+  const shape = shapeOf(control, 1);
   // A value only code can give carries its type, so the panel can say what it
   // takes — when the type says so; a kind read from a default has no type to show.
   const typed = prop.recognition.source === 'type' && codeKind !== undefined;
@@ -147,14 +152,39 @@ function declaredField(prop: PropModel, type: SchemaFieldType, codeKind: CodeKin
     ...(codeKind === undefined ? {} : typed ? { codeKind, typeText: shownTypeText(prop.typeText) } : { codeKind }),
     optional: prop.presence === 'optional',
     ...(shape === undefined ? {} : { shape: shape.fields, shapeIsList: shape.list }),
+    ...(itemKind === undefined ? {} : { itemKind }),
     default: undefined,
     doc: prop.documentation === '' ? undefined : prop.documentation,
-    ...(control.kind === 'number' ? numberKeys(control) : {}),
+    ...(control.kind === 'number' ? numberKeys(control) : items?.kind === 'number' ? numberKeys(items) : {}),
     // The union shapes this component declares, so the panel can show only the
     // branch that matches what's set. The same table on every field: it
     // describes the type, not the prop.
     unions: unions.length > 0 ? unions : undefined,
   };
+}
+
+// The kind of a list's items when they are plain values, as the editor names it.
+function itemKindOf(item: PropControl): PropItemKind | undefined {
+  switch (item.kind) {
+    case 'text':
+      return 'text';
+    case 'number':
+      return 'number';
+    case 'switch':
+      return 'switch';
+    case 'choice':
+      return 'choice';
+    case 'attributes':
+    case 'list':
+    case 'group':
+    case 'callback':
+    case 'code':
+      return undefined;
+    default: {
+      const exhaustive: never = item;
+      return exhaustive;
+    }
+  }
 }
 
 function undeclaredField(prop: PropModel, type: SchemaFieldType, codeKind: CodeKind | undefined): ModelSchemaField {
@@ -175,11 +205,32 @@ function numberKeys(control: Extract<PropControl, { kind: 'number' }>): Pick<Mod
 
 // What one of these is made of, when the type says: the fields of an object,
 // or of each item of a list of objects (`list` tells `ServiceTime[]`, which a
-// loop over it hands one of, from a plain object).
-function shapeOf(control: PropControl): { readonly fields: readonly PropShapeField[]; readonly list: boolean } | undefined {
+// loop over it hands one of, from a plain object). A field that is itself an
+// object or a list of them carries its own shape, down to the depth a List
+// property's item fields nest (LIMITS.listFieldDepthMax).
+function shapeOf(control: PropControl, depth: number): { readonly fields: readonly PropShapeField[]; readonly list: boolean } | undefined {
+  assert(depth <= LIMITS.listFieldDepthMax, 'shapeOf: the shape nests within its bound');
   const group = control.kind === 'group' ? control : control.kind === 'list' && control.item.kind === 'group' ? control.item : undefined;
   if (group === undefined || group.fields.length === 0) {
     return undefined;
   }
-  return { fields: group.fields.map((field) => ({ name: field.name, type: schemaTypeOf(field.control).type })), list: control.kind === 'list' };
+  return { fields: group.fields.map((field) => shapeFieldOf(field, depth)), list: control.kind === 'list' };
+}
+
+// One member of a shape: its type, and what the type cannot say on its own.
+function shapeFieldOf(field: PropMember, depth: number): PropShapeField {
+  const control = field.control;
+  const nested = depth < LIMITS.listFieldDepthMax ? shapeOf(control, depth + 1) : undefined;
+  // Options written as expressions (`flag={true}`) are not words an Option field can hold.
+  const options =
+    control.kind === 'choice' && !control.numeric && control.options.every((option) => option.written === 'string')
+      ? control.options.map((option) => option.value)
+      : undefined;
+  return {
+    name: field.name,
+    type: schemaTypeOf(control).type,
+    ...(control.kind === 'text' && control.format !== undefined ? { format: control.format } : {}),
+    ...(options === undefined ? {} : { options }),
+    ...(nested === undefined ? {} : { shape: nested.fields, shapeIsList: nested.list }),
+  };
 }

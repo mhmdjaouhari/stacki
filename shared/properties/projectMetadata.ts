@@ -11,9 +11,14 @@ import { PROJECT_FOLDERS_FILE, parseProjectFolders } from './projectFolders';
 import { ROLES_FILE, parseProjectRolesSource } from './projectRoles';
 import { INSTRUCTIONS_FILE, parseInstructionSettings } from './instructions';
 import { AUDIT_IGNORES_FILE, parseAuditIgnores } from './auditIgnores';
+import { BREAKPOINTS_FILE, parseBreakpointsSource } from './projectBreakpoints';
+import { BREAKPOINT_SYNC_FILE, parseBreakpointSyncSource } from './breakpointSyncRecord';
+import { VARIABLE_VISIBILITY_FILE, parseVariableVisibilitySource } from './variableVisibility';
 
 export const METADATA_FILES = {
   audits: AUDIT_IGNORES_FILE,
+  breakpoints: BREAKPOINTS_FILE,
+  breakpointSync: BREAKPOINT_SYNC_FILE,
   componentSources: COMPONENT_SOURCE_FILE,
   components: '.stacki/components.json',
   folders: PROJECT_FOLDERS_FILE,
@@ -23,6 +28,7 @@ export const METADATA_FILES = {
   publish: '.stacki/publish.json',
   roles: ROLES_FILE,
   styles: '.stacki/styles.json',
+  variables: VARIABLE_VISIBILITY_FILE,
 } as const;
 export type MetadataKind = keyof typeof METADATA_FILES;
 export interface MetadataFile {
@@ -41,7 +47,10 @@ export function metadataKind(input: unknown): MetadataKind {
     input === 'folders' ||
     input === 'roles' ||
     input === 'instructions' ||
-    input === 'audits'
+    input === 'audits' ||
+    input === 'breakpoints' ||
+    input === 'breakpointSync' ||
+    input === 'variables'
   ) {
     return input;
   }
@@ -76,6 +85,29 @@ export function validateMetadata(kind: MetadataKind, source: string): void {
   }
   if (kind === 'roles') {
     parseProjectRolesSource(source);
+    return;
+  }
+  if (kind === 'breakpoints') {
+    // A write of a file the parser refuses never reaches disk: the failure is thrown to the transport like the others.
+    const parsed = parseBreakpointsSource(source);
+    if (!parsed.ok) {
+      throw new Error(parsed.error.message);
+    }
+    return;
+  }
+  if (kind === 'breakpointSync') {
+    const parsed = parseBreakpointSyncSource(source);
+    if (!parsed.ok) {
+      throw new Error(parsed.error.message);
+    }
+    return;
+  }
+  if (kind === 'variables') {
+    // Writes of a file the parser refuses never reach disk: a failure is thrown to the transport like the others.
+    const parsed = parseVariableVisibilitySource(source);
+    if (!parsed.ok) {
+      throw new Error(parsed.error.message);
+    }
     return;
   }
   const input: unknown = JSON.parse(source);

@@ -14,9 +14,12 @@ import { type PropsPanelProps } from '../../../vendor/stacki/src/features/props/
 import { applyEdits, contentEdit, flatten, parsePage, type ParserNode } from '../source/source';
 import type { Project, Component } from '../project/projectClient';
 import { projectPages } from '../project/pageLabels';
+import { linkEntryLoader } from './linkEntryLoader';
 import type { SharedDocument } from '../collaboration/useDocument';
 import { assetProp, frontmatterEdit, inlineContentEdit, nodeTextEdit } from './settingsEdits';
 import { renameAttribute, takesAttributes, writeAttributes } from './attributeEdit';
+import { DescribedError } from '../../../vendor/stacki/shared/properties/describedError';
+import { described } from '../../../vendor/stacki/shared/properties/i18n/messageRef';
 import { loopSourceEdit } from './loopSourceEdit';
 import { commentEdits, commentFieldValue } from './commentEdit';
 import { useStructureSettings } from './useStructureSettings';
@@ -40,6 +43,7 @@ export function Settings(props: Props) {
   // On a component's own file, the binding picker can connect to its props and make new ones (Desktop's newPropHostOf).
   const scope = useBindContext(document.file, source, nodes, selected);
   const page = useMemo(() => loopPage(source), [source]);
+  const loadEntries = useMemo(() => linkEntryLoader(project), [project]);
   // What a pick writes before it binds (a collection's query, a data file's
   // import) is held for the field's own change and applied first in it, so
   // the page changes once: one undo step, as Desktop's holdForNextEdit.
@@ -86,6 +90,7 @@ export function Settings(props: Props) {
         frontmatterSource={/^---\r?\n([\s\S]*?)\r?\n---/.exec(source)?.[1] ?? ''}
         linkContext={{
           pages: projectPages(project),
+          loadEntries,
           sectionIds: flatten(nodes).flatMap((node) => (node.props?.['id']?.type === 'string' ? [node.props['id'].value] : [])),
           projectPath: 'studio',
         }}
@@ -169,7 +174,7 @@ function settingsHandlers(
     onSetText: (value, renames) =>
       change((source) => {
         if (renames?.some((rename) => rename.from !== rename.to)) {
-          throw new Error('Rename loop bindings and their references together in Code.');
+          throw new DescribedError(described('settings.element.renameLoop'));
         }
         return applyEdits(source, [nodeTextEdit(source, id, value)]);
       }),
@@ -184,7 +189,7 @@ function settingsHandlers(
 function loopSourceHandler(props: Props, change: (edit: (source: string) => string) => void): NonNullable<PropsPanelProps['onSetLoopSource']> {
   return (target, sanityClient, declaration) => {
     if (declaration !== undefined) {
-      return { ok: false, message: 'Add the List property in Code, then choose it here.' };
+      return { ok: false, ...described('settings.element.loopAddProp') };
     }
     const source = props.document.text.toString();
     const edited = (() => {
@@ -196,7 +201,7 @@ function loopSourceHandler(props: Props, change: (edit: (source: string) => stri
       }
     })();
     if (edited === undefined) {
-      return { ok: false, message: 'This loop could not be changed. Edit it in Code.' };
+      return { ok: false, ...described('settings.element.loopFailed') };
     }
     // A refused plan leaves the page as it was: nothing goes to the shared document.
     if (edited.source !== source) {

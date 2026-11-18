@@ -458,6 +458,20 @@ token, and `component:revertProperties` applies that batch's inverse — every
 file checked against the bytes the batch left — and answers with the redo
 token. Main keeps the batches; the renderer holds tokens only.
 
+Deleting a prop is asked first: `component:previewPropertyRemoval` (`{ projectPath, file, name }`)
+plans the deletion from disk, writes nothing, and answers with a
+`PropertyRemovalPreview` (`shared/properties/propertyRemoval.ts`): the instance
+values it would remove per file, and the lines left for review. The deletion is
+the `{ kind: 'remove' }` batch on `component:editProperties`, planned again
+(docs/component-properties.md, "Deleting a prop").
+
+A component's variant rules travel on the same channels: `component:properties`
+answers with `variantGroups` (`shared/properties/variantRules.ts`, parsed by
+`parseVariantGroups`), and a `{ kind: 'variantRules', edit }` property change
+carries one `VariantRuleEdit`, parsed by `parseVariantRuleEdit` and applied by
+main against the current source as one undoable batch
+(docs/props-variant-rules.md).
+
 The renderer's half (`src/editor/pageEdits.ts`, `src/editor/editGestures.ts`) and the gesture
 parity suite (`test/renderer/editor/gestureParity.test.js`) are described in the tracker,
 Step 6.
@@ -563,7 +577,22 @@ the value cache's selection and history invalidation and never becomes editable 
   `canonicalManifest`. The frame announces `avb:render` `{ token, stamps }`;
   `avb:hover-node`, `avb:click-node` and `avb:open-node` carry `token` (null
   until the digest is known). `parsePreviewRender` and `parseStampData` reject
-  forged shapes: page code can write any comment.
+  forged shapes: page code can write any comment. The frame reads stamps with
+  `parseStampData` too, so a forged one is skipped rather than dropping the
+  rendering. A rendering it cannot name posts `avb:render-problem` `{ problem }`
+  (`FRAME_RENDER_PROBLEMS`, parsed by `parseFrameRenderProblem`), and the frame
+  re-reads markers and stamps after `avb:morphed` and Astro's `astro:after-swap`.
+- `avb:click-query` `{ id, x, y }` (editor → frame; id a safe integer 1–2³¹,
+  coordinates finite within 10⁶ px) asks where a point lands now. The frame
+  answers with `avb:click-node` carrying `replay: id` and the current token,
+  never dispatching anything to the page (docs/canvas-click.md).
+- `avb:click-node`, `avb:open-node` and `avb:context-node` carry `pressedAtMs`, the input
+  event's own time on the clock both windows share (`performance.timeOrigin + event.timeStamp`).
+  A popover (`popupDismiss.ts` `isCanvasPressMessage`, `useDismiss`, the variable picker's
+  `pickerExit`) closes on a canvas press only when it was made after the popover opened and is
+  not a `replay`: a freshly reloaded page posts its click late, and the click ladder's replay is
+  the same press answered again, so either used to close what the person had opened since (soak
+  SP-04). A press without `pressedAtMs` (Studio's preview client) is taken at its word.
 - `preview:check` `{ projectPath, render }` → `PreviewVerdict`: main re-derives
   the token from the manifest, then reads every stamped file from disk
   (`electron/preview/previewCheck.ts`; a path outside the project is `missing`, a file
@@ -573,7 +602,10 @@ the value cache's selection and history invalidation and never becomes editable 
   the event's token is the frame's latest, the open file's stamp is the bytes
   the editor shows (the clean checksum, or the origin while unsaved edits keep
   every path), and main answers `current` — judged again after main answers. A
-  refusal is a notice; nothing is selected. Hover needs the latest token only.
+  refused click climbs the recovery ladder (`canvasClickRecovery.ts`,
+  `canvasClickRetry.ts`: look again, reload once, select the page, then one
+  notice); nothing is ever selected from a refused rendering. Hover needs the
+  latest token only, or no rendering vouched for at all.
   During a local render backlog, ordinary clicks may resolve through one of the
   last eight saved origins of the open file (`previewSelection.ts`). The old
   path names a stable node handle, which is resolved again in the current model;
@@ -629,6 +661,49 @@ filesystem is reachable). The step-5 parallel run against the pre-step-5
 build (`test/legacy-parity.bench.js`) was retired at step 10 with the
 `page:write` channel it drove; its results are in the tracker, Step 5.
 
+## Scan warnings (`shared/properties/projectScan.ts`)
+
+A project that is odd must still open. `project:scan` never throws for a project's contents: each
+step of the scan (config, folders, pages, components, instance counts, titles) runs guarded, and a
+step that fails is replaced by an empty result plus a warning. `ScanResult.warnings` lists what the
+scan could not read or had to assume; `parseScanResult` refuses a warning with an unknown code, an
+empty message, or a file that is not project-relative. A warning never blocks anything: the UI
+shows it (the notice is the UI's work, not the scan's) and everything else stays usable.
+
+| Code | `file` | `detail` | Meaning |
+|---|---|---|---|
+| `dependencies-missing` | none | the package manager | Astro is not installed in the project or any parent folder (`hasDependencies`); the preview cannot start until the manager installs. |
+| `folder-unreadable` | the folder | system error code | A folder could not be listed (`EACCES`, `ENOTDIR`); what it holds is missing from the lists. A folder that is simply absent is not a warning. |
+| `link-broken` | the link | error code | A symbolic link points at nothing; it is skipped. |
+| `link-cycle` | the link | none | A link leads back into a folder already listed; it is skipped, which is what ends the walk. |
+| `config-unreadable` | the config | error code | The astro.config exists but cannot be read; Astro's default folders are assumed. |
+| `config-computed` | the config | `srcDir`, `publicDir`, `outDir`, `root` or `cacheDir` | The config builds that setting in code (an environment read, a variable, a spread that may override it, a config that is itself a call); Astro's default is assumed. |
+| `config-folder-custom` | the config | `srcDir=<folder>` | A literal `srcDir` other than `src`: pages are read from `<folder>/pages`. |
+| `scan-step-failed` | none | the step | One step threw; the others' results are still here. |
+
+`ScanResult.packageManager` is `package.json`'s `packageManager` field, else the lockfile
+(`pnpm-lock.yaml`, `pnpm-workspace.yaml`, `yarn.lock`, `bun.lock`, `bun.lockb`, `package-lock.json`),
+else npm, asked of the project folder and then each parent, nearest first, because a workspace
+package keeps neither in its own folder (`detectPackageManager`).
+
+How the scan reads the disk:
+
+- Every folder walk is `walkFolderSliced` (`electron/project/projectWalk.ts`): iterative, links are
+  followed, each real folder is opened once (a set of real paths ends any cycle, so the bound is the
+  tree's own size and no cap applies), unreadable folders and broken links are returned as data.
+  `node_modules` and `.stacki` are not walked.
+- A page is a `.astro` file, or a `.md` / `.mdx` file, under the pages folder. A file or folder whose
+  name starts with `_` is not a route (Astro's rule) and is not listed; endpoints (`.ts`, `.js`),
+  images, styles and text files under `src/pages` are not pages. Markdown counts as a page only
+  inside the pages folder, whatever the project's own path is called.
+- `astro.config.*` is read as text by `shared/properties/astroConfigText.ts`: it finds the exported
+  object (`export default {…}`, `defineConfig({…})`, an arrow or function returning one,
+  `module.exports =`, a named `const`), walks only its top-level keys, and reports each as a literal,
+  computed or unset. Comments, nested blocks (`vite: { … }`), strings and regular expressions that look like
+  settings are never mistaken for them.
+- A save never replaces a read-only file: `replaceFileAtomic` answers a `filesystem` failure naming
+  the file (renaming over it would succeed and quietly override the protection).
+
 ## Other shared contracts
 
 - `brand.ts` constructs `NodeId`, `FilePath`, `ProjectPath`, `Digest`,
@@ -642,9 +717,17 @@ build (`test/legacy-parity.bench.js`) was retired at step 10 with the
   and the baked demo agree. `parseLengthUnit` checks the setting at the scan boundary.
 - `propSchema.ts` validates component field schemas and their nested options, including the
   optional `deprecated` notice and `usage` the prop model adds.
+  A field may carry a `computedDefault`: the code of a default the component computes from
+  other props (`label ?? named[variant]`, a destructure default reading another prop), the
+  prop each destructured local holds and the lookup tables the code reaches, each entry as
+  code (`electron/properties/computedDefaults.ts`). The instance panel weighs it for one
+  instance's values (`src/features/props/propRules.ts`); code it cannot read shows nothing.
 - `propModel.ts` is the one description of a component's props (docs/plans/prop-controls.md §2):
   `parsePropModel` checks every control kind, fallback and union table, and the nesting
-  (`propNestingDepthMax`) and variant (`propVariantsMax`) bounds kept beside it. The main process
+  (`propNestingDepthMax`, twice `LIMITS.listFieldDepthMax`) and variant (`propVariantsMax`) bounds kept beside it.
+  A `text` control may carry the `@format` word of its member (`color`, `date`, `longtext`), and a schema
+  `PropShapeField` carries that `format`, an enum's `options`, and the `shape`/`shapeIsList` of a nested object
+  or list of objects, nested at most `LIMITS.listFieldDepthMax` levels (`parseField` refuses deeper). The main process
   builds it (`electron/parse/propModel/readPropModel.ts`, on the TypeScript syntax tree) and
   parses its own output; `propModelSchema.ts` projects it onto `PropField`, and the Properties
   panel's list comes from the same model, so the panels cannot disagree. No IPC channel carries
@@ -701,6 +784,19 @@ transport (`project:metadata` / `project:writeMetadata`, `/studio/api/metadata`)
   has installed as its own button below the panels; other ids are kept and ignored. The Roles tab pins
   only apps the role may use. `RoleView.pinnedApps` carries them, so "View as" shows another role's pins;
   admin resolves to the file's admin role (`roleViewOf(roles, 'admin')`) for the same reason.
+- Hidden components: any role, admin included, may hold `componentRules: [{ kind: "component" | "folder",
+  path, effect?: "hide" | "show" }]` (shared/properties/componentAccess.ts), at most 1024 rules, project-relative
+  `/` paths (`src/components/interactive`), `effect` defaulting to `hide` and written only for `show`. It is a
+  deny-list: no rule means visible, so new, moved and renamed components are enabled for every role with no
+  migration. The most specific rule wins (component, then the nearest folder above it); a `show` rule
+  re-enables one component inside a hidden folder. A rule for a path that no longer exists is kept, listed as
+  missing in the Roles tab and ignored. It only stops ADDING: the palette's All and Components results, folder
+  pills and counts, the Components panel, Desktop's `addComponent` and apps' `node.insert`, and Studio's room
+  (`insert` actions, and a text edit that newly imports a hidden component, refused with a typed
+  `component-hidden` Result before any write). Instances already on a page stay, stay editable, show in the
+  Navigator, and may be copied, pasted or duplicated. It never changes `can()`, so a restricted admin keeps
+  Settings. Nothing in the app moves or renames a component yet; `moveComponentRules` is ready for the
+  rename that does, and until then a moved path shows as missing.
 - No file means everyone is admin, exactly as before. Studio gives a signed-in GitHub user the role
   naming them, else `defaultRole` (admin unless set). A local Studio, with no sign-in, is admin.
   Desktop resolves the GitHub account it publishes with (the project's `githubAccount` when signed
@@ -719,6 +815,68 @@ Document edits over the collaboration socket stay UI-gated, as Client mode was.
 "View as" (Settings → Roles on Desktop, the account menu in Studio) lets an admin preview another
 role's UI. It changes only the renderer's active role (`src/lib/currentRole.ts`: `currentRole()` and
 `onRoleChange()`), never the file or what main and the server allow. Studio keeps the choice for the tab in sessionStorage (`studio-role`).
+
+## Settings panel and secrets
+
+The Settings rail button (`projectSettings`, access feature `panel:projectSettings`, admin only until a
+role is granted it; shortcut ⌥S) sits directly above the AI button and opens a panel with a typed tab
+registry (`src/features/projectSettings/settingsTabs.ts`). It is the project's settings, apart from the
+app's own Settings screen (`src/app/settings`). Its Secrets tab edits one of the project's dev env files
+at a time (`SECRETS_FILE_NAMES`: `.env`, `.env.local`, `.env.development`, `.env.development.local`, the
+dev server's load order), picked in a dropdown that opens on `.env`. `.env.production` is not listed.
+
+- `shared/properties/envFile.ts` is the codec. It keeps comments, blank lines, quoting, `export`
+  prefixes, spacing, the byte-order mark and line endings: parse then serialize is byte-identical, and an
+  edit rewrites only the line it touches. Bounds: names 128 characters, values 16 KiB, 512 variables,
+  4000 lines, 256 KiB. Multi-line quoted values are listed but not edited here.
+- Every `secrets:*` message names its `file`, and the parser refuses any name outside `SECRETS_FILE_NAMES`.
+  `secrets:list` returns names only; a row whose name a file loading later sets again carries
+  `overriddenBy` (the last such file, worked out from that file's names alone). `secrets:read` returns one
+  value, for a person who revealed or began editing it. `secrets:apply` applies one change (`add`,
+  `update`, `remove`, `create`) against the revision (digest of the file's bytes) it was authored on; a
+  file that changed since is refused with `changed`. `secrets:ignore` appends the file to `.gitignore`; it
+  refuses `.env.development`, which is usually committed on purpose and gets no Git warning in the tab.
+  A missing file is the ordinary empty list. The MCP tab stores secrets in `.env` only.
+- Writes go through the document actors (atomic, mode kept); a new `.env` is made mode 0600 first.
+  No value appears in a log, an error, a listing or the DOM of a hidden row; failures are fixed text per code.
+- The list reloads when the window regains focus; there is no file watcher for `.env` yet.
+- A running app whose main process or preload predates these channels shows "restart Stacki" rather than a
+  read failure (`SecretsUnavailableError`).
+- Studio does not show the panel: its project files live in a browser store or a repository, where a
+  `.env` would be committed or shared, so Studio's rail does not list it and `panel:projectSettings` has no
+  Studio route.
+
+## Settings panel: MCP servers
+
+The Settings panel's second tab, MCP, lists the servers in the project's `.mcp.json` (Claude Code's project
+file, top-level `mcpServers`) as cards, adds one from a typed provider catalog or from a pasted line, edits and
+removes them, and offers a JSON view of the whole file. It follows the Secrets tab's architecture.
+
+- Wire shapes and parsers: `shared/properties/mcp.ts`. The model, bounds and summaries: `mcpConfig.ts`
+  (`MCP_LIMITS`: 64 servers, names `[A-Za-z0-9_.-]{1,64}`, 64 arguments of 2 KiB, 64 variables or headers, file
+  256 KiB). The `.mcp.json` codec: `mcpJson.ts`. The pasted-command reader: `mcpCommand.ts`. The provider catalog:
+  `mcpProviders.ts` (entries marked `// verify` were not checked against the provider's current documentation).
+- Channels: `mcp:read` (summaries, never a literal variable or header value), `mcp:readText` (the file's text, for
+  the JSON view), `mcp:reveal` (one server's values, for a person who began editing it), `mcp:apply` (`add`, `update`,
+  `remove` against a revision, a digest of the file's bytes), `mcp:saveText` (the whole text from the JSON view, checked
+  again in main), and for Codex `mcp:readCodex`, `mcp:revealCodex` and `mcp:applyCodex`.
+- `.mcp.json` is edited by region: an edit replaces, inserts or deletes only the entry (or the managed fields of the
+  entry: `type`, `command`, `args`, `env`, `url`, `headers`) it names. Indentation, key order, line endings, unknown
+  top-level keys and unknown per-server fields keep their bytes. A repeated key, a comment or a trailing comma is a
+  refusal with a line and column. Writes go through the document actors; a stale revision is `changed`.
+- A pasted line (`claude mcp add ...`, `add-json`, `codex mcp add ...`, a URL, an `npx` line) is parsed as inert text
+  into a typed server and shown as a preview; it is never passed to a shell. Unquoted `;`, `&&`, `|`, `>`, backticks,
+  `$(`, newlines and comments refuse the whole line. The panel always writes the project file, whatever scope was
+  pasted. Literal variable and header values move to `.env` through the Secrets store and `.mcp.json` keeps `${NAME}`.
+- Codex keeps servers in `~/.codex/config.toml`, user-wide. No channel takes a path: main builds that one path from the
+  home folder. A change names a project server by name; main reads it from `.mcp.json`, maps it (`mcpCodex.ts`), and
+  `mcpToml.ts` splices only that `[mcp_servers.<name>]` table (and its `env`, `http_headers`, `env_http_headers`
+  sub-tables), refusing on any doubt about the file. The file is replaced atomically beside itself, keeping its mode,
+  after a digest check; the panel asks first and says the file is outside the project. The Codex CLI's HTTP keys
+  (`url`, `bearer_token_env_var`, `http_headers`, `env_http_headers`) come from its documentation, not from a
+  checked install.
+- A running app that predates the channels shows "restart Stacki" (`McpUnavailableError`), as the Secrets tab does.
+- Studio does not show the panel; `mcp.ts` and `mcpConfig.ts` reach Studio only because the shared IPC types import them.
 
 ## Required gate
 
@@ -784,6 +942,13 @@ A failed disk write applies only to the current session and is shown in the popu
 Disabling usage counts still aborts in-flight counting. Studio setup is available
 in the same popup when a project is open.
 
+## Interface language in the main process
+
+`locale:set` takes `{ preference }` (`"system"` or a shipped locale; anything else is refused) and returns `{ saved }`. The renderer sends its stored
+choice at startup and on every change; main keeps it as `localePreference` in `settings.json` (absent means `"system"`), rebuilds the application
+menu, and translates native dialogs with the same catalogs (`menu`, `dialog`, `error` namespaces). A failed disk write applies for the session only.
+Failure results may carry an optional `messageRef` (`{ key, params? }`, `parseMessageRef`) next to their English `message`; readers that do not know the key show the message.
+
 ## Shared project editor metadata
 
 `.stacki/components.json` (version 1) stores insertion recipes keyed by project-relative
@@ -803,6 +968,75 @@ when the project file is absent, for migration. Changes use a single pending val
 serialized writes; conflicts stop saving until the user reloads the project settings.
 Opening a project without saved guide preferences uses defaults in memory. It does not create
 `.stacki/guide.json`; the first guide edit or migration of a readable legacy record creates it.
+
+`.stacki/breakpoints.json` contains `{ version: 4, desktop: { value, unit }, breakpoints: [...] }`
+(`shared/properties/projectBreakpoints.ts`): Desktop's frame width and an ordered list of `{ id, name?, value, unit }`,
+`unit` `rem` or `px`. Desktop is 90rem (1440px) unless set. It is **never a media query**: its only uses are the width of the
+Desktop frame in the side-by-side (all breakpoints) view and the line that decides on which side of Desktop a breakpoint is. The
+single canvas's Desktop button is still the full available width. A breakpoint has no stored direction: it is DERIVED from its
+number against Desktop's (`directionOf`). Wider than Desktop it is `up`, the query `width >= X` (mobile first), and its canvas is
+exactly X (100rem is 1600px); narrower it is `down`, `width < X`, canvas X less 1px (64rem is 1023px); equal to Desktop is refused.
+The defaults, with no file, are the Lumos 64rem, 48rem and 30rem breakpoints (ids `laptop`, `tablet`, `phone`, names read in the
+person's language until renamed) around a 90rem Desktop. The list is strictly decreasing in pixels with Desktop in it (the wider
+ones, Desktop, the narrower ones), so each card's neighbours, Desktop among them, are its limits, and Desktop may only move between
+the largest narrower breakpoint and the smallest wider one (`desktopBlocker` names the breakpoint in the way); each boundary from
+281px to 7681px (what the canvas can draw), px whole and rem to four decimals; ids (`bp-1`; `desktop` is reserved) and names (1 to
+24 characters) are unique; at most 11 breakpoints; the list may be empty. `canvasWidthPx` is the only resolver; the preview bar
+(wider ones widest first, Desktop, narrower ones, the canvas; shortcuts 1 to 9 follow that order), canvas sizing and the
+all-breakpoints view read widths only through it, and icons are chosen by position (`breakpointIcon.ts`). Versions 1 (whole pixel
+widths), 2 (laptop, tablet, phone as `{ value, unit }`) and 3 (a list with a stored `direction`) are read as version 4 without being
+rewritten: Desktop is 90rem when absent, a stored direction is ignored and recomputed from the number (a file that disagrees with
+itself is read as derived), and no canvas width moves. Unknown keys and every other bad shape are refused by
+`parseBreakpointsSource`, a `Result`; a refused file shows the defaults with a notice and is never overwritten. Reading never
+writes: the file is created by the first edit, and a save equal to the file's bytes, or to the defaults when there is no file, writes
+nothing. Removing a breakpoint never edits project CSS. Desktop and Studio read it through the `breakpoints` metadata kind
+(witnessed, atomic writes; written with `settings:breakpoints`) into one per-project store (`src/ipc/projectBreakpoints.ts`, whose
+state carries `config`, `list`, `resolved` and `desktop`). Stacki writes no media query from these numbers; authored queries keep
+their own unit and Base (`baseWidth.ts`) is read from those.
+
+**Following the canvas in a desktop-first component.** The style panel's Follow canvas size toggle normally checks the query that
+already holds at the canvas width (`followWidth.ts`). When the component is desktop-first, the breakpoint that holds at the canvas
+width is the target even with no rule written for it: Tablet at 700px reads `< 48rem`, never Base (`embed/followBreakpoint.ts`).
+The direction is read from the component's own width queries (mostly `width >= X` is mobile-first, mostly `width < X` is
+desktop-first, the Add query form's `detectConvention`); with no width query or an even split the project's breakpoints decide
+(breakpoints narrower than Desktop are desktop-first, and a project with only wider ones is mobile-first), so a silent guess never
+picks the direction. A mobile-first component keeps Base at the smallest width. Selecting writes nothing: the breakpoint is
+registered like a typed query, and the first style written under it creates `@media (width < 48rem)` after the existing rules, in the
+same file the panel writes Base to, as one edit; later styles go into that block. A held panel (Follow canvas size off) ignores
+the canvas width entirely.
+
+**Where breakpoints are used.** Settings > Breakpoints shows each breakpoint's places before anything is changed: `breakpointSync:usage`
+(`scanBreakpointUsage`) answers, for the breakpoints' CURRENT saved values, the places per file (one pass for all, files cached
+by time and size, re-run when the tab opens, a value is saved, the window returns or a sync is applied). A card says
+`Used in N places · M files`, and its chevron opens the same file rows as the sync dialog, with a box per file and per place; while
+a different valid value is typed it says what that change will touch. Each tick is one write to `.stacki/breakpoint-sync.json`
+through the metadata transport (`recordWithChoices`): an exact place is remembered only when unchecked (`excluded`, "Not synced"),
+an inclusive or exclusive one only when checked (`linked`), and a scan itself writes nothing. The dialog after a change starts from
+the same set.
+
+**Breakpoint sync.** Committing a changed breakpoint in Settings scans the project (Desktop only; Studio has no Settings
+dialog) for `@media` width bounds equal to its OLD value (`shared/properties/mediaBreakpointSync.ts`, executed in main by
+`electron/project/breakpointSync.ts`; channels `breakpointSync:scan`, `:apply`, `:restore`). Matching reads only `@media`
+preludes (comments and strings skipped) and only `width`, `min-width` and `max-width` in `px` or `rem`: `(width >= X)`,
+`(width < X)`, `(width <= X)`, `(X <= width)`, `(a < width <= b)` (each bound on its own), `(min-width: X)`, `(max-width: X)`,
+inside `only screen and`, `and` and comma lists, in any case and spacing, including nested in `@supports` and `@layer`. A bound
+is **exact** when it equals the old boundary in either unit (64rem = 1024px, 16px per rem). For an `up` (`width >= X`)
+breakpoint, `(width > X)` and `(X < width)` are the **exclusive** form (ambiguous, unchecked, rewritten as written). It is
+**inclusive** (ambiguous, unchecked) when it is 1px short in the form that includes its own edge: `(max-width: 1023px)`, `(width <= 1023px)`,
+`(width > 1023px)`, `63.9375rem`. `height`, `min-height`, `prefers-*`, `em`, `vw`, `calc()` and `@container` are never touched.
+Only the number+unit token is replaced (CRLF, tabs and minified text stay byte for byte): an exact match takes the new value as
+typed, an inclusive one the new boundary minus 1px; a Lumos project (rem only) is always written in rem. It scans `.css`,
+`.scss`, `.sass`, `.less`, `.pcss` files, `<style>` blocks of `.astro` pages and components (the editor's own style-region
+parser, blocks inside expressions left out) and `.html`, skipping dotted folders, `node_modules`, `dist`, `build`, `out`,
+`vendor`, `coverage` and plain folder or `*.ext` patterns in the root `.gitignore`, within named limits (files, bytes, depth,
+places). Nothing is written by a scan. Apply checks each file's digest against the scan (a changed file is skipped and
+reported), each edit's text, the bound count and locators of the result and that the CSS still parses, writes through the
+witnessed document writer, puts back the files already written on any failure, and journals the sync for Undo and Redo.
+`.stacki/breakpoint-sync.json` (`shared/properties/breakpointSyncRecord.ts`) holds, per breakpoint id, `excluded` places (listed
+unchecked as "Not synced" on every later sync, whatever value they hold) and `linked` places with `appliedAt`; a place is a
+project-relative file and a locator (the masked prelude hashed, plus its ordinal), which survives the number and line changing.
+It is bounded, canonical (sorted, deduplicated), created by the first sync that has something to remember, and never written
+over when unreadable.
 
 `.stacki/pages.json` contains `{ version: 1, entries: [...] }`. Entries are relative to
 `src/pages`; folder keys end in `/`. Desktop and Studio apply the same order to sibling pages
@@ -826,6 +1060,55 @@ writes every other selector it held as a name lock, one write and one undo step,
 1,000-name bound; locking a sheet drops name locks only its selectors use. The key is written only when non-empty. The
 style selectors panel writes the file through `project:writeMetadata` against the bytes it read.
 A `trustedScripts` key from an earlier version is read and dropped.
+
+**New style tags** (`newStyleTag`, `shared/properties/newStyleTag.ts`). An optional section of
+`.stacki/styles.json`, `{ version: 2, attributes?: string, content?: string }`, says what a `<style>` tag
+the Style panel creates starts with. `attributes` is the opening tag's attribute text as written
+(`is:global lang="scss" media="screen"`): Astro attribute names, quoted values, no `{expressions}`, no
+name twice; `""` is a plain `<style>`. Absent (the section or the key) means `is:global`, Stacki's
+default, because the panel writes plain selectors and a scoped tag would hash them away from elements
+rendered through components; projects made by Stacki also have it written out
+(`electron/project/newProjectDefaults.ts`). Version 1 (`{ version?: 1, isGlobal?: boolean, content? }`,
+written by earlier Stacki versions) is still read: `isGlobal: true` is `is:global`, `false` is a plain
+`<style>`, absent is the default; the next save writes version 2. A version 2 section with `isGlobal`
+is refused. In code the setting is `{ attributes: StyleTagAttribute[], content }`; the hosts write the
+attributes in order (`styleTagNode` in Desktop, `addStyleBlockSource` in Studio). `content` is a
+template; the rules placeholder is the CSS comment
+`/* stacki:rules */`, at most once, at the top level or inside at-rule blocks (never inside a style
+rule). With no placeholder, a template ending in a block `@layer`/`@media`/`@supports`/`@container`/`@scope`
+takes rules inside that block, after what it holds; any other template gets rules after it, at the top
+level. A placeholder at the top level means after the template's own content. A template that does not
+parse (unclosed brace, comment or string, repeated or misplaced placeholder) is refused by the file
+parser and by the Settings page, which never saves it. A tag follows the template when its top level
+already holds the wrapper chain (same at-rule names and parameters, whitespace-insensitive): new rules
+go inside the innermost wrapper after the rules there; a one-line wrapper (`@layer components {}`) is
+opened onto its own lines when its first rule goes in; any other tag is written exactly as before.
+Stacki never wraps or moves rules a person wrote. Settings > Style tags edits it as one code block holding
+the whole tag (`src/app/settings/StyleTagSettings.tsx`): the attributes and the content are editable,
+`<style`, the opening `>` and `</style>` are locked (`styleTagEditor.ts`), and attributes that do not
+parse mark the block invalid and are not saved. The Style panel's "Add custom styles in" list links to it
+(Style tag defaults…). The CLI reaches it as `newStyleTag.attributes` and `newStyleTag.content`
+(`stacki config set styles newStyleTag.attributes 'is:global lang="scss"'`).
+
+**The first tag is created once** (`model/firstTagLane.ts`, driven by `embed/useEditorResolution.ts`).
+Every write that needs a new tag before the panel's scan shows it joins the one tag being created for the
+open file: writes made in the same event (the four sides of a Shift-drag) go into the tag as one host
+edit and one undo step; writes made while it saves wait, one per selector and property (the last value
+wins), and are written into that tag once the scan shows it. A failed tag drops what waited; a scan that
+never shows the tag stops being waited for after a bounded number of scans. Duplicate `<style>` tags a
+page already has are never merged or rewritten.
+
+**Where a new selector's first style goes** (`model/newStyleTarget.ts`, consumed by
+`embed/useEditorContexts.ts`). A selector with rules keeps going to the file that defines them
+(`selectorHome.ts`). A selector with none goes to the open page's or component's own `<style>`: the
+first that is not `define:vars`, preferring one whose scope matches the setting, else the first. With no
+`<style>` in an `.astro` file the dropdown lists a virtual `Create <style>` entry first and the chip shows
+it with a plus icon. Selecting, hovering and choosing it write nothing: the tag is created, with the template
+and `is:global` per the setting, by the first style written, as one page edit (one undo step; undo removes
+the tag, and the class it needed). It is appended at the end of the file, never inside the frontmatter.
+Picking another source holds until the element or selector changes; inside a component opened from an
+instance the source stays pinned as before. Studio uses the same panel code; its `styleBlockEdit.ts`
+writes `<style>` or `<style is:global>` from the request's `scope`.
 
 The unused-selector check (`electron/properties/selector*.ts`) reports through
 `style:selectorUsage` as a `SelectorReport` (`shared/properties/selectorUsage.ts`). A verdict
@@ -888,15 +1171,16 @@ one of its exports (`src/consts.ts#SITE`, an identifier or `default` for a JSON 
 content collection (`blog`, no `/`). An export is also left out with its whole file. No key, or an
 empty list (never written), shows everything (`isPickerShown`).
 
-Pages are shown, not configured: `project:scan` reports `pagesFolder` (`<srcDir>/pages`, `srcDir` read
-from the first `astro.config.*` Astro loads, as a string literal only; the config never runs) and
-`astroConfig`. Everything else still assumes `src/pages`: the scan's page list and `routeForPage`,
-page create/rename/delete (`pageHandlers.ts`, `pageRequests.ts`, `pageRename*.ts`), page templates
+Pages follow the config: `project:scan` reports `pagesFolder` (`<srcDir>/pages`, `srcDir` read from
+the first `astro.config.*` Astro loads, as a plain value only; the config never runs, see
+"Scan warnings") and `astroConfig`, and lists pages from that folder (`routeForPage` takes it, page
+create, delete and `page:dynamicPaths` use `pagesDirectoryOf`). Still assuming `src/pages`: page
+rename and move (`pageRename*.ts`, refused with the reason when the folder moved), page templates
 (`pageTemplatePlan.ts`), `.stacki/pages.json` keys, preview markers (`previewMarkers.ts`,
 `markerConfig.ts`'s page glob, `componentPreviewContext.ts`), `defaultsCanvas.ts`, the components
 folder rules, and Studio's paths (`shared/validation.ts` accepts only `src/` and `public/`), its
-page list and route helpers. A project with another `srcDir` is shown its real pages folder but not
-yet edited there. Every scanner asks `foldersFor(kind, config)`: Desktop's project scan,
+page list and route helpers. A project with another `srcDir` is shown and edited in its real pages
+folder, with a `config-folder-custom` warning. Every scanner asks `foldersFor(kind, config)`: Desktop's project scan,
 component creation and undo, the component preview route's globs (written at dev server start),
 the assets panel listing and every asset write (`assetAbs`), the style panel, the variables panel,
 the unused-selector check, and Studio's scan, asset catalog and writes, style list and variable
@@ -1252,6 +1536,24 @@ live in `LIVE_RULE_LIMITS`; a sheet over `sheetRulesMax` rules is refused with a
 `rules-over-cap` problem rather than searched in part. Rules nested in other style rules and
 members of a grouped rule the save splits are not previewed; their saves show them.
 
+`avb:hover-style` (`liveRules.ts`, `frameLiveRules.ts`, through the same `receiveLiveRules`
+entry) is every hover preview of the Style panel, and it is never a write: no save, history
+entry, dirty flag, autosave or snapshot follows it. Two kinds of hover use it: a variable hovered
+or arrowed in the picker, and an option hovered or arrowed in a dropdown (`Select`'s hover-scrub,
+a deliberate scrub-to-preview, so canvas-only too). `show` names the selected node's rendered path
+and one to `declarationsMax` declarations (property, value, boolean `important`); the frame sets
+them inline on the node's elements (at most `elementsMax`), recording each element's own inline
+values. One preview is up at a time: `show` replaces the last; `clear` (idempotent) restores each
+element's style attribute exactly, removing one the preview added; `settle` (a pick of the
+previewed value is being saved) keeps the preview until the page computes the same values
+without it, at most `settleFramesMax` frames, then restores as `clear` does. The panel sends it
+through `PreviewPropContext` (`useEditorWrites`' `previewProp`, with liveSetProp's shape, and the
+`hoverStyle` controller in `model/liveRuleEdits.ts`): `VariableConnect` owns a picker preview (the
+wrapped field never sees it) and shows it on the canvas when the field holds a property's whole
+value (`canvasProperty`); a field that is one part of a value previews in the field alone. A write
+of the previewed value settles it, any other write or a way out clears it, and so does unmounting.
+A state or pseudo-element context is previewed in the control only.
+
 ## Canvas interaction mode
 
 The canvas cursor toggle starts in selection mode for each project session. The parent sends
@@ -1342,6 +1644,26 @@ in). Addresses are https, or http on localhost only, with no login or fragment. 
 of printable ASCII, at most 4,096 characters; it crosses the boundary once, in
 `cmsConnections:save`, and no reply ever carries it. At most 16 connections per project.
 
+A Payload connection signs in with an API key (`Authorization: <auth collection> API-Key <key>`) or
+with an email and password (`auth: 'password'`: the secret is then the password, any characters on one
+line). It may name collection slugs (`collections`, at most 50) for servers that hide their access
+list. A connection saved before logins existed has neither field and reads as an API-key connection.
+Saving checks the account against the server first (`/api/<collection>/me`, which is HTTP 200 with
+`{"user":null}` for a credential Payload does not accept). A login's token lives in main-process
+memory only, never on disk, never in a reply or a log; a failed login is remembered for a minute (ten
+for a locked account) so a wrong password is sent once, not in a loop. `cmsConnections:check` is
+"Test connection" for a saved connection and "Detect" for the form's draft (`{ action: 'test', id }`
+or `{ action: 'detect', draft }`); it returns the account, its collections (with whether each keeps
+drafts and whether it takes uploads), the locales and whether GraphQL answered, never the secret.
+Failures carry a `messageRef` the interface translates beside the English `message`.
+
+Payload content in the CMS panel (`electron/content/payloadService.ts`): a document is named
+`<collection>.<id>`; lists are read 100 at a time and stop at 500; every write is
+`PATCH ?draft=true` (without it Payload publishes); a collection without drafts is edited live and
+its documents say `appliesLive`; a localized top-level field is one entry per locale; rich text is
+editable only while it is plain paragraphs. docs/cms-testing.md lists what was proved against a real
+server.
+
 Desktop keeps connections in `userData/cms-connections.json`, keyed by the project's real path,
 never in `.stacki/` (which is committed). Keys are encrypted with Electron `safeStorage`; where it
 is unavailable nothing is saved, and a key that cannot be decrypted reads as absent. The file is
@@ -1355,13 +1677,70 @@ arrive in the query, in a `url` parameter, or in the fragment, which a page on t
 and returns once in the query. The id is exchanged for the person's login token, used only in
 the main process to list projects and datasets and to create a project key with the Editor
 role, then logged out. Only the key is kept. The sign-in page must be on `https://www.sanity.io`.
-A suggestion comes from the site's `.env` (`*SANITY_PROJECT_ID`, `*SANITY_DATASET`). Sessions
+A suggestion comes from the site's `.env` (`*SANITY_PROJECT_ID`, `*SANITY_DATASET`); when that
+names none of the person's projects, from a `projectId: '…'` string literal in the site's `astro.config.*`,
+`sanity.config.*` or `sanity.cli.*`, at the root or in `studio/`, read without running them.
+Only a project the person belongs to is suggested. Sessions
 time out after five minutes. A role that cannot create keys is told to paste an Editor key instead.
 
 While Stacki previews a project with a Sanity connection, its dev server gets
 `STACKI_SANITY_PREVIEW=1`, `STACKI_SANITY_PROJECT_ID`, `STACKI_SANITY_DATASET` and
 `STACKI_SANITY_TOKEN` (the connection's key). Nothing else receives them, and a site opts in by
 reading them; production builds never see them.
+
+### EmDash
+
+EmDash (the `emdash` package, an Astro-native CMS whose content Astro reads at request time through the `_emdash`
+live collection) is detected from the project, not connected: there is no key and no connection record.
+`shared/properties/emdash.ts` is the contract; `electron/content/emdashProject.ts` reads the project.
+
+- Detection follows EmDash's documented setup: `emdash` in `package.json`, `emdash()` imported from `emdash/astro` in
+  the Astro config, and `emdashLoader()` / `_emdash` in `src/live.config.*`. What is missing, a static `output`, a local
+  database or uploads folder that `.gitignore` does not list, and an unreadable schema are reported as `EmDashProblem`
+  values the settings card words in each language.
+- Content types and fields are defined only in EmDash (its `_emdash_collections` and `_emdash_fields` tables) and Stacki
+  reads them from there, most exact first: the local SQLite database (opened with `readOnly: true` through Node's
+  `node:sqlite`; every statement is a fixed `SELECT`), then `.emdash/schema.json` (written by `emdash types`), then a seed
+  file (`.emdash/seed.json`, `seed/seed.json`, or `emdash.seed` in `package.json`). Each passes `parseEmDashSchema`; a
+  slug EmDash refuses is dropped, a field type Stacki does not know is `unsupported` and never bound.
+- A field's `binding` says how it fills an element: text, rich text (`PortableText` from `emdash/ui`), image (`Image`),
+  link, number, boolean, date, list, reference, or data (JSON, repeaters and blocks, written by hand).
+- `emdash:project` returns the detection result (read only, never a secret). Studio shows no EmDash card yet.
+- Dynamic routes: an EmDash route (`posts/[slug].astro`) declares no `getStaticPaths`, so `page:dynamicPaths` falls back
+  to the published entries in the local database (`emdashPaths.ts`) and the canvas previews each through the project's own
+  dev server, which renders from the same database. Page templates (`kind: 'emdash'`) write that route:
+  `getEmDashEntry(collection, decodeSlug(Astro.params.slug))` with the type's own heading, first image and first rich text,
+  never `getStaticPaths` or `prerender`, so a change in EmDash shows on the next request.
+- A local database and uploads folder are the designer's copy. A customer's real content reaches them through EmDash's own
+  CLI (`emdash login`, `emdash site export`, `emdash site import`), which Stacki only shows the commands for; Stacki holds
+  no EmDash credential. Pointing a deploy at the customer's own database and storage stays in the project's config.
+- Adding EmDash to an open Astro project (`shared/properties/emdashInstall.ts`, `electron/handlers/emdashInstall.ts`,
+  `electron/parse/emdashConfig.ts`) follows EmDash's own "Add EmDash to an existing Astro project" guide. `emdash:installPlan`
+  (read only) names the command and every file that can change; `emdash:install` must carry that exact command, or main
+  refuses (`notConfirmed`) and runs nothing; `emdash:installCancel` aborts the run; output streams on `emdash:installLog`.
+  Order of a run: save unsaved work as one commit named `Before Adding EmDash` (through the Publish commit path; a failed
+  save installs nothing), the package manager's add command (fixed package names, args array, no shell, project folder,
+  `EMDASH_INSTALL_LIMITS.runMsMax`, cancellable), `src/live.config.ts` only when absent, the missing `.gitignore` lines,
+  the Astro config merged with the TypeScript parser by small insertions (verified before and after writing, original bytes
+  restored if the check fails; a different existing adapter or an unreadable shape leaves it untouched and is reported),
+  then EmDash's key command only when there is no `.env`, its output never logged. Nothing is reverted on failure; the
+  result lists the files that changed. `complete` is true only when `detectEmDash` finds the project wired afterwards.
+- After the config and key, EmDash's own `npx emdash init` creates and migrates the local database (an unfinished init is not a
+  failed install). Then the running preview is restarted through `DevServers.restartForNewIntegration` (Astro never loads an
+  integration added to a running server) and the run asks `<origin>/_emdash/admin/` on a bounded schedule
+  (`EMDASH_INSTALL_LIMITS.devServerWaitMsMax`) until it answers; the result says `preview` is `running`, `notRunning` or
+  `failed` and carries `adminUrl` only when it answered. `emdash:adminUrl` returns the running preview's origin for the open
+  project (loopback only, parsed again in the renderer), and the admin opens in the person's own browser through
+  `shell:openExternal`, never from a string the project or a page supplied.
+- Framing: EmDash answers every page with `X-Frame-Options: SAMEORIGIN`, which blanks the canvas (an iframe of another
+  origin; the log shows ERR_BLOCKED_BY_RESPONSE). `electron/app/previewFraming.ts` drops that header and any CSP
+  `frame-ancestors` from frame responses from loopback hosts only; nothing else in a response changes.
+- Pages panel: routes injected by an integration that are not pages never reach `project:injectedRoutes`: anything under
+  `/_emdash`, any route whose entrypoint lives in the `emdash` package, and any endpoint (Astro's route `type`, or a code
+  entrypoint when the type is absent). Another integration's HTML routes stay, in a collapsed, quiet group.
+- Not built: Stacki does not edit EmDash content or types, the loop builder has no EmDash source (a list is written as
+  code), a Cloudflare D1 project is read only from `.wrangler/state` (unverified against a real D1 project), and
+  Studio cannot read an EmDash project.
 
 ### On-canvas text editing
 
@@ -1468,10 +1847,33 @@ the `ChatSummary`, and the `ChatEvent` union a transcript is made of). `shared/i
 channels' payload parsers (spread into `IPC_PAYLOADS`), result types (extended by `IpcResults`) and
 the renderer's reply and push parsers.
 
+The panel overhaul adds `agentPresentation.ts` (the composer's static tables: mode order and the one
+"Recommended" mode, which modes ask for confirmation, effort names and copy, which options are
+switches, which agents can compact; the protocol carries none of this, see "Protocol capabilities
+Stacki declares") and `mentions.ts` (`MentionChip`, `ComposerSegments`, `PromptPart`,
+`MentionCandidate` and their parsers: a draft read back from browser storage is a `Result` that reads
+as empty on failure, a prompt's parts are refused by the channel's parser; chip paths are
+project-relative with no `..`, absolute, backslash or empty segments). New bounds live in `AI_LIMITS`:
+`queuedPromptsMax`, `sectionsMax`, `sectionNameCharsMax`, `mentions*Max`, `composerSegmentsMax`,
+`draftsStoredMax`, `promptPartsMax`, `promptBlocksExtraMax`, `backgroundTasksMax`, `compactionsMax`,
+`transcriptUiEntriesMax`, `contextTokensMax`, `compactionErrorCharsMax` (500), `mentionCacheMs`,
+`mentionCachedProjectsMax`.
+
 **Channels.** `ai:agents`, `ai:installAgent`, `ai:trust`, `ai:chats`, `ai:chatCreate`,
 `ai:chatUpdate` (rename, pin), `ai:chatDelete`, `ai:chatRead`, `ai:prompt`, `ai:cancel`,
-`ai:permission`, `ai:setOption` (an agent's session setting: model, mode, effort), `ai:review` (keep,
-undo or resolve one file's change). Pushes: `ai:events` (batched `ChatEvent`s with their character
+`ai:permission`, `ai:setOption` (an agent's session setting: model, mode, effort), `ai:remember` (the composer settings last used: one choice, or a reset for one agent; answers the whole set), `ai:review` (keep,
+undo or resolve one file's change), and, for chat management and the composer: `ai:steer`,
+`ai:compact`, `ai:chatFork`, `ai:chatMove`, `ai:sections`, `ai:diff`, `ai:mentions`. `ai:chats`,
+`ai:chatMove` and `ai:sections` answer the whole `ChatList { chats, sections }` (chats in display
+order) so the renderer replaces its copy in one update; `ai:chatUpdate` also takes `archived` and
+`unread`; `ai:prompt` also takes `parts` (mention chips; `text` stays the plain fallback, each chip read
+as `@path`, `/skill` or its title) and `mode` (`send`, or `steer`). Absence on the wire is `undefined`:
+`ai:chatMove` without `section` means the first, unsectioned section and without `before` means last.
+`AiFailure.code` adds `unsupported` (the agent lacks steering, fork or compaction), `section-missing`
+and `invalid` (a repeated section name, too many sections, an archived chat moved). `ai:steer` and
+`ai:compact` are the host's (below); `ai:diff` reads a pending file's text from the chat's live change
+ledger and answers `invalid` once the change is settled (settled entries keep no content); `ai:mentions` lists files and skills (below). All seven are gated on `code:edit`; the main
+process also exposes `invalidateMentions` for the window-focus hook. Pushes: `ai:events` (batched `ChatEvent`s with their character
 count) and `ai:agentStatus`. One-way: `ai:ack` (`{ chars }`, parsed before use, registered by main.ts
 beside the terminal's sends). Every project path must be the open project. Every write channel is
 gated on `code:edit` (an agent edits and runs anything, as the terminal does); the panel shows for
@@ -1485,17 +1887,97 @@ roles with `panel:ai` and `code:edit`.
 shipped lockfile (its SHA-256 pinned), the entry's SHA-256 checked, then renamed into place; the
 digest is checked again at every start. `agentHost.ts` runs one adapter per agent per project as
 Electron-as-Node, with the person's shell environment minus Stacki's and any host agent session's
-variables; it starts on the first prompt, stops after `idleMsMax`, restarts after a crash with
-doubling delays at most `restartsMax` times, and stops on project close and quit. A chat is one ACP
+variables; it starts on the first prompt (or earlier, see "Starting early" below), stops after `idleMsMax`
+(30 minutes; `idleMsCrowded`, 5 minutes, while more than `processesComfortableMax` adapters are alive or free
+memory is under `memoryFreeRatioMin`; at `processesMax` the idle process used longest ago is evicted first),
+restarts after a crash with doubling delays at most `restartsMax` times, and stops on project close and quit. A chat is one ACP
 session: resumed (`session/resume`), else loaded (`session/load`, replay ignored), else started
 anew with a notice. Nothing starts before the person trusts the project (`ai:trust`, remembered in
-the chat index); each new session is put in the agent's asking mode (Claude `default`, Codex
-`read-only`). `acpConnection.ts` frames lines (at most `lineBytesMax`, past which the connection
+the chat index); a new session starts with the composer settings last used for its agent
+("Remembered settings" below), else the agent's own defaults (the person's own Claude `defaultMode`
+included); nothing forces the asking mode any more. `acpConnection.ts` frames lines (at most `lineBytesMax`, past which the connection
 closes) and bounds pending requests (`pendingRequestsMax`, each with a timeout).
 `permissionBroker.ts` holds requests until answered (bounded; a stopped turn answers `cancelled`).
+
+**Starting early** (`ai:prewarm`, `{ projectPath, agent, action: 'warm' | 'release' }`, reply `{ ok: true }`;
+`sessionPool.ts`, `shared/properties/ai/prewarmGate.ts`). The panel sends `warm` when it opens for an agent that
+is installed, signed in and allowed here, and when the composer takes focus; `release` when the panel closes or
+the agent changes. The renderer sends at most one `warm` per agent per `prewarmRepeatMs`; main debounces
+(`prewarmDebounceMs`, last request wins) and is single-flight. A start spawns the agent's process if needed and asks it
+for one empty session with the parameters a new chat uses (`cwd`, `mcpServers: []`): no chat record, no
+transcript event, no ledger snapshot, no model call. One session is parked app-wide (`WarmSlot`); a start for another
+agent or project replaces it (the old one is deleted), `release`, a sign-in change and the process leaving (idle
+expiry, crash, quit) discard it. The first prompt of a new chat adopts the parked session through `bindSession`, the
+same binding `session/new` gets, and then applies remembered and chat settings, so a setting changed meanwhile is
+applied before the prompt. A start is skipped (debug log, no error) when the app is in the background, the agent is
+not ready, the project is untrusted, the agent crashed, or the process limit would be exceeded; a start never evicts
+a process. The startup probe that learns an agent's settings parks its session in the same slot when free.
+The debug log carries `process: spawnMs initializeMs` and `startup: session=prewarmed|cold|resumed spawnMs
+initializeMs sessionNewMs firstTokenMs`: durations only.
 `eventPump.ts` batches events every `eventBatchMs`, joins streamed text, appends each chat's batch in
 one write and sends one push; above `flowHighWatermark` unacknowledged characters it stops reading
 every adapter until acks bring it under `flowLowWatermark` (the terminal's scheme).
+
+**Host protocol features** (`agentHost.ts`, `promptBlocks.ts`). Steering: `ai:steer` (or `ai:prompt`
+with `mode: 'steer'`) sends `_session/steering` with `idleBehavior: 'promptRequired'` to the running
+turn and records a `user` event with `mode: 'steer'`; with no turn running the message is an ordinary
+prompt (`startedNewTurn`); an agent that did not advertise `_meta.steering.supported` answers
+`unsupported`, an adapter that refuses answers its failure (`agent-failed`), and in both cases nothing
+was sent, so the renderer queues the message. A plain `ai:prompt` while a turn runs stays `busy`.
+Change snapshots (a hidden git tree, never a commit in the project history): the app preference `aiTrackChanges` (Settings > Editor > AI, "Snapshot before & after each AI change"; `settings:get`
+and `settings:set`, default on, kept in `settings.json`) decides whether the change ledger snapshots the
+project (`git add --all` against a temporary index, `git write-tree`) before and after a turn. The agent host
+asks `trackChanges()` once when a turn begins and the ledger keeps the answer on that turn, so a toggle applies
+from the next turn and never splits one. Off, the turn takes no snapshot, reads no file for the ledger and
+keeps no entries; when the agent still announced an edit, delete or move, the turn records a
+`changes-untracked` event (`reason: 'off'`) and the transcript shows one line, "Snapshots are off", with
+a "Turn on" button. A snapshot that throws, or outlasts `AI_LIMITS.snapshotMsMax`, never blocks the turn: it
+runs without it and (when edits were announced and nothing was kept) records `reason: 'unavailable'`. Chats
+recorded while on keep their stored changes. Per turn, the main-process log gets one debug line with the mode
+and `snapshotBeforeMs` / `snapshotAfterMs` (durations only, no prompt text, no paths). The start-of-turn
+snapshot is not run beside the model call: the agent's own tools edit files without asking Stacki (auto-accept
+modes), so only finishing the snapshot first guarantees it sees the tree as the turn found it. Stacki Studio
+has no ledger and no such setting.
+Compaction: `ai:compact` sends `/compact` as an ordinary prompt in a turn of its own (no `user` event,
+no change ledger) for agents whose presentation says `canCompact` (Claude; Codex answers `unsupported`),
+only while idle and only for a chat that has a session (`invalid` otherwise). Both the
+`compaction_update` shape and the "Compact conversation" tool call (`toolName: 'compact'`, also by
+remembered call id) become `compaction` events; a compaction ends once, repeated or later updates of an
+id are dropped, a compaction still open when its turn ends is closed (`completed` after `end_turn`,
+`cancelled`, else `failed`), and a compaction turn that saw no signal at all still ends with one
+`completed`/`failed` row (id `compact-<turn>`). A `compaction` event may carry an optional `error`: the
+reason a compaction failed, only on a `failed` one (an adapter's text on a compaction that went well is a
+summary, not an error), trimmed and cut to `compactionErrorCharsMax` characters with a closing ellipsis
+(`compactionError` in `chatEvents.ts`), read back by the event parser with the same bound, so a long
+message can neither make the update vanish nor reach the panel unbounded. Absence is `undefined`, and a
+chat stored before the field existed reads as before. Fork: a chat with `forkOf` and no session opens with
+`session/fork` from the original's stored session id when the agent advertises `fork`; a fork whose
+original was left unrestricted (`isDangerousMode`) starts asking again; no fork capability, no original
+session or a failed fork starts a new session and says so in a notice (the copied transcript stays).
+Modes and settings: everything is `session/set_config_option`, except an agent that offers modes only as
+session modes (no `mode` config option): the host builds a `mode` option from them and sets it with
+`session/set_mode`. Choosing an unrestricted mode (`isDangerousMode`: Claude `bypassPermissions`, Codex
+`agent-full-access`) is confirmed by the renderer once per choice; the host does not enforce it. A
+fork whose original was unrestricted still starts asking again. Record: the last `usage` of a turn is written to the
+chat's `context` when the turn ends (at once when it arrives outside a turn), `unread` is set when a
+turn ends other than cancelled or by the sign-in card (before the `turn-end` event is sent, so the
+renderer's clear comes later), and `text` and `tool` events carry `at` from the host's clock. Background
+work is derived: a tool call whose `rawInput.run_in_background` is true is remembered per chat, its late
+updates after `turn-end` are stored under the turn that started it, and `ai:cancel` still reaches the
+adapter while one exists ("Stop agent"; no per-task stop exists without declaring AIR). Terminal output:
+with `_meta.terminal_output_delta` declared the adapter streams a command's output as deltas and repeats
+it in the completed result, so the result text of a call that streamed deltas is dropped. Notices: the same
+`notice` text twice in a row within a turn is stored once. A model API 401 (an internal error carrying
+`API Error: 401`, `authentication_error` or "Please run /login") ends the turn as `sign-in`, like ACP's
+authentication-required code. Mentions: `promptBlocks.ts` builds the ACP blocks of a prompt with `parts`:
+a file chip is read inside the project (links that leave it are refused; the prompt is refused with
+`invalid`) and embedded as a `resource` when it is text within `mentionFileCharsMax`, within
+`mentionTotalCharsMax` in all, and the agent advertised `embeddedContext`, else it travels as a
+`resource_link` and its stored part is `truncated`; a skill chip first in the message for Claude and
+advertised by the agent is the leading `/name `, otherwise "Use the `name` skill." plus a link to its
+SKILL.md (a project skill under the project, a `~/` skill under the person's home, nothing else); a
+built-in chip is its own text block wrapped in `<app-builder-instructions>`, kept in the transcript as a
+hash only. More than `mentionsMax` chips is refused. `AgentHost.diff` reads the live ledger.
 
 **Changes.** Edits apply when the agent makes them; each turn's changes are offered for Keep or Undo
 per file (`changeLedger.ts`). The spike found that neither adapter writes through the client's
@@ -1514,16 +1996,92 @@ replaced whole), `chats/<id>.jsonl` (append-only, every line parsed on read, a t
 skipped), `reviews/<id>.json` (pending reviews, settled entries keep no content). Bounded by
 `chatsMax`, `chatEventsMax`, `chatBytesMax`, `ledgerFilesMax`, `ledgerBytesMax`, `ledgerTurnsMax`.
 
-**Starting a chat.** The new-chat row is the provider (a Dropdown whose rows carry the official
-Claude and OpenAI marks, `src/ui/agentLogos.tsx`, sources noted there), then the settings the agent
-offers before a session exists — its models and, where it has one, its effort — each remembered per
-provider in the renderer, then New chat. `ai:agents` returns each agent's settings as it last reported them (main keeps them in
+**Remembered settings** (`shared/properties/ai/rememberedSettings.ts`, `userData/ai/remembered-settings.json`,
+`{ version: 1, agents: { claude: [{option, value}], codex: [...] } }`, replaced whole). Whatever the composer's
+menus set (mode, model, effort, Fast mode, Ultracode, Codex's plan switch: every option id the agent offers, none
+hard-coded) is remembered per agent, last writer wins. Written by the person's own picks only: `ai:remember`
+(a pick before the chat has a session) and a successful `ai:setOption` (a pick in a live chat, in any chat); a
+mode the agent changes by itself is never remembered, so Bypass permissions comes back only because it was chosen
+(through its confirmation) and starts a new chat red from the first frame. Read back by `parseRememberedFile`:
+total, so a corrupt file is the defaults and a damaged entry loses only itself; each agent holds at most
+`configOptionsMax` entries of at most `idCharsMax` characters. `ai:agents` carries the set (`remembered`) beside
+the options, so the composer's first frame already shows it. At `session/new` the host sets each remembered option
+the session offers, in the agent's option order, only when it differs and the value is still offered (else dropped
+silently); an adapter refusing one does not stop the chat (one quiet `info` notice). A resumed, loaded or forked
+session keeps its own values. The cache of each agent's options keeps the agent's own defaults as current values
+(`OptionsSource`), so "Reset to defaults" (last row of the model menu, `ai:remember` `{ kind: 'reset' }`) shows
+true defaults. Studio's chat has a model chip only, with no mode or effort menus, so it has nothing to remember.
+
+**Chat management** (index version 2, `chatStore.ts`). The index adds `sections` (id `s<16 hex>`,
+name at most `sectionNameCharsMax` characters and unique ignoring case, `collapsed`, `rank`) and, per
+chat, `section` (absent: the implicit first section), `rank` (position in its section), `archivedAt`,
+`unread`, `context` (last `{used, size}`) and `forkOf`. Invariants, restored by `normalizeIndex` after
+every operation: sections are numbered 0..n-1; every chat is in a section that exists (else the first);
+within a section pinned chats come first and ranks are a permutation 0..n-1. So a drop of an unpinned
+chat among pinned ones lands at the boundary, a newly pinned chat goes to the top, a section's deletion
+moves its chats to the end of the first section (nothing is deleted), and archiving keeps section and
+rank so a restore puts the chat back. A fork is a record right below its original with `forkOf` set and
+no session, plus a copy of the transcript in which pending reviews are settled as kept (the fork has no
+ledger). **Migration:** a version 1 index (no sections, no list fields) reads as version 2 with ranks
+taken from the order the old list drew (pinned first, then newest update), unsectioned, nothing unread
+or archived; a bad record loses only itself; the file is rewritten as version 2 on the next write. An
+older build reads a version 2 index as empty, so the migration is one way. Transcripts are not
+rewritten: new event fields (`at`, `until`, `toolName`, `command`, `background`, `parts`, `mode`) are
+optional and the `compaction` kind is new, so chats stored before read as before, without durations.
+
+**Composer, mentions and chips.** `@` lists project text files (tracked and untracked via git, else a
+bounded walk; never `node_modules`, `.git`, `dist`, `.astro` or `.stacki/preview`) and skills from
+`<project>/.claude/skills/*`, `<project>/.agents/skills/*`, `~/.claude/skills/*` and
+`~/.codex/skills/*` (the last is Codex's convention, read only if present, not checked against an
+installed Codex). `AGENTS.md` and `CLAUDE.md` first, then Markdown, then other files, each by match
+quality; skills first within the result bound `mentionResultsMax`; a project skill hides a user skill of
+the same name. The scan is cached `mentionCacheMs` per project. A prompt carries at most `mentionsMax`
+chips; a "Build an app" task may carry `draftChip: 'app-builder'` (only with `delivery: 'draft'`) in
+addition to its prompt text.
+
+The composer's input is a CodeMirror editor (`src/features/ai/composer/ComposerInput.tsx`, on the generic
+`src/ui/chipEditor/*`): a chip is one placeholder character drawn as a purple pill, so Backspace removes it
+whole and undo restores it, and a placeholder typed or pasted is refused. `@` at a word start opens the picker
+(`ChipPicker`) under the caret: Built-in (App builder instructions, matched here), Skills and Files (asked of
+`ai:mentions` after a 60 ms pause, an older answer dropped), at most 12 rows, skills holding back so files keep
+four. It reports a draft as `ComposerSegments` (`onSegmentsChange`) and takes one back through `segments`; a
+change from outside (a send that cleared it, dictation, "Build an app") replaces the text and is not undoable.
+Enter reports `send`, Cmd or Ctrl+Enter `queue`, Shift+Enter is a new line, and a composing input method owns
+Enter. A file dragged from the Pages (`avb/page`) or Assets (`avb/asset`) panel becomes a file chip when its path
+is a project file (no folder, no `..`). The built-in text is not in the project: `src/lib/builtinInstructions.ts`
+is where the Apps panel provides it at load (features may not import each other) and
+`src/features/ai/mentions/builtinChips.ts` registers it with the store, so a send expands the chip; clicking the
+chip, in the box or in a sent message (`MentionChipView`), copies the text and shows "Copied" for 1.5 s.
+
+**Protocol capabilities Stacki declares.** The host declares only open ACP capabilities
+(`session.compaction`, `session.notices`, `_meta.terminal_output_delta`; not `jetbrains`, not
+`session.configOptions.boolean`, not `elicitation`): the adapters send background-task data, the
+recommended effort and native subagent sessions only to JetBrains AIR clients, and Stacki does not
+impersonate one. Spike of the installed Claude adapter 0.105.0 (recorded in
+`test/fixtures/ai/acpTrace.jsonl`): `_session/steering` on an idle session answers
+`{outcome: 'promptRequired', reason: 'noRunningTurn'}`; `session/fork` answers a new session shaped
+like `session/new`'s; `/compact` is accepted as an ordinary prompt even though the command list does not
+name it, reports as `compaction_update` (`in_progress`, then a terminal status, with `error` on failure)
+when the client declares `session.compaction` and as a tool call titled "Compact conversation"
+(`_meta.claudeCode.toolName: 'compact'`) when it does not, and its turn ends `end_turn` even when
+compaction failed. Not exercised (the CLI's sign-in had expired during the spike, so no model turn could
+run): steering a running turn, `terminal_output_delta` streaming, `run_in_background` Bash; those are read
+from the adapter source. Codex is not installed here: everything about it is from recorded lines.
+
+**Starting a chat.** The composer's status line (`composer/ComposerStatusLine.tsx`) holds the settings: a
+model chip ("Sonnet 5.5  Medium", opening the model menu with the agent's first models, an Effort
+submenu, the Ultracode and Fast switches the agent offers, More models and an Agent submenu for the
+provider, whose rows carry the official Claude and OpenAI marks, `src/ui/agentLogos.tsx`), a mode chip
+(the Mode menu) and the context ring. Model, effort and switches are remembered per provider in the
+renderer; the mode never is, so a new chat always starts in the mode that asks first, and choosing
+Bypass permissions or Full access (`isDangerousMode`) asks once per chat through `confirmDialog`. A mode
+picked before the session exists is stored with the chat (`ai:chatUpdate` `settings`) and applied after the
+asking mode. `ai:agents` returns each agent's settings as it last reported them (main keeps them in
 `userData/ai/agent-options.json`). In a trusted project, an agent that has never reported them is
 probed once in the background: a throwaway `session/new`, its config options read, then
-`session/delete`, and the result pushed on `ai:agentStatus`. So the row lists exactly what the
-person's installed Claude Code or Codex offers, with its own names, and effort is a segmented row
-(`EffortControl.tsx`). Before any report there is a documented fallback (`FALLBACK_OPTIONS` in
-agentRegistry.ts). The
+`session/delete`, and the result pushed on `ai:agentStatus`. So the menus list exactly what the
+person's installed Claude Code or Codex offers, with its own names. Before any report there is a
+documented fallback (`FALLBACK_OPTIONS` in agentRegistry.ts). The
 choices ride on `ai:chatCreate` (`settings`) and are applied with `session/set_config_option` once
 the chat's session exists, after the asking mode; a setting the agent no longer offers is skipped.
 The AI channels accept the open project's root itself (`MainHost.openProject`, compared through
@@ -1552,28 +2110,112 @@ model and effort: before a chat's first message they apply to that chat (another
 the empty chat); after it, another provider opens a new chat and the model or effort applies to the
 next message.
 
-**Renderer.** `aiBridge.ts` parses every reply and push; `aiStore.ts` keeps the state outside React
+**Renderer.** The feature folder is split by area: `AiPanel.tsx` is the shell (header slot, body switch,
+the trust and agent gates, sign-in and setup cards, `aiShell.css`); `transcript/` draws the conversation
+(`TranscriptView` and `Messages`, `ActivityGroup` for the agent's work between two messages, `ToolCard`,
+`ThinkingBlock`, `PlanCard`, `BackgroundTasks`, `CompactionRow`, `DiffView`, `ChangesCard`, `PermissionCard`,
+`SentParts` for a sent message's chips, `TurnStatus` and `ticker.ts`, the one clock every live timer reads,
+`ErrorRow`, with `transcript.css`, `chrome.css` and `diff.css`); `composer/` the message box (`ChatComposer`, `ComposerInput` for the text and the `/`
+menu, `ComposerStatusLine` for the provider, model and effort, `composer.css`); `sessions/` the chat list
+and header (`SessionsView`, `ChatHeader`, `sessions.css`). The first overhaul's flat files are gone, each
+replaced by the folder that now owns its job: `ChatComposer.tsx`, `EffortControl.tsx` and `ai.css` by
+`composer/` and the per-area sheets, `ChatList.tsx` by `sessions/`, `ChatItems.tsx` (with `MessageRows.tsx`
+and the one-line `PlanStrip.tsx`) by `transcript/` (`Messages.tsx`, `ToolCard`, `PlanCard`). The panel's
+background is the rail's own `--bg-panel` (`aiShell.css`), so the two read as one dark side. `aiBridge.ts` parses every reply and push (a
+reply that does not parse is a failure the panel shows, never an exception) and has one call per channel;
+`aiStore.ts` keeps the state outside React
 (so chats stream while the panel is closed, and a hand-off works without it) and acknowledges each
-push after folding it; `chatReducer.ts` is the pure fold from events to the transcript view,
+push after folding it. Besides the open chat, views, agents and setups it holds the project's `chats`
+(in the order main gave) and `sections` (a reply to a list change replaces both whole), the list `filter`,
+whether the panel is on screen (`visibility`), each chat's `queue` of messages waiting for its turn to
+end (at most `queuedPromptsMax`, in this window's memory only) with `queuePaused`, and `drafts`: a draft
+is `{ segments, attachments }`, text runs and mention chips in typed order (`draftText` is the plain
+text; `boundSegments` cuts to the limits; a built-in chip's text comes from `registerBuiltinChipText`).
+Drafts are written to browser storage per project after typing pauses (`draftStorage.ts`: parsed with
+`parseDraftSegments`, a bad entry skipped alone, at most `draftsStoredMax`) and restored for chats that
+still exist. `steerPrompt` sends the draft into the running turn (an agent that cannot take it gets the
+message queued instead), `queuePrompt` sets it aside (and sends it when no turn runs); the next queued message is
+sent only after a turn that ended `end_turn`, and after an error or a stop the queue is held (shown as
+paused) until Resume. A turn that ends in the open chat while the panel is on screen marks it read,
+otherwise unread, as main does. `chatReducer.ts` is the pure fold from events to the transcript view:
+every item has an increasing `id`, tool calls and thoughts carry the host's `at` stamps (a chat stored
+before timings shows no durations), a compaction is one item per id that only moves from in progress
+to a final state (with the usage before and the first usage after, derived), and `activeTasks` lists the
+open tool calls that are subagents, run in the background or outlived their turn (the protocol's
+background-task data is not sent to Stacki). `chatStatus.ts` holds the pure wording (ring tone, durations,
+the running-turn line, the activity headline) and `moveInList.ts` the optimistic reorder. All
 property-tested. "Fix with AI" (`src/lib/agentTasks.ts`) reaches the panel first
 (`aiAgentTask.ts`, priority 20, above the terminal's 10): a new chat with the task's prompt, sent at
-once when the project is trusted and the agent ready, otherwise left in the composer.
+once when the project is trusted and the agent ready, otherwise left in the composer. A task with
+`delivery: 'draft'` (the Apps panel's "Build an app") is never sent: it waits in the composer, and the
+terminal's handler declines it. With `draftChip: 'app-builder'` it is the App builder instructions chip that
+waits: appended to the end of the open chat's draft when that holds anything (the words stay, and a second
+click adds no second chip), else in an empty open chat or a new one; a draft already at `mentionsMax` declines
+the task, so the prompt goes to the clipboard.
+
+**Diffs, changes, permissions, messages.** `DiffView` draws one file's before/after as a unified diff
+(unified only: split would leave each side about 150px in the docked panel): line numbers, folded
+unchanged stretches behind "Show N lines", marked words inside an edited line, every line coloured as
+its file's language, and bounded (a compact row cap before "Show full diff", a larger one after, and an
+uncoloured fallback past `highlightCharsMax`). The rules are pure, in `diffModel.ts` and `lineDiff.ts`
+(shared head and tail are set aside before alignment, so one edit in a long file stays exact). `ChangesCard`
+shows "N files changed +A −R" with a row per file; the counts come from `ai:diff` for pending files
+(`changeDiffs.ts` asks once per file and remembers the counts after Keep or Undo, because the host keeps
+no text for a settled file). Its Keep, Undo, Keep all and Undo all call the caller's `onReview`, which
+is the existing review flow (`runReview`): the bulk actions wait for each file's review before the next,
+so a drifted undo opens one merge editor at a time. "Open file" appears only when `onOpenFile` is given.
+`PermissionCard` shows the command or the edit's diff of the tool call with the same `call` id (passed as
+`tool`), the options allow-first with the recommended one primary, answers to the keys 1..n and Esc
+(deny, only when a reject option exists; never inside a text field; only the oldest waiting request hears
+them), and collapses to "Allowed · the command" once answered; `PermissionPin` repeats the oldest waiting
+request above the composer while its card is scrolled away. `Messages.tsx` is presentational: the
+caller supplies `onEdit` and `onResend` (the last user message only), `partsView` (mention chips) and,
+if it wants to own the fold, `expanded`; a message over 40 lines or 4,000 characters folds behind
+"Show more".
+
+**Studio chat.** Studio has its own chat (`studio/src/features/ai/`) and does not use ACP or the IPC bridge:
+it sends one HTTP request per message to the model the server is configured with (`/studio/api/ai/models`,
+`propose`, `apply`) and gets one proposal back (a summary and per-file before/after changes), so there is no
+session to steer, queue, compact or fork. What is shared is drawn, not reimplemented: Studio's inventory
+(`studio/scripts/shared-source.json`) vendors Desktop's `Menu`, `LoaderDots`, the chip editor (`ChipPicker`,
+`chipEditor`, `chipTrigger`), the sectioned drag (`useSectionedDrag`), `DiffView` with `diffModel.ts`,
+`lineDiff.ts` and the ticker, `StatusChip`, and the stylesheets `composer.css`, `sessions.css`,
+`transcript.css`, `diff.css` and `mentions.css`, so Studio's composer, chat list, diff card and "Worked for
+12s" line carry Desktop's classes. Studio adds only adapters over its own transport and storage: the status
+line's model chip (a `Menu` of the server's models; no effort, mode or context ring, since the model has no
+settings and no usage to report), the `@` file picker over the project's pages, components and assets
+(`mentionFiles.ts`; a chip is sent as the text `@path`, which the server's model reads itself; no skills or
+built-in instructions, which need Desktop's main process), the chat list (pinned and other chats,
+drag-to-reorder, rename, delete through `confirmDialog`; no custom sections, unread, fork or archive) and a
+proposal card of the changed files, each opening to `DiffView`, with Apply to draft and Discard. Chats are
+kept in the browser (IndexedDB `studio-ai-chats`): version 2 stores the list in display order with `pinned`,
+`updatedAt`, `segments` (the draft with its chips, `parseDraftSegments`) and each reply's `durationMs`; a
+version 1 history (no `version`, oldest first) is read and turned around, and a draft that does not parse
+falls back to its words. The panel is `--bg-panel`, the rail's colour. Proofs: `studio/test/chatState.test.ts`
+(migration, pin and reorder, chips, mention search, durations) and `studio/test/ai.browser.ts` (the panel in
+a real browser, including a legacy history).
 
 Proofs: `test/shared/properties/ai/acpWire.test.ts` (recorded adapter lines, each bad shape, bounds,
 unknown variants), `test/shared/ipc/aiChatContract.test.ts`, `test/electron/handlers/ai/agentHost.test.ts`
 (a stand-in adapter process through whole turns; connection bounds; pump flow control; store
 round-trip and bounds; ledger keep, undo, drift and snapshots), `test/renderer/ai/chatReducer.test.js`
-(properties over seeded random streams) and `test/renderer/ai/aiPanel.test.js` (the panel in jsdom).
+(properties over seeded random streams), `test/renderer/ai/aiStore.test.js` (lists, sections, queue,
+unread, drafts), `test/renderer/ai/chatStatus.test.js` and `test/renderer/ai/aiPanel.test.js` (the panel
+in jsdom).
 
 ## Audits
 
 `.stacki/audits.json` (`shared/properties/auditIgnores.ts`) is the tracked audit configuration:
-`{ "version": 2, "ignored": [{ "id", "reason" }], "checks"?, "tokens"?, "placeholders"? }`. One file
+`{ "version": 2, "ignored": [{ "id", "reason" }], "ignoredPages"?, "checks"?, "tokens"?, "placeholders"? }`. One file
 holds both ignores and settings, rather than a second `.stacki/lint.json`: both are "how this
 project audits itself", edited from the same panel and Settings tab, and one file is one write
 witnessed against one set of bytes. Version 1 (ignores only) still reads and is written back as
 version 2; settings at their defaults are left out of the file.
 
+- `ignoredPages`: `[{ "file", "reason" }]`, at most 500, `file` project-relative and unique. A page entry
+  silences every finding of every check in that file; finding-level `ignored` entries are separate and
+  stay when a page is unignored. Written only when non-empty, so older files read unchanged; a file
+  that has the key is refused by older builds (unknown field), as every addition to this file is.
 - `checks`: by check id (`^[a-z0-9-]{1,40}$`, at most 100), `{ "enabled"?: boolean, "priority"?: "high" | "medium" | "low" }`.
 - `tokens`: `properties` (names, `padding*` matching a prefix), `colors`, `px`, `remOutsideVariables`
   (booleans), `allowed` (raw values, compared lower-cased).
@@ -1717,3 +2359,51 @@ Studio's `/studio/api/file-stamps` (`panel:pages`) the same; `src/features/apps/
 caches other pages' trees by them for `page.getTree` and `page.findByAttribute`. `node.key` writes
 `data-stacki-key` through the app's attribute edit (`src/features/apps/nodeKeys.ts`). The "Build an app" prompt is generated
 from `docs/apps-prompt.md` (`scripts/build/appsPrompt.mts`); `docs/apps.md` is the full guide.
+
+## List item fields
+
+A List prop's item fields (`src/editor/itemFields.ts`, written and read by `src/editor/listPropType.ts`) have sixteen
+kinds: Text, Long text, Rich text, Number, Switch, Image, Video, File, Link, Email, Phone, Color, Date, Option, List
+and Group. Each is written as TypeScript on the item type and read back as the same field:
+
+| Kind | TypeScript | Tag |
+| --- | --- | --- |
+| Number, Switch | `number`, `boolean` | none |
+| Text, Long text, Rich text, Image, Video, File, Link, Email, Phone, Color, Date | `string` | `/** @format <word> */` on the member, left out when the member's name already says it (`heroImage`, `ctaHref`) |
+| Option | `"a" \| "b"` (two to `LIMITS.listOptionsMax` words) | none |
+| List | `readonly { … }[]` with fields of its own | none |
+| Group | `{ … }` with fields of its own | none |
+
+Lists nest `LIMITS.listFieldDepthMax` (3) levels of fields (a list in a list in a list), with at most
+`LIMITS.listFieldsPerLevelMax` fields per level and `LIMITS.listFieldsTotalMax` in all; the pop-up offers no List or Group
+on the last level, `fieldsProblem` refuses deeper fields, and `listFieldsOfType` reads a deeper type as code. Names are
+identifiers, unique per level, and never `__proto__`, `constructor` or `prototype`. A type outside this set (a `Date`, a
+list of words, a method, an index signature) is not read: the panels show it as "Set in code". A nested list or group is one
+field of an item in the default array literal (`arrayValue.ts`), kept exactly as written. The data picker reaches nested
+fields as `item.children[0].title`; the loop's Filters and Sort list a Group's fields by path (`address.city`) and a nested
+List as a field that is set or empty.
+
+## Boot snapshot (`shared/properties/bootSnapshot.ts`)
+
+The cross-process cache that lets a window's first frame show the last session's real state. Main reads
+`boot-snapshot.json` before the window exists and the preload hands it to the renderer synchronously as
+`window.stackiBoot.seed` (an `unknown` until `src/lib/bootSeed.ts` parses it); the renderer sends snapshots back with
+`stackiBoot.save(text)`. The raw channels `boot:read` (sendSync), `boot:save` and `boot:first-frame` (send) are outside
+the typed invoke contract and answer only the main window's top frame (`electron/boot/bootChannels.ts`). Versioned
+(`version: 1`), bounded (`BOOT_LIMITS`), parsed to a `Result`, ignored whole when invalid, never written to a project.
+See docs/startup.md.
+
+## Component duplicate and delete
+
+The Components panel's "…" menu (`src/features/palette/PalettePanel.tsx`) adds Edit settings, Duplicate and
+Delete through `PaletteManagement` (`paletteManagement.ts`). The channels are `component:duplicate`,
+`component:remove` and `component:restoreRemoved`; each takes a `ComponentOpTarget` (`shared/properties/componentOps.ts`:
+`component` or `folder`, a project-relative path) and answers a `Result` whose refusals are typed
+(`ComponentOpError`: outside the component folders, missing, in use, foreign files, too large, write failed).
+Main resolves the path itself: it must sit under a folder from `.stacki/folders.json` `components`, may not climb
+or be a link, and a folder may hold only `.astro` files within `COMPONENT_OP_LIMITS`.
+
+- Duplicate copies the bytes to `FooCopy`, `FooCopy2`, ... (dashed names keep their style), case-insensitively free, through the document actors. Nothing is rewritten and no recipe is added.
+- Delete refuses anything a file other than itself uses, removes the component's `.stacki/components.json` recipe and every nested `component` reference, and drops its `.stacki/roles.json` `componentRules`, then moves it to the operating system's Trash. Main keeps the removed texts and the settings as they were and as the deletion left them under a token: Undo restores the files and restores each setting only while it still reads as the deletion left it.
+- Folder rows in the panel are real folders, so a folder row offers Duplicate (confirmed from 6 components) and Delete (only while no component under it is used anywhere).
+- Studio's panel passes no `management`, so the rows are left out: its server has neither a copy/trash operation nor an undo store for them yet.

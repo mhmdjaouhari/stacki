@@ -28,8 +28,28 @@ export type SelectOption<T extends string> = {
   /** Render as a non-selectable group subheader — skipped by keyboard nav,
    *  type-ahead, and selection. Its `value` just needs to be unique. */
   heading?: boolean;
+  /** Whether the row is drawn checked, when that is not "its value is the control's value" (a row that toggles a setting, like Follow canvas size). */
+  checked?: boolean;
   /** Indent the option to show it nests under the preceding heading. */
   indent?: boolean;
+  /** Muted text after the label in a list row (a breakpoint's condition beside its name). */
+  detail?: string;
+  /** The row's tooltip: the whole, raw text of what the row stands for. */
+  title?: string;
+  /** In the closed trigger, text before the label (the selector a query is nested in), cut with an ellipsis
+   *  when the trigger is narrow while the label itself stays whole. */
+  triggerPrefix?: string;
+  /** A row that is a switch: the switch ends it instead of a check, and choosing it does not close the list. */
+  switch?: boolean;
+  /** Pinned to the top of the open list, apart from the rows below it (a setting that applies to them all). */
+  header?: boolean;
+  /** Pinned to the bottom of the open list, apart from the options above it (an
+   *  "Add …" row): it stays in view while the list scrolls. */
+  footer?: boolean;
+  /** The closed trigger's overline and chip when this option is selected, for an option
+   *  whose list row leaves them to its group's heading. Fall back to `overline`/`tag`. */
+  triggerOverline?: string;
+  triggerTag?: SelectTag;
   /** Text for the closed trigger when this option is selected — use when the
    *  list label is context-scoped (e.g. "Embed #1" under a group) but the trigger
    *  needs the full name ("Global Styles #1"). Falls back to `label`. */
@@ -37,6 +57,8 @@ export type SelectOption<T extends string> = {
   /** Icon for the closed trigger when this option is selected. Falls back to
    *  `icon` — use when the trigger icon differs from the list-row icon. */
   triggerIcon?: ReactNode;
+  /** A small mark after the closed trigger's label when this option is selected (a pin: the choice is held, not followed). */
+  triggerMark?: ReactNode;
   /** Opaque tone token exposed on the trigger as `data-tone` when this option is
    *  selected, so the consumer can color the trigger per option (via its CSS). */
   tone?: string;

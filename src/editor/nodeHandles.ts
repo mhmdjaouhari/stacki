@@ -30,7 +30,7 @@ import { toNodeId, toUtf16Offset, type Digest } from '../../shared/core/brand';
 import { DIFF_BUDGET, diffBytes } from '../../shared/engine/diff';
 import type { SourceEdit } from '../../shared/engine/intent';
 import { LIMITS } from '../../shared/core/limits';
-import { mapSpanThroughDiff } from '../../shared/engine/mapSpan';
+import { mapSpanThroughOutcome } from '../../shared/engine/mapSpan';
 import type { PageModel, PageNode } from '../../shared/page/pageNode';
 import type { Splice } from '../../shared/engine/planner';
 import { rebaseSpan } from '../../shared/engine/rebase';
@@ -207,14 +207,11 @@ function spanMapper(before: ByteString, after: ByteString, splices: readonly Spl
     return (span) => rebaseSpan(span, splices);
   }
   const diff = diffBytes(before, after, DIFF_BUDGET);
-  if (diff.tag === 'too-costly') {
-    return () => undefined; // Nothing carried: every node gets a fresh handle.
-  }
   return (span) => {
     if (span.start === span.end) {
       return undefined;
     }
-    const mapped = mapSpanThroughDiff(diff.diff, span);
+    const mapped = mapSpanThroughOutcome(diff, span);
     return mapped.tag === 'resolved' ? mapped.span : undefined;
   };
 }
@@ -257,8 +254,15 @@ function createdRanges(own: readonly SourceEdit[]): readonly ByteSpan[] {
 }
 
 // The nodes the edit created, paired with the gesture's own new nodes: in
-// document order, of one kind, and only nodes wholly inside what the edit
-// wrote. A node the gesture moved is new there too; its handle travels.
+// document order, of one kind, and only nodes that touch what the edit wrote.
+// Touching, not "wholly inside": the hunks are a diff's minimal edit, which
+// writes the same insertion one byte early or late (after a `>`) or merges it
+// with a neighbouring edit, so the new root can reach a byte outside the hunk.
+// Requiring containment left the root unpaired and shifted every handle down
+// one: the root's handle landed on its first child, and a selected Grid became
+// a Card. Pairing is by order and kind among handles nothing carried, so a node
+// that was carried never takes part. A node the gesture moved is new there too;
+// its handle travels.
 function pairCreated(
   afters: readonly Entry[],
   handles: ReadonlyMap<string, string>,
@@ -267,8 +271,8 @@ function pairCreated(
   predicted: PageModel,
   assign: (entry: Entry, handle: string) => void,
 ): void {
-  const inside = (span: ByteSpan | undefined): boolean => span !== undefined && created.some((range) => range.start <= span.start && span.end <= range.end);
-  const unpaired = afters.filter((entry) => !handles.has(entry.key) && inside(entry.span));
+  const touches = (span: ByteSpan | undefined): boolean => span !== undefined && created.some((range) => span.start < range.end && range.start < span.end);
+  const unpaired = afters.filter((entry) => !handles.has(entry.key) && touches(entry.span));
   // The predicted tree's ranges are stale (edits moved them): only its order
   // and its handles are read.
   const own = inOrder(predicted).filter((entry) => !used.has(entry.node.id));

@@ -2,8 +2,10 @@
 import ts from 'typescript';
 import { assert } from '../../shared/core/assert';
 import { PROPERTY_LIMITS } from '../../shared/properties/propertyEditing';
+import { refusal } from '../../shared/properties/propertyErrors';
 import { err, ok, type Result } from '../../shared/core/result';
 import { isAstroProps, syntaxNodes } from '../parse/astroSyntax';
+import { frontmatterOf } from '../parse/astroFence';
 
 export interface SourceEdit {
   readonly start: number;
@@ -20,10 +22,9 @@ export interface PropertySyntax {
 
 export function readPropertySyntax(source: string): PropertySyntax {
   assert(source.length <= PROPERTY_LIMITS.sourceCharsMax, 'Component source is bounded');
-  const match = /^(?:\uFEFF)?---[^\S\r\n]*\r?\n([\s\S]*?)^---[^\S\r\n]*(?:\r?\n|$)/m.exec(source);
-  const found = match?.index === 0 ? match : undefined;
-  const frontmatter = found?.[1] ?? '';
-  const start = found ? found[0].indexOf('\n') + 1 : 0;
+  const found = frontmatterOf(source);
+  const frontmatter = found?.code ?? '';
+  const start = found?.codeStart ?? 0;
   assert(start >= 0, 'Frontmatter starts inside source');
   return {
     source,
@@ -74,13 +75,13 @@ export function syntaxError(source: string): string | undefined {
 
 export function validatePropertyCode(type: string, expression: string): Result<void> {
   if (!type.trim()) {
-    return err({ code: 'type', message: 'Enter a TypeScript type.' });
+    return err(refusal('type', 'props.syntax.typeEmpty'));
   }
   const typeSource = `type PropertyType = ${type};`;
   const typeFile = ts.createSourceFile('type.ts', typeSource, ts.ScriptTarget.Latest, true);
   const declaration = typeFile.statements[0];
   if (typeFile.statements.length !== 1 || !declaration || !ts.isTypeAliasDeclaration(declaration)) {
-    return err({ code: 'type', message: 'Enter one TypeScript type, without declarations.' });
+    return err(refusal('type', 'props.syntax.typeSingle'));
   }
   const typeError = syntaxError(typeSource);
   if (typeError) {
@@ -90,10 +91,7 @@ export function validatePropertyCode(type: string, expression: string): Result<v
     const expressionSource = `const value = (${expression});`;
     const expressionFile = ts.createSourceFile('default.ts', expressionSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     if (expressionFile.statements.length !== 1) {
-      return err({
-        code: 'default',
-        message: 'Enter one default expression, without declarations.',
-      });
+      return err(refusal('default', 'props.syntax.defaultSingle'));
     }
     const expressionError = syntaxError(expressionSource);
     if (expressionError) {
@@ -113,6 +111,11 @@ export function propertyKey(node: ts.PropertyName | ts.BindingName | undefined):
     return node.text;
   }
   return undefined;
+}
+
+/** A prop name as a member or key is written: bare when it is an identifier, quoted when not (`"aria-label"`). */
+export function propertyNameText(name: string): string {
+  return /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
 }
 
 export function defaultExpression(source: string): string {

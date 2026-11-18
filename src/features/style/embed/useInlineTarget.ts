@@ -15,6 +15,7 @@
 // edits are written there (model/componentStyleWrite.ts). An expression the
 // conditional model cannot read is shown read-only, with the controls disabled.
 
+import { useTranslate, useTranslateDescribed } from '../../../lib/i18n/useTranslate';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { assert } from '../../../../shared/core/assert';
 import { readInlineStyle } from '../../../../shared/engine/inlineStyle';
@@ -30,6 +31,7 @@ import {
   inlineChipShown,
   inlineDeclaration,
   inlineEditBase,
+  heldUntilTaken,
   inlineStyleOf,
   inlineStyleWrite,
   plainStyleBranch,
@@ -136,6 +138,8 @@ export function useInlineCard(
   inline: InlineState,
   panel: { readonly deselect: () => void; readonly setSaveError: (message: string | undefined) => void },
 ): StyleCardProps {
+  const translate = useTranslate();
+  const translateDescribed = useTranslateDescribed();
   const { nodeId, setPickedFor, branchKey, setBranchKey } = inline;
   const { deselect, setSaveError } = panel;
   const style = chipStyleOf(inline, card.snapshot);
@@ -153,7 +157,7 @@ export function useInlineCard(
     const hostText = attributeText(findNode(host.nodes, nodeId), 'string');
     const outcome = inlineStyleWrite(inlineEditBase(hostText, nodeId, heldRef.current), properties, declaration);
     if (outcome.tag === 'refused') {
-      refuse(outcome.message);
+      refuse(translateDescribed(outcome));
       return;
     }
     setSaveError(undefined);
@@ -169,7 +173,7 @@ export function useInlineCard(
     const current = currentExpression(style, nodeId, heldRef.current);
     const read = current === undefined ? undefined : readStyleBranches(current);
     if (current === undefined || read?.tag !== 'branches') {
-      refuse('The style attribute changed shape; pick the chip again to edit it.');
+      refuse(translate('styleModel.embed.inline.changedShape'));
       return;
     }
     const branch = read.branches.find((entry) => entry.key === selectedBranch(style, branchKey).key);
@@ -179,7 +183,7 @@ export function useInlineCard(
     }
     const written = writeStyleBranch(current, branch, nextBody);
     if (written.tag === 'refused') {
-      refuse(written.message);
+      refuse(translateDescribed(written));
       return;
     }
     setSaveError(undefined);
@@ -189,7 +193,7 @@ export function useInlineCard(
     writeBranch((branch) => {
       const outcome = inlineStyleWrite(branch.body, properties, declaration);
       if (outcome.tag === 'refused') {
-        refuse(outcome.message);
+        refuse(translateDescribed(outcome));
         return undefined;
       }
       return outcome.next ?? '';
@@ -261,11 +265,11 @@ export function useInlineCard(
     // Read-only, with why: the controls stay, disabled (StyleCard.tsx).
     return {
       ...withChip,
-      inlineCode: { kind: 'readonly', code: style.code, reason: style.message },
+      inlineCode: { kind: 'readonly', code: style.code, reason: translateDescribed({ message: style.message, messageRef: style.messageRef }) },
       setProp: ignoreWrite,
       onAdd: ignoreWrite,
       liveSetProp: ignoreLive,
-      clearProp: () => undefined,
+      clearProp: () => Promise.resolve(),
     };
   }
   const setProp: SetProp = (prop, typed, important) => {
@@ -278,7 +282,11 @@ export function useInlineCard(
     // The attribute has no live layer to scrub on the canvas: a field's live value
     // shows once it commits, and a cancelled one has nothing to put back.
     liveSetProp: ignoreLive,
-    clearProp: (prop: string | string[]) => write(Array.isArray(prop) ? prop : [prop], { tag: 'remove' }),
+    // The inline write is synchronous, so there is nothing to wait on after it.
+    clearProp: (prop: string | string[]) => {
+      write(Array.isArray(prop) ? prop : [prop], { tag: 'remove' });
+      return Promise.resolve();
+    },
   };
   if (style.kind === 'declarations') {
     // The whole list in the CSS code editor, written as the attribute's next text.
@@ -293,7 +301,7 @@ export function useInlineCard(
         }
         const outcome = plainStyleCommit(body);
         if (outcome.tag === 'refused') {
-          refuse(outcome.message);
+          refuse(translateDescribed(outcome));
           return;
         }
         setSaveError(undefined);
@@ -313,7 +321,7 @@ export function useInlineCard(
     selected: selectedBranch(style, branchKey),
     onSelect: setBranchKey,
     onCommit: (body) => writeBranch(() => body),
-    writesTo: style.source.kind === 'component' ? `Edits ${style.source.fileName} · all instances` : undefined,
+    writesTo: style.source.kind === 'component' ? translate('styleModel.embed.inline.writesTo', { file: style.source.fileName }) : undefined,
   };
   return { ...withChip, ...writes, inlineCode: { kind: 'branches', view } };
 }
@@ -383,24 +391,38 @@ function attributeText(node: HostNode | undefined, type: 'string' | 'expr'): str
   return attribute.value;
 }
 
-// A held write belongs to one element; a new selection starts from the host.
+// A held write belongs to one element; a new selection starts from the host. It also ends
+// the moment the page model shows its result (heldUntilTaken): an undo after it returns the
+// attribute to the held write's starting text, which must then read as the attribute.
 function useForgetHeldWrite(heldRef: { current: HeldInlineWrite | undefined }, nodeId: string | undefined): void {
   useEffect(() => {
     if (heldRef.current !== undefined && heldRef.current.nodeId !== nodeId) {
       heldRef.current = undefined;
     }
   }, [heldRef, nodeId]);
+  useEffect(() => {
+    const forgetTaken = (): void => {
+      const held = heldRef.current;
+      if (held === undefined) {
+        return;
+      }
+      const node = findNode(getHost().nodes, held.nodeId);
+      heldRef.current = heldUntilTaken(held, [attributeText(node, 'string'), attributeText(node, 'expr')]);
+      assert(heldRef.current === undefined || heldRef.current === held, 'useForgetHeldWrite: a hold is kept or dropped, never changed');
+    };
+    return onHostChange(forgetTaken);
+  }, [heldRef]);
 }
 
-// The selected node, followed through host changes.
+// The selected node, read while rendering and followed through host changes. Kept in
+// state, it was one commit behind the host: on a switch the next element's first frame
+// showed the previous element's inline style (its colour, its letter spacing) in the
+// fields. StylePanel publishes the host before this renders, so the read is current; the
+// subscription re-renders for host changes that arrive without a render of the panel.
 function useSelectedHostNode(): HostNode | undefined {
-  const [node, setNode] = useState<HostNode | undefined>(readSelectedNode);
-  useEffect(() => {
-    const sync = (): void => setNode(readSelectedNode());
-    sync();
-    return onHostChange(sync);
-  }, []);
-  return node;
+  const [, bump] = useState(0);
+  useEffect(() => onHostChange(() => bump((count) => count + 1)), []);
+  return readSelectedNode();
 }
 
 function readSelectedNode(): HostNode | undefined {

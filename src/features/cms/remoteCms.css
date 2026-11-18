@@ -324,6 +324,7 @@
 .remote-cms-table {
   flex: 1;
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 /* Holding only the empty card, the table is a column the card centres in. */
 .remote-cms-table:has(> .remote-cms-empty) {
@@ -675,6 +676,7 @@
   gap: 2px;
   max-height: 60vh;
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .remote-cms-revision {
   display: grid;
@@ -1004,6 +1006,7 @@
 }
 .remote-cms-table.has-grid {
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 /* A column's name sorts by it; the arrow shows which way while it does. */
 .remote-cms-sort {
@@ -1053,6 +1056,7 @@
 .remote-cms-column-menu {
   max-height: min(420px, 70vh);
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 .remote-cms-column-check {
   width: 14px;
@@ -1459,4 +1463,14 @@
   margin: 0;
   padding: 0;
   border: 0;
+}
+/* A collection that keeps no drafts: its edits change the live content, so the form says so above its fields. */
+.remote-cms-live-notice {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: #3a3017;
+  color: #e6c76a;
+  font-size: 12px;
+  line-height: 1.5;
 }

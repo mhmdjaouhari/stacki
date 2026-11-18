@@ -1,13 +1,33 @@
 // Settling the panel after a change: upgrading the default selector, and
 // re-syncing focus when the context moves (EmbedEditor.tsx).
 
+import { described } from '../../../../shared/properties/i18n/messageRef';
+import { useTranslate, useTranslateDescribed } from '../../../lib/i18n/useTranslate';
 import { PLACEMENT_END } from '../../../editor/classAttr';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { hslaToRgba } from '../model/colorWrite';
 import { contextKeyOf, editableRuleFor, selectedRulesSetting, type SourceKey } from '../model/resolved';
 import { mediaParamsForBreakpoint, optionsFor } from '../model/nativeStyles';
 import { createRuleInPlacedQuery, ensureNestPath, ensureQueryBlock, parseNestedInput, type NestStep } from '../model/css';
-import { applyNativePropertyAt, applyNativeToNewBaseClass, removeNativePropertyAt, webflowApi, writeEmbedDocument, type EmbedDocument } from '../model/webflow';
+import {
+  applyNativePropertyAt,
+  applyNativeToNewBaseClass,
+  blankStyleDocument,
+  nativeStylingAvailable,
+  rebuildRules,
+  removeNativePropertyAt,
+  webflowApi,
+  writeEmbedDocument,
+  writeFirstStyleBlock,
+  type EmbedDocument,
+} from '../model/webflow';
+import { getHost, walkNodes } from '../model/host';
+import { authoredClassTokens } from '../model/webflowElement';
+import { isCreateStyleTagKey } from '../model/newStyleTarget';
+import { getNewStyleTagSettings, newStyleTagFrame } from '../model/newStyleTagSettings';
+import { isAutoClassSelector, planFirstStyles, type FirstStylesPlan } from '../model/firstStyleBlock';
+import { FirstTagLane } from '../model/firstTagLane';
+import { assert } from '../../../../shared/core/assert';
 import { type PropWrite } from './EditorBasics';
 import {
   upgradedDefault,
@@ -52,15 +72,27 @@ export function useDefaultUpgrade(
   // selector actually STYLED in the current context — so if `.media_card_title` is
   // styled in `@container (…)` but the full combo isn't, we land on `.media_card_title`.
   // Runs once the model is ready for the new element; skips if you already picked.
-  useEffect(() => {
-    if (!pendingDefaultRef.current || !model) {
+  //
+  // Decided during render, not in an effect, for the reason useTokenDefault gives: an
+  // effect commits the raw default first, so every switch to an element whose first
+  // class is unstyled painted a frame with no highlighted chip and the fields keyed to
+  // the raw default, then remounted them (TypographySection is keyed by the selector),
+  // closing any menu opened in between. Setting the pick while rendering makes React
+  // render again before anything is painted; pendingDefaultRef makes it run once.
+  if (pendingDefaultRef.current && model) {
+    upgradeDefault();
+  }
+  function upgradeDefault(): void {
+    if (!model) {
       return;
     }
     // Wait until nativeModel is the CURRENT element's — it loads via a separate async
     // effect and lags the embed model on a switch. Defaulting off a stale nativeModel
     // would pick the previous element's native selectors (and clobber pendingDefaultRef),
     // leaving that selector stuck as a pending chip. Re-runs when nativeModel catches up.
-    if (nativeIdentityRef.current !== elementIdentity) {
+    // With no native styling (nativeStubs.ts) that read always answers empty, so there is
+    // nothing to wait for: waiting on it held the pick a commit behind the chips.
+    if (nativeStylingAvailable() && nativeIdentityRef.current !== elementIdentity) {
       return;
     }
     const activeContext = styleContexts.find((entry) => entry.key === context);
@@ -94,19 +126,7 @@ export function useDefaultUpgrade(
     if (initial !== undefined) {
       selectActiveSelector(initial.text);
     }
-  }, [
-    model,
-    nativeModel,
-    context,
-    styleContexts,
-    tokens,
-    elementIdentity,
-    snapshot,
-    selectActiveSelector,
-    defaultTokensRef,
-    nativeIdentityRef,
-    pendingDefaultRef,
-  ]);
+  }
 }
 
 // Re-read the selection when the panel regains focus.
@@ -180,12 +200,18 @@ export function useWriteNewRule(
   refreshDerivedHook: ReturnType<typeof useRefreshDerived>,
   selectorPick: ReturnType<typeof useSelectorPick>,
   resolvedHook: ReturnType<typeof useResolved>,
+  editorRefs: ReturnType<typeof useEditorRefs>,
+  nativeState: ReturnType<typeof useNativeState>,
 ) {
-  const { setBusyBoth } = busyState;
+  const translate = useTranslate();
+  const translateDescribed = useTranslateDescribed();
+  const { setBusyBoth, setSaveError } = busyState;
   const { setStatus } = scanState;
   const { settleEmbedWrite } = pendingWrites;
   const { refreshDerived } = refreshDerivedHook;
-  const { typedPathsRef } = selectorPick;
+  const { selectActiveSelector, typedPathsRef } = selectorPick;
+  const { primedRef } = editorRefs;
+  const { manualSourcePickRef } = nativeState;
   const { resolved } = resolvedHook;
 
   // Writes target the picked selector's rule in the current context/state, and
@@ -196,7 +222,9 @@ export function useWriteNewRule(
   // Every rule of the pick that sets a property — what clearing it empties.
   const rulesSetting = (prop: string) => (resolved ? selectedRulesSetting(resolved, prop) : []);
   // Create the picked selector's rule in the target embed, write the embed, and
-  // refresh the panel's model.
+  // refresh the panel's model. `writes` are one or more properties of that one rule, written
+  // as ONE edit: the first tag of a page takes every side a Shift-drag commits (firstTagLane.ts).
+  // Resolves to whether the write landed.
   const writeNewRule = async (
     where: {
       embedDocument: EmbedDocument;
@@ -205,35 +233,74 @@ export function useWriteNewRule(
       wrapper: string | undefined;
       bpMedia: string | undefined;
       selector: string;
+      /** First styles (model/firstStyleBlock.ts): what else the write has to do besides
+       *  adding a rule. Absent in every ordinary write. */
+      firstStyles?: Exclude<FirstStylesPlan, { kind: 'normal' | 'refused' }>;
     },
-    write: PropWrite,
-  ) => {
-    const { embedDocument, region, embedContext, wrapper, bpMedia } = where;
+    writes: readonly PropWrite[],
+  ): Promise<boolean> => {
+    const { embedDocument, region, embedContext, wrapper, bpMedia, firstStyles } = where;
     const fullSelector = where.selector;
+    assert(writes.length > 0, 'writeNewRule: a new rule is written with at least one property');
+    assert(fullSelector.length > 0, 'writeNewRule: a new rule has a selector');
     setBusyBoth(true);
-    setStatus('Saving…');
+    setStatus('Saving…'); // i18n-ignore: write-only status, never rendered.
     // try/finally so `busy` always clears even if creating the rule / writing throws
     // (a stuck busy would disable every button in the panel).
     try {
-      const nested = takeTypedPath(typedPathsRef.current, fullSelector, embedContext ?? '');
-      const ok = createRuleForWrite(region, {
-        nested,
-        bpMedia,
-        embedContext,
-        wrapper,
-        selector: fullSelector,
-        write,
-      });
-      if (!ok) {
-        setStatus('Nothing to save.');
-        return;
+      // The class goes on first when sources exist: the rule is built into a live document
+      // below, and a refused class must not leave a rule in it that was never written.
+      if (firstStyles?.kind === 'class') {
+        const outcome = (await getHost().addClass?.(firstStyles.className, PLACEMENT_END)) ?? {
+          tag: 'refused',
+          ...described('styleModel.embed.hook.pageCannotTakeClass'),
+        };
+        if (outcome.tag === 'refused') {
+          setSaveError(translate('styleModel.embed.hook.classNotOnElement', { selector: fullSelector, reason: translateDescribed(outcome) }));
+          return false;
+        }
       }
-      const result = await writeEmbedDocument(embedDocument);
+      const nested = takeTypedPath(typedPathsRef.current, fullSelector, embedContext ?? '');
+      // The project's template applies to a `<style>` tag, never to a stylesheet file.
+      const templateWrappers = embedDocument.source.origin.kind === 'node' ? newStyleTagFrame().wrappers : [];
+      // Every write runs, one after another into the same rule (createRuleForWrite merges by selector).
+      const created = writes.map((write) =>
+        createRuleForWrite(region, {
+          templateWrappers,
+          nested,
+          bpMedia,
+          embedContext,
+          wrapper,
+          selector: fullSelector,
+          write,
+        }),
+      );
+      if (!created.includes(true)) {
+        setStatus('Nothing to save.'); // i18n-ignore: write-only status, never rendered.
+        return false;
+      }
+      const result =
+        firstStyles !== undefined && firstStyles.kind !== 'class'
+          ? await writeFirstStyleBlock(embedDocument, {
+              className: firstStyles.kind === 'block-and-class' ? firstStyles.className : undefined,
+              attributes: getNewStyleTagSettings().attributes,
+            })
+          : await writeEmbedDocument(embedDocument);
+      if (firstStyles !== undefined && result.ok) {
+        // The element changed, so what the canvas matched for these selectors no longer
+        // holds (as for a class typed into the selector box), and the new class is the pick.
+        primedRef.current = undefined;
+        // The tag now exists, so a pick of the virtual "Create <style>" entry has nothing to point
+        // at: the selector has a home again and "Add custom styles in" follows it (selectorHome.ts).
+        manualSourcePickRef.current = undefined;
+        selectActiveSelector(fullSelector);
+      }
       await refreshDerived();
       if (!settleEmbedWrite(embedDocument, result, 'rule')) {
-        return;
+        return false;
       }
-      setStatus(`Added ${fullSelector}.`);
+      setStatus(`Added ${fullSelector}.`); // i18n-ignore: write-only status, never rendered.
+      return true;
     } finally {
       setBusyBoth(false);
     }
@@ -243,6 +310,7 @@ export function useWriteNewRule(
 
 // Create a rule for the pick in the current context.
 export function useCreateRule(
+  busyState: ReturnType<typeof useBusyState>,
   scanState: ReturnType<typeof useScanState>,
   pendingWrites: ReturnType<typeof usePendingWrites>,
   elementTokens: ReturnType<typeof useElementTokens>,
@@ -251,31 +319,164 @@ export function useCreateRule(
   resolvedHook: ReturnType<typeof useResolved>,
   writeNewRuleHook: ReturnType<typeof useWriteNewRule>,
 ) {
+  const translateDescribed = useTranslateDescribed();
   const { setStatus } = scanState;
+  const { setSaveError } = busyState;
   const { documentByKey } = pendingWrites;
-  const { model } = elementTokens;
+  const { model, snapshot } = elementTokens;
   const { activeSelector } = activeSelectorHook;
   const { currentContext } = styleContextsHook;
   const { selectedEmbedKey } = resolvedHook;
   const { writeNewRule } = writeNewRuleHook;
 
+  // The tag this page's first styles are creating, if they are (model/firstTagLane.ts). One per
+  // panel: it outlives renders, and every write the panel makes before the scan shows the tag
+  // goes through it instead of planning a tag of its own.
+  const [firstTagLane] = useState(() => new FirstTagLane());
   const createSelectedRule = (write: PropWrite, selectorOverride?: string) => {
-    // A Webflow-breakpoint context with no equivalent embed query yet writes into a
-    // synthesized @media block; otherwise the embed's base or existing query block.
+    const requested = selectorOverride ?? activeSelector;
+    // A tag is on its way for this file: this write lands in it, never in a tag of its own.
+    if (firstTagLane.holds(getHost().openFilePath)) {
+      firstTagLane.join(requested, write);
+      return;
+    }
+    createRules([write], requested);
+  };
+  // A Webflow-breakpoint context with no equivalent embed query yet writes into a
+  // synthesized @media block; otherwise the embed's base or existing query block.
+  const contextBpMedia = () =>
+    currentContext.embedAtContext === undefined && currentContext.breakpoint && currentContext.breakpoint !== 'main'
+      ? mediaParamsForBreakpoint(currentContext.breakpoint)
+      : undefined;
+  const createRules = (writes: readonly PropWrite[], requested: string) => {
+    assert(writes.length > 0, 'createRules: at least one property is written');
     const embedContext = currentContext.embedAtContext;
-    const bpMedia =
-      embedContext === undefined && currentContext.breakpoint && currentContext.breakpoint !== 'main'
-        ? mediaParamsForBreakpoint(currentContext.breakpoint)
-        : undefined;
+    const bpMedia = contextBpMedia();
     // Write into the chosen embed when one is selected; otherwise the embed of a
     // matching rule in this context (or the first embed).
     const where = newRuleTarget();
-    if (!where) {
-      setStatus('No embed here to write to — add an HTML embed first.');
+    const plan = firstStylesPlan(requested);
+    if (plan.kind === 'refused') {
+      setSaveError(translateDescribed(plan));
       return;
     }
-    const fullSelector = selectorOverride ?? activeSelector;
-    void writeNewRule({ ...where, embedContext, wrapper: currentContext.wrapper, bpMedia, selector: fullSelector }, write);
+    if (plan.kind === 'normal') {
+      if (!where) {
+        setStatus('No embed here to write to — add an HTML embed first.'); // i18n-ignore: write-only status, never rendered.
+        return;
+      }
+      void writeNewRule({ ...where, embedContext, wrapper: currentContext.wrapper, bpMedia, selector: requested }, writes);
+      return;
+    }
+    // First styles (model/firstStyleBlock.ts). With a block already there the rule goes into it
+    // and the class is put on first.
+    if (plan.kind === 'class') {
+      if (!where) {
+        setStatus('No embed here to write to — add an HTML embed first.'); // i18n-ignore: write-only status, never rendered.
+        return;
+      }
+      void writeNewRule({ ...where, embedContext, wrapper: currentContext.wrapper, bpMedia, selector: `.${plan.className}`, firstStyles: plan }, writes);
+      return;
+    }
+    // A new tag. It is built in a blank document and handed to the host with its class, as one
+    // edit, after every write of this same event has joined it: the four sides of a Shift-drag
+    // arrive as four calls, one after another, before any of them could land.
+    const filePath = getHost().openFilePath;
+    const blank = blankTarget();
+    if (filePath === undefined || blank === undefined) {
+      setStatus('No embed here to write to — add an HTML embed first.'); // i18n-ignore: write-only status, never rendered.
+      return;
+    }
+    const selector = plan.kind === 'block' ? requested : `.${plan.className}`;
+    firstTagLane.open({ filePath, requested, selector, knownKeys: documentByKey.keys() });
+    for (const write of writes) {
+      firstTagLane.join(requested, write);
+    }
+    queueMicrotask(() => {
+      const first = firstTagLane.takeFirstWrites();
+      void writeNewRule({ ...blank, embedContext, wrapper: currentContext.wrapper, bpMedia, selector, firstStyles: plan }, first).then(
+        (landed) => firstTagLane.settle(landed ? 'written' : 'failed'),
+        () => firstTagLane.settle('failed'),
+      );
+    });
+  };
+  // Each scan may be the one that shows the new tag: the writes that waited for it then go the
+  // ordinary way, which finds the tag (and the rule in it, merging by selector) like any other.
+  useEffect(() => {
+    const filePath = getHost().openFilePath;
+    const nodeKeys: string[] = [];
+    for (const [key, embedDocument] of documentByKey) {
+      const origin = embedDocument.source.origin;
+      if (origin.kind === 'node' && origin.filePath === filePath) {
+        nodeKeys.push(key);
+      }
+    }
+    const outcome = firstTagLane.afterScan(filePath, nodeKeys);
+    if (outcome.kind !== 'drain') {
+      return;
+    }
+    assert(!firstTagLane.holds(filePath), 'useCreateRule: a drained lane is let go before its writes run');
+    // The writes waited for THIS tag, so they go into it, whatever "Add custom styles in" shows
+    // while it catches up with the new tag; the rule there is merged into by selector.
+    const tagDocument = outcome.tagKey === undefined ? undefined : documentByKey.get(outcome.tagKey);
+    const tagRegion = tagDocument?.regions[0];
+    for (const batch of outcome.batches) {
+      if (tagDocument === undefined || tagRegion === undefined) {
+        createRules(batch.writes, batch.selector);
+        continue;
+      }
+      void writeNewRule(
+        {
+          embedDocument: tagDocument,
+          region: tagRegion,
+          embedContext: currentContext.embedAtContext,
+          wrapper: currentContext.wrapper,
+          bpMedia: contextBpMedia(),
+          selector: batch.selector,
+        },
+        batch.writes,
+      );
+    }
+    // Runs per scan, on purpose: createRules reads the render's own context and targets.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the scan is the trigger
+  }, [documentByKey]);
+  const blankTarget = () => {
+    const embedDocument = blankStyleDocument(getNewStyleTagSettings());
+    const region = embedDocument.regions[0];
+    return region === undefined ? undefined : { embedDocument, region };
+  };
+  // What a rule that is about to be created does first: nothing, for any project that has a
+  // style of its own.
+  const firstStylesPlan = (selector: string): FirstStylesPlan => {
+    const host = getHost();
+    const tag = snapshot?.tag;
+    const elementClasses = snapshot?.classes ?? [];
+    const bareTag = tag !== undefined && selector === tag && elementClasses.length === 0;
+    const documents = [...documentByKey.values()];
+    // Reading every rule of every source is the one costly step, and only a source made of
+    // this mode's own rules can matter, so it is read only for a class-less tag with sources.
+    const ruleSelectors = bareTag && documents.length > 0 ? rebuildRules(documents).flatMap((rule) => rule.selectors.map((info) => info.text)) : [];
+    const taken = new Set<string>(elementClasses);
+    walkNodes(host.nodes, (node) => {
+      for (const name of authoredClassTokens(node)) {
+        taken.add(name);
+      }
+    });
+    for (const text of ruleSelectors) {
+      if (isAutoClassSelector(text)) {
+        taken.add(text.trim().slice(1));
+      }
+    }
+    return planFirstStyles({
+      selector,
+      tag,
+      elementClasses,
+      sourceCount: documents.length,
+      ruleSelectors,
+      takenClasses: taken,
+      filePath: host.openFilePath,
+      createStyleTag: isCreateStyleTagKey(selectedEmbedKey) ? 'chosen' : 'not-chosen',
+    });
   };
   // The stylesheet a new rule in the current context lands in. A query row names
   // its block's stylesheet, so that wins over the source dropdown's pick, which
@@ -344,13 +545,13 @@ export function useEmptyContext(
     const { embedDocument, region } = where;
     void (async () => {
       setBusyBoth(true);
-      setStatus('Adding query…');
+      setStatus('Adding query…'); // i18n-ignore: write-only status, never rendered.
       // try/finally so a throw while scaffolding the query block can't leave `busy` stuck
       // true — that would wrongly disable every add button (transforms, shadows, …).
       try {
         const ok = path ? ensureNestPath(region, path) : contextKey ? ensureQueryBlock(region, contextKey) : false;
         if (!ok) {
-          setStatus('Couldn’t add the query.');
+          setStatus('Couldn’t add the query.'); // i18n-ignore: write-only status, never rendered.
           return;
         }
         await refreshDerived();
@@ -358,7 +559,7 @@ export function useEmptyContext(
         if (!settleEmbedWrite(embedDocument, result, 'rule')) {
           return;
         }
-        setStatus('Query added.');
+        setStatus('Query added.'); // i18n-ignore: write-only status, never rendered.
       } finally {
         setBusyBoth(false);
       }
@@ -522,6 +723,7 @@ export function useNativeSet(
   addQuery: ReturnType<typeof useAddQuery>,
   nativeAttempt: ReturnType<typeof useNativeAttempt>,
 ) {
+  const translate = useTranslate();
   const { selectedRef } = editorRefs;
   const { setNativeFallback, setStatus } = scanState;
   const { stateKey } = selectionState;
@@ -542,14 +744,16 @@ export function useNativeSet(
       });
       if (applied) {
         await refreshNative();
-        setStatus('Saved to Webflow class style.');
+        setStatus('Saved to Webflow class style.'); // i18n-ignore: write-only status, never rendered.
         return;
       }
       await clearCoercedNative(index, prop);
       setStatus(`Couldn’t set ${prop} as a Webflow style${reason ? ` (${reason})` : ''}` + ' — moving it to an embed.');
       // The status line isn't rendered, so surface the reason inline — otherwise the
       // fall-through to an embed is invisible and looks like "it always writes code".
-      setNativeFallback(`Webflow wouldn’t apply ${prop} to this class natively${reason ? ` (${reason})` : ''}` + ' — saved it to the embed instead.');
+      setNativeFallback(
+        reason ? translate('styleModel.embed.hook.nativeApplyFailedReason', { prop, reason }) : translate('styleModel.embed.hook.nativeApplyFailed', { prop }),
+      );
       writeEmbedProp({ ...write, value });
     });
   };
@@ -603,6 +807,7 @@ export function useNativeCreate(
   nativeAttempt: ReturnType<typeof useNativeAttempt>,
   createNativeClassHook: ReturnType<typeof useCreateNativeClass>,
 ) {
+  const translate = useTranslate();
   const { setNativeFallback, setStatus } = scanState;
   const { refreshNative } = nativeRefresh;
   const { runNativeOp } = nativeOps;
@@ -620,11 +825,15 @@ export function useNativeCreate(
       const { applied, created, reason } = await attemptNative('Creating Webflow class…', async () => createNativeClass(className, { ...write, value }));
       if (applied) {
         await refreshNative();
-        setStatus(created ? `Created Webflow class .${className}.` : 'Saved to Webflow class style.');
+        setStatus(created ? `Created Webflow class .${className}.` : 'Saved to Webflow class style.'); // i18n-ignore: write-only status, never rendered.
         return;
       }
       setStatus(`Couldn’t create .${className} as a Webflow class${reason ? ` (${reason})` : ''}` + ' — moving it to an embed.');
-      setNativeFallback(`Webflow wouldn’t create .${className} as a class${reason ? ` (${reason})` : ''}` + ' — saved it to the embed instead.');
+      setNativeFallback(
+        reason
+          ? translate('styleModel.embed.hook.nativeCreateFailedReason', { className, reason })
+          : translate('styleModel.embed.hook.nativeCreateFailed', { className }),
+      );
       writeEmbedProp({ ...write, value });
     });
   };

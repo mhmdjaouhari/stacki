@@ -8,12 +8,13 @@
 // by the host, appService.ts) and offers its approved apps that are not installed; choosing one
 // opens the Apps panel's Marketplace tab on it.
 import { useEffect, useMemo, useState } from 'react';
+import { useTranslate } from '../../lib/i18n/useTranslate';
 import type { PaletteApp, PaletteAppList, PaletteAppsSource } from '../../features/palette/paletteApps';
 import { canSeePaletteApps } from '../../features/palette/paletteApps';
-import { listAppDirectory, requestAppConnect, requestAppUpload, type AppDirectoryEntry } from '../../features/apps/appsDirectory';
+import { listAppDirectory, requestAppConnect, type AppDirectoryEntry } from '../../features/apps/appsDirectory';
 import { useAppsRefresh } from '../../features/apps/appsRefresh';
 import { platformShortcutLabel, runAppCommand, useAppCommands, type BoundCommand } from '../../features/apps/appCommands';
-import { appBuildPrompt } from '../../features/apps/appPrompt';
+import { requestBuildApp } from '../../features/apps/appPrompt';
 import { assert } from '../../../shared/core/assert';
 import { appsFailureMessage } from '../../../shared/properties/apps';
 import type { MarketplaceApp } from '../../../shared/properties/appMarketplace';
@@ -44,18 +45,18 @@ export function useInsertAppsSource({ projectPath, role, browse, notify }: Inser
   const entries = useAppDirectory(projectPath, role);
   const market = useMarketplaceApps(projectPath, role);
   const commands = useAppCommands();
+  const translate = useTranslate();
   return useMemo((): PaletteAppsSource => {
-    // Upload and connect run in the Apps panel, which the requests reveal (appsDirectory.ts).
+    // Connecting runs in the Apps panel, which the request reveals (appsDirectory.ts); Build an app opens the AI chat.
     const installed = entries.kind === 'ready' ? new Set(entries.entries.map((entry) => entry.id)) : new Set<string>();
     return {
       list: withCommands(paletteList(entries, browse), commands),
       browse,
       connect: requestAppConnect,
-      upload: requestAppUpload,
-      copyPrompt: () => copyBuildPrompt(notify),
+      buildApp: () => void requestBuildApp(translate, notify),
       marketplace: market.filter((app) => !installed.has(app.id)).map(paletteMarketplaceApp),
     };
-  }, [entries, market, browse, notify, commands]);
+  }, [entries, market, browse, notify, commands, translate]);
 }
 
 // The marketplace's apps for a role that may see them; none while the index loads, or when it could
@@ -183,14 +184,6 @@ function withCommands(list: PaletteAppList, commands: readonly BoundCommand[]): 
       })),
   }));
   return { kind: 'ready', apps };
-}
-
-/** Copies the Apps panel's "Build an app" prompt (appPrompt.ts) and says whether it worked. */
-function copyBuildPrompt(notify: InsertAppsNotify): void {
-  void navigator.clipboard.writeText(appBuildPrompt()).then(
-    () => notify('Copied the “Build an app” prompt.', 'success'),
-    () => notify('Stacki could not reach the clipboard.', 'error'),
-  );
 }
 
 function paletteApp(entry: AppDirectoryEntry, browse: () => void): PaletteApp {

@@ -11,6 +11,7 @@ import type { RichContext } from './RichContent';
 import type { ChipsOf } from '../../ui/ExprInput';
 import type { PickerNode } from './DataPicker';
 import type { NewPropSeed } from './newPropModel';
+import type { ClassListOffer } from './classListProp';
 import type { PropDeclaration } from '../../editor/propDeclaration';
 import type { VariableRename } from '../../../shared/engine/variableRename';
 import type { FieldFocus } from './fieldFocus';
@@ -88,6 +89,10 @@ export interface FieldDataPickerProps extends BindingContextProps {
   readonly onWrite?: (() => void) | undefined;
   /** Offers "Create conditional" in a component, which opens the field's Value conditions editor. Absent, the row is not drawn. */
   readonly onConditional?: (() => void) | undefined;
+  /** `lead`: the picker is only its rows above the search (Create conditional), for a field with no data to pick (DataPicker.tsx). */
+  readonly rows?: 'data' | 'lead' | undefined;
+  /** Offers "New Class list property" in a component, for an element's classes (classListProp.ts). Absent, the row is not drawn. */
+  readonly classList?: ClassListOffer | undefined;
   readonly onClose: () => void;
 }
 export interface BindFieldProps extends BindingContextProps {
@@ -95,6 +100,10 @@ export interface BindFieldProps extends BindingContextProps {
   readonly field?: FieldDefinition;
   readonly placeholder?: string | undefined;
   readonly wrapCode?: boolean;
+  /** The attribute's name where `field` is absent (a hand-written attribute); it decides how the text is coloured. */
+  readonly attributeName?: string | undefined;
+  /** The element the attribute is on, for the few names that mean something only on one (`<meta content>`). */
+  readonly elementName?: string | undefined;
   readonly apiRef?: MutableRefObject<InsertAPI | undefined>;
   readonly onChange: ValueChange;
 }

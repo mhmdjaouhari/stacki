@@ -3,6 +3,7 @@ import { mkdir, open, readFile, rename, writeFile, stat, copyFile } from 'node:f
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { gitWorkspaceBranch, gitWorkspaceLimits, parseGitWorkspaceManifest, type GitWorkspaceManifest } from './gitWorkspaceContract';
+import { ReferencedError } from '../../shared/referencedError';
 
 // Local commits have no GitHub copy. A successful action must acknowledge its
 // immutable bundle and atomic manifest in durable storage before reporting success.
@@ -52,7 +53,7 @@ export async function saveGitWorkspace(
     const headers = { 'x-studio-token': process.env['STUDIO_CONTAINER_TOKEN'] ?? '' };
     if (bundle !== undefined) {
       if ((await stat(bundle)).size > gitWorkspaceLimits.bundleBytes) {
-        throw new Error('Unpublished Git work exceeds the 96 MiB checkpoint limit. Push first.');
+        throw new ReferencedError('git.studio.unpublishedTooLarge', { size: '96 MiB' });
       }
       const bytes = await readFile(bundle);
       const digest = createHash('sha256').update(bytes).digest('hex');
@@ -99,8 +100,27 @@ export async function downloadGitBundle(digest: string, destination: string): Pr
   await writeFile(destination, bytes, { mode: 0o600 });
 }
 async function requireStored(response: Response): Promise<void> {
-  if (!response.ok) {
-    throw new Error(`Git checkpoint storage rejected the action (HTTP ${response.status}).`);
+  if (response.ok) {
+    return;
+  }
+  // The Worker answers each failure with a short plain-text reason; showing it is what
+  // tells "storage is busy" apart from "the upload was cut short". Bounded, never trusted as markup.
+  const reason = (await storageReason(response)).replace(/\s+/g, ' ').trim().slice(0, 300);
+  throw new Error(`Git checkpoint storage rejected the action (HTTP ${response.status})${reason ? ': ' + reason : '.'}`);
+}
+/** At most the first KiB of a refusal: a reason is one sentence, and the body is never needed whole. */
+async function storageReason(response: Response): Promise<string> {
+  if (!response.body) {
+    return '';
+  }
+  const reader = response.body.getReader();
+  try {
+    const first = await reader.read();
+    return first.done ? '' : new TextDecoder().decode(first.value.subarray(0, 1024));
+  } catch {
+    return '';
+  } finally {
+    await reader.cancel().catch(() => {});
   }
 }
 function manifestPath(root: string): string {

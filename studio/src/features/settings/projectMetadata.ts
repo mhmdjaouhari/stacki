@@ -37,6 +37,9 @@ export async function metadataFiles(root: string): Promise<readonly string[]> {
     'roles',
     'instructions',
     'audits',
+    'breakpoints',
+    'breakpointSync',
+    'variables',
   ];
   const files = await Promise.all(
     kinds.map(async (kind) => {

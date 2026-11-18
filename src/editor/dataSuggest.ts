@@ -19,9 +19,12 @@ import {
   collectionCallIn,
   referenceCallIn,
 } from './dataSource';
-import { entrySampleKey, sampleAt, sampleKey, type TreeNode, sampleNode, literalNode } from './dataSample';
-import { queriesInScope, namesInScope, type CollectionReader, type DataContext, type SchemaField, autoQueryName } from './dataScope';
+import { entrySampleKey, sampleAt, sampleKey, type TreeNode, sampleNode, literalNode, previewFields } from './dataSample';
+import { englishText, messageRef, type TypedMessageRef } from '../../shared/properties/i18n/messageRef';
+import { queriesInScope, namesInScope, type CollectionReader, type DataContext, type SchemaField, type ShapeMember, autoQueryName } from './dataScope';
 import { loopSourcePath, parseLoopHead } from './loopSource';
+import { loopIndexesOfCopy } from './loopSelection';
+import type { LoopCopy } from './loopSelection';
 import type { ImportedValue } from './importedValues';
 export {
   QUERY_MARK,
@@ -159,18 +162,30 @@ function shapeChildren(field: SchemaField | undefined, base: string): TreeNode[]
   if (!field?.shape?.length) {
     return undefined;
   }
-  const shape = field.shape;
+  return shapeNodes(field, base, 1);
+}
+
+// The rows of a declared shape, a member that is a list or an object carrying
+// the rows of its own (`items[0].children[0].title`), down to the depth a List
+// property's item fields nest.
+function shapeNodes(owner: Pick<ShapeMember, 'shape' | 'shapeIsList'>, base: string, depth: number): TreeNode[] {
+  const shape = owner.shape ?? [];
+  assert(depth <= LIMITS.listFieldDepthMax, 'shapeNodes: the shape nests within its bound');
   const fields = (at: string): TreeNode[] =>
-    shape.map((field) => ({
-      path: `${at}.${field.name}`,
-      key: field.name,
-      kind: field.type === 'code' ? 'value' : (field.type ?? 'value'),
-      preview: '',
-      children: undefined,
-    }));
+    shape.map((member) => {
+      const path = `${at}.${member.name}`;
+      const nested = member.shape?.length && depth < LIMITS.listFieldDepthMax ? shapeNodes(member, path, depth + 1) : undefined;
+      return {
+        path,
+        key: member.name,
+        kind: nested ? (member.shapeIsList ? 'list' : 'object') : shapeMemberKind(member),
+        preview: '',
+        children: nested,
+      };
+    });
   // A list is written the way a sample of one is, so everything downstream —
   // the loop item's fields, the picker's own walk — reads it the same way.
-  return field.shapeIsList
+  return owner.shapeIsList === true
     ? [
         {
           path: `${base}[0]`,
@@ -181,6 +196,18 @@ function shapeChildren(field: SchemaField | undefined, base: string): TreeNode[]
         },
       ]
     : fields(base);
+}
+
+// What a member is called in the tree: its type, with the files a text member's format says it holds listed as images and a date as one.
+function shapeMemberKind(member: ShapeMember): string {
+  if (member.type === 'code') {
+    return 'value';
+  }
+  if (member.format === 'image' || member.format === 'video' || member.format === 'file') {
+    // i18n-ignore: a kind id that the picker maps to a message with treeKindLabel, not text drawn as it is.
+    return 'image url';
+  }
+  return member.format === 'date' ? 'date' : (member.type ?? 'value');
 }
 
 // 1. This file's own props. Real values when the canvas is showing an entry
@@ -276,7 +303,9 @@ function withPropValue(
     const words = /^(['`])([\s\S]*)\1$/.exec(literal);
     return { ...node, preview: words === null ? literal : `"${words[2] ?? ''}"` };
   }
-  return from.instance === undefined ? node : { ...node, note: 'not set' };
+  return from.instance === undefined
+    ? node
+    : { ...node, note: englishText(messageRef('editor.dataTree.notSet')), noteRef: messageRef('editor.dataTree.notSet') };
 }
 
 // A reference followed through the data: `getEntry(post.data.author)` is this
@@ -302,7 +331,7 @@ function referenceNode(name: string, value: string, samples: Record<string, unkn
   }
   const many = ref.fn === 'getEntries';
   const node = sampleNode(name, name, many ? [resolved] : resolved, 0);
-  node.preview = `${targetCollection} ${many ? 'entries' : 'entry'}`;
+  Object.assign(node, previewFields(messageRef(many ? 'editor.dataTree.collectionEntries' : 'editor.dataTree.collectionEntry', { name: targetCollection })));
   return node;
 }
 
@@ -339,7 +368,7 @@ function buildValueNodes(
       const many = call.fn !== 'getEntry';
       const node = sampleNode(name, name, many ? [entry] : entry, 0);
       // "blog entries", not "1 item" — the sample is one of them, not all.
-      node.preview = `${call.name} ${many ? 'entries' : 'entry'}`;
+      Object.assign(node, previewFields(messageRef(many ? 'editor.dataTree.collectionEntries' : 'editor.dataTree.collectionEntry', { name: call.name })));
       addUnique(values, node, seen);
       continue;
     }
@@ -393,7 +422,10 @@ function sampledValueNode(name: string, declaration: string, sampled: unknown): 
   const node = sampleNode(name, name, sampled, 0);
   const call = /^[{[]/.test(declaration.trim()) ? undefined : collectionCallIn(declaration);
   if (call !== undefined) {
-    node.preview = `${call.name} ${call.fn === 'getEntry' ? 'entry' : 'entries'}`;
+    Object.assign(
+      node,
+      previewFields(messageRef(call.fn === 'getEntry' ? 'editor.dataTree.collectionEntry' : 'editor.dataTree.collectionEntries', { name: call.name })),
+    );
   }
   assert(node.path === name, 'A sampled value is named as the page names it');
   return node;
@@ -452,7 +484,14 @@ function importNode(name: string, imp: ImportLike, declared: ImportedValue | und
   // Where it comes from says more than "imported": the module, as the file names it.
   const from = `from ${path}`;
   if (declared === undefined) {
-    return { path: name, key: name, kind: 'imported', preview: path === '' ? '' : from, children: undefined };
+    return {
+      path: name,
+      key: name,
+      kind: 'imported',
+      preview: path === '' ? '' : from,
+      ...(path === '' ? {} : { previewRef: messageRef('editor.dataTree.from', { path }) }),
+      children: undefined,
+    };
   }
   switch (declared.kind) {
     case 'function':
@@ -460,15 +499,17 @@ function importNode(name: string, imp: ImportLike, declared: ImportedValue | und
         path: name,
         key: name,
         kind: 'function',
-        preview: path === '' ? 'function' : `function · ${path}`,
+        preview: englishText(functionPreviewRef(path)),
+        previewRef: functionPreviewRef(path),
         children: undefined,
-        unbindable: `${name} is a function: call it in the frontmatter (const value = ${name}(…)) and bind to what it returns`,
+        unbindable: englishText(messageRef('editor.dataTree.unbindable', { name })),
+        unbindableRef: messageRef('editor.dataTree.unbindable', { name }),
       };
     case 'data':
       return sampleNode(name, name, declared.value, 0);
     case 'literal': {
       const node = literalNode(name, name, declared.text, 0);
-      return node.kind === 'value' ? { ...node, kind: 'imported', preview: from } : node;
+      return node.kind === 'value' ? { ...node, kind: 'imported', preview: from, previewRef: messageRef('editor.dataTree.from', { path }) } : node;
     }
     default: {
       const exhaustive: never = declared;
@@ -520,7 +561,7 @@ function derivedShape(node: TreeNode, declaration: string, byName: ReadonlyMap<s
   const base = baseName !== undefined ? byName.get(baseName) : undefined;
   if (base?.children) {
     const children = rebase(base.children, base.path, name);
-    return { ...node, kind: base.kind, preview: base.preview, children };
+    return { ...node, kind: base.kind, preview: base.preview, ...(base.previewRef === undefined ? {} : { previewRef: base.previewRef }), children };
   }
   // One OF a list is one of whatever the list holds, so the fields to show
   // are the item's — `featured` opens onto the same fields as `portfolio`'s
@@ -534,7 +575,10 @@ function derivedShape(node: TreeNode, declaration: string, byName: ReadonlyMap<s
   }
   // "portfolio entries" describes the list; this is one of them.
   const preview = /\bentries$/.test(from?.preview ?? '') ? (from?.preview ?? '').replace(/\bentries$/, 'entry') : item.preview || '';
-  return { ...node, kind: item.kind, preview, children: rebase(item.children, item.path, name) };
+  // The list's "portfolio entries" reference becomes the singular for one of them; any other preview keeps the item's own.
+  const listRef = from?.previewRef;
+  const previewRef = listRef?.key === 'editor.dataTree.collectionEntries' ? messageRef('editor.dataTree.collectionEntry', listRef.params) : item.previewRef;
+  return { ...node, kind: item.kind, preview, ...(previewRef === undefined ? {} : { previewRef }), children: rebase(item.children, item.path, name) };
 }
 
 // 4. Every other collection in the project, whether or not this page reads
@@ -560,7 +604,12 @@ function buildCollectionNodes(
     const entry = samples[collection.name];
     const children = collectionEntryNodes(identifier, collection, samples);
     const node: TreeNode = { path: identifier, key: collection.name, kind: 'list', preview: '', children };
-    node.preview = collection.count === undefined ? 'collection' : `${collection.count} entries`;
+    Object.assign(
+      node,
+      previewFields(
+        collection.count === undefined ? messageRef('editor.dataTree.collection') : messageRef('editor.dataTree.entryCount', { count: collection.count }),
+      ),
+    );
     node.section = 'collections';
     // Browsed one entry at a time (DataPicker's pager), across the whole
     // collection: an entry not read yet is asked for when it is stepped to.
@@ -659,41 +708,19 @@ function buildLoopNodes(
   props: readonly TreeNode[],
   values: readonly TreeNode[],
   itemIndex: Record<string, number> | undefined,
+  selection: LoopCopy | undefined,
+  selectedItems: readonly (number | undefined)[] | undefined,
   seen: Set<string>,
 ): TreeNode[] {
-  const byPath = new Map<string, TreeNode>();
-  const index = (list: readonly TreeNode[], depth: number): void => {
-    assert(depth <= LIMITS.treeDepthMax, 'Data tree exceeds depth limit');
-    for (const node of list) {
-      byPath.set(node.path, node);
-      if (node.children) {
-        index(node.children, depth + 1);
-      }
-    }
-  };
-  index(props, 0);
-  index(values, 0);
-
-  const resolved: TreeNode[][] = [];
-  for (const head of ancestorHeads) {
-    const loop = parseLoopHead(String(head));
-    if (loop === undefined) {
-      continue;
-    }
-    const item = loopItemNode(loop.item, loop.source, byPath, itemIndex);
-    // The item shadows any outer name it repeats, fields and all.
-    for (const path of [...byPath.keys()]) {
-      if (path === loop.item || path.startsWith(`${loop.item}.`) || path.startsWith(`${loop.item}[`)) {
-        byPath.delete(path);
-      }
-    }
-    index([item], 0);
-    const nodes = [item];
-    if (loop.index !== undefined) {
-      nodes.push({ path: loop.index, key: loop.index, kind: 'number', preview: '0', children: undefined });
-    }
-    resolved.push(nodes);
-  }
+  // The pager's own choices win; what the canvas selection is in fills the rest.
+  // Counts come from a first read with only the pager's choices, since an inner
+  // list is a field of the outer item and is sized by it.
+  const first = resolveLoops(ancestorHeads, props, values, itemIndex);
+  // The passes the preview marks are what the canvas says; the copy's place is the guess for a page that marks none.
+  const marked = selectedItems !== undefined && selectedItems.length === ancestorHeads.length ? selectedItems : undefined;
+  const indexes = marked === undefined ? (selection === undefined ? undefined : loopIndexesOfCopy(selection, first.counts)) : marked;
+  const settled = indexes === undefined ? first : resolveLoops(ancestorHeads, props, values, withSelectionIndexes(first.items, indexes, itemIndex));
+  const resolved = settled.nodes;
   assert(resolved.length <= ancestorHeads.length, 'One loop item per loop head at most');
   // Innermost first: the loop you are standing in is the one whose item you
   // are most likely reaching for, and an outer loop is further away in every
@@ -707,10 +734,92 @@ function buildLoopNodes(
   return loops;
 }
 
+// The pager's choices, with each loop the selection is in filled in beside them.
+function withSelectionIndexes(
+  items: readonly (string | undefined)[],
+  indexes: readonly (number | undefined)[],
+  manual: Record<string, number> | undefined,
+): Record<string, number> {
+  assert(items.length === indexes.length, 'withSelectionIndexes: one index per loop');
+  const merged: Record<string, number> = {};
+  for (let position = 0; position < items.length; position++) {
+    const name = items[position];
+    const index = indexes[position];
+    if (name !== undefined && index !== undefined) {
+      merged[name] = index;
+    }
+  }
+  return { ...merged, ...manual };
+}
+
+interface ResolvedLoops {
+  readonly nodes: TreeNode[][];
+  /** The item name of each head, or undefined for a head the picker cannot read. */
+  readonly items: (string | undefined)[];
+  /** How many elements each head's list holds, or undefined when it is not known. */
+  readonly counts: (number | undefined)[];
+}
+
+function resolveLoops(
+  ancestorHeads: readonly string[],
+  props: readonly TreeNode[],
+  values: readonly TreeNode[],
+  itemIndex: Record<string, number> | undefined,
+): ResolvedLoops {
+  const byPath = new Map<string, TreeNode>();
+  const index = (list: readonly TreeNode[], depth: number): void => {
+    assert(depth <= LIMITS.treeDepthMax, 'Data tree exceeds depth limit');
+    for (const node of list) {
+      byPath.set(node.path, node);
+      if (node.children) {
+        index(node.children, depth + 1);
+      }
+    }
+  };
+  index(props, 0);
+  index(values, 0);
+
+  const nodes: TreeNode[][] = [];
+  const items: (string | undefined)[] = [];
+  const counts: (number | undefined)[] = [];
+  for (const head of ancestorHeads) {
+    const loop = parseLoopHead(String(head));
+    if (loop === undefined) {
+      // A loop the picker cannot read still repeats its markup: its size is unknown.
+      items.push(undefined);
+      counts.push(undefined);
+      continue;
+    }
+    const { node: item, count } = loopItemNode(loop.item, loop.source, byPath, itemIndex);
+    // The item shadows any outer name it repeats, fields and all.
+    for (const path of [...byPath.keys()]) {
+      if (path === loop.item || path.startsWith(`${loop.item}.`) || path.startsWith(`${loop.item}[`)) {
+        byPath.delete(path);
+      }
+    }
+    index([item], 0);
+    const loopNodes = [item];
+    if (loop.index !== undefined) {
+      loopNodes.push({ path: loop.index, key: loop.index, kind: 'number', preview: '0', children: undefined });
+    }
+    nodes.push(loopNodes);
+    items.push(loop.item);
+    counts.push(count);
+  }
+  assert(items.length === ancestorHeads.length, 'resolveLoops: one item name per head');
+  assert(counts.length === ancestorHeads.length, 'resolveLoops: one count per head');
+  return { nodes, items, counts };
+}
+
 // What a loop hands `item`: one element of the list `source` names, with
 // every field any element has. "no sample" when the list is not one the app
 // has values for — the item is still offered, with whatever fields are known.
-function loopItemNode(item: string, source: string, byPath: ReadonlyMap<string, TreeNode>, itemIndex: Record<string, number> | undefined): TreeNode {
+function loopItemNode(
+  item: string,
+  source: string,
+  byPath: ReadonlyMap<string, TreeNode>,
+  itemIndex: Record<string, number> | undefined,
+): { readonly node: TreeNode; readonly count: number | undefined } {
   const named = loopSourcePath(source);
   const list = named === undefined ? undefined : byPath.get(named.path);
   // A list's elements are its children; so are an object's values, for
@@ -726,7 +835,12 @@ function loopItemNode(item: string, source: string, byPath: ReadonlyMap<string, 
     path: item,
     key: item,
     kind: first ? first.kind : 'loop item',
-    preview: shown ? shown.preview : listed && list?.preview === '0 items' ? 'no items' : 'no sample',
+    preview: shown ? shown.preview : englishText(emptyLoopPreview(listed && list?.preview === '0 items' ? 'emptyList' : 'noSample')),
+    ...(shown === undefined
+      ? { previewRef: emptyLoopPreview(listed && list?.preview === '0 items' ? 'emptyList' : 'noSample') }
+      : shown.previewRef === undefined
+        ? {}
+        : { previewRef: shown.previewRef }),
     // What the arrows on this row say, and what they have to step through.
     // Only when there is more than one entry to look at: a list of one, or a
     // shape with no values behind it at all, has nowhere to go.
@@ -739,7 +853,7 @@ function loopItemNode(item: string, source: string, byPath: ReadonlyMap<string, 
     children: shown ? rebase(everyField(entries, at), shown.path, item) : undefined,
   };
   assert(node.path === item, 'A loop item is named as its loop names it');
-  return node;
+  return { node, count: shown === undefined ? undefined : entries.length };
 }
 
 /**
@@ -787,7 +901,7 @@ export function dataTree(context: DataContext | undefined): TreeNode[] {
     assert(node.importNeed !== undefined, 'A project source carries the import it needs');
     addUnique(values, node, seen);
   }
-  const loops = buildLoopNodes(context?.ancestorHeads ?? [], props, values, context?.itemIndex, seen);
+  const loops = buildLoopNodes(context?.ancestorHeads ?? [], props, values, context?.itemIndex, context?.selectedCopy, context?.selectedItems, seen);
 
   // The loop item leads: inside a loop, it is what the markup is FOR — every
   // field in there is a field of that item. Then this file's props, then
@@ -822,7 +936,7 @@ function collectionListNode(name: string, page: PageData): TreeNode | undefined 
   const id = toRecord(data)?.['_id'] ?? toRecord(entry)?.['id'];
   const item = itemPath[0] === 'fields' ? { id, fields: data } : entry;
   const node = sampleNode(name, name, [item], 0);
-  node.preview = `${collection} entries`;
+  Object.assign(node, previewFields(messageRef('editor.dataTree.collectionEntries', { name: collection })));
   assert(node.path === name, 'A collection list is named as the page names it');
   return node;
 }
@@ -847,7 +961,14 @@ function listsHolderNode(name: string, value: string, page: PageData): TreeNode 
   assert(children.length <= HOLDER_ENTRIES_MAX, 'A holder lists a bounded number of lists');
   return children.length === 0
     ? undefined
-    : { path: name, key: name, kind: 'object', preview: `${children.length} ${children.length === 1 ? 'list' : 'lists'}`, children };
+    : {
+        path: name,
+        key: name,
+        kind: 'object',
+        preview: englishText(messageRef('editor.dataTree.lists', { count: children.length })),
+        previewRef: messageRef('editor.dataTree.lists', { count: children.length }),
+        children,
+      };
 }
 
 // The page's frontmatter, imports and sampled entries, and the loop reader's
@@ -904,4 +1025,14 @@ function rebase(nodes: readonly TreeNode[] | undefined, from: string, to: string
     path: to + node.path.slice(from.length),
     children: rebase(node.children, from, to, depth + 1),
   }));
+}
+
+// The row of a loop item with nothing to show: an empty list says so, a shape with no values says there is no sample.
+function emptyLoopPreview(reason: 'emptyList' | 'noSample'): TypedMessageRef {
+  return messageRef(reason === 'emptyList' ? 'editor.dataTree.noItems' : 'editor.dataTree.noSample');
+}
+
+// An imported function names the module it comes from when the file says which.
+function functionPreviewRef(path: string): TypedMessageRef {
+  return path === '' ? messageRef('editor.dataTree.function') : messageRef('editor.dataTree.functionFrom', { path });
 }

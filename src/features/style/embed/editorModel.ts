@@ -3,6 +3,8 @@
 // scan's state and signature, and the session caches that keep a scan and a
 // view across remounts (EmbedEditor.tsx).
 
+import type { TemplateWrapper } from '../../../../shared/properties/newStyleTag';
+import { defaultSelectorPick, isUtilityClassName } from '../model/defaultSelector';
 import { useEffect, useRef, useState } from 'react';
 import { assert } from '../../../../shared/core/assert';
 import { type RuleModel } from '../model/cascade';
@@ -31,6 +33,8 @@ import {
   selectorSpecificity,
 } from '../model/selectors';
 import { findNode, getHost, onHostChange, propText, type HostNode } from '../model/host';
+import { compileSelectorList } from '../model/selectorParse';
+import { PSEUDO_ELEMENTS, pseudoLayerAllowed, pseudoValidityForTag } from '../../../../shared/page/pseudoElements';
 import {
   dedupeByKey,
   loadEmbedDocs,
@@ -56,6 +60,7 @@ export {
   DESIGNER_SYNC_INTERVAL_MS,
   selectorKeyOf,
   snapshotSignature,
+  domMatchesChanged,
   nativeSignature,
   chainPrefixDepth,
   selectorOrder,
@@ -189,12 +194,18 @@ export interface ChipInputs {
   removedClasses: ReadonlySet<string>;
   /** Which box the list is for: the element unless a layer is named (usePanelLayer). */
   pseudo?: PanelLayer | undefined;
+  /** The selected element's rendered tag (ElementSnapshot.tag), lowercase, or undefined
+   *  while unknown: a pseudo-element chip the tag can never draw is left out. */
+  elementTag?: string | undefined;
   /** Classes the instance passed to the component open on the canvas, offered as
    *  chips of their own (model/instanceClasses.ts). Empty outside a component. */
   instanceClasses?: readonly string[] | undefined;
   /** What the element's node writes in the open component file, which makes a chip
    *  green (model/componentMarkup.ts). Undefined on a page: nothing is green there. */
   componentMarkup?: ComponentMarkup | undefined;
+  /** The selector keys last settled green for this instance, used while its component
+   *  file is read again so the chips keep their colour (model/chipProvenanceMemory.ts). */
+  rememberedGreen?: ReadonlySet<string> | undefined;
   /** Nested selectors as they were typed, for chips with no rule yet (withTypedLabel). */
   typedLabels?: TypedLabels | undefined;
 }
@@ -210,6 +221,31 @@ export function pseudoLayerChips(list: readonly MatchedSelector[], layer: PanelL
   const shown = layer === 'every' ? [...list] : list.filter((entry) => chipLayer(entry) === layer);
   assert(shown.length <= list.length, 'pseudoLayerChips: a filter never adds');
   return shown;
+}
+
+/**
+ * Whether a chip's selector styles a box `tag` can draw: false only when every
+ * member names a pseudo-element the tag never has (`img` with `.x::before`,
+ * `div` with `.x::placeholder`, shared/page/pseudoElements.ts). A rule the
+ * element's display could still reach (`div::marker`) and a tag not yet known
+ * keep their chip, so no rule the page applies is hidden.
+ */
+export function pseudoChipApplies(selectorText: string, tag: string | undefined): boolean {
+  if (tag === undefined || tag.length === 0) {
+    return true;
+  }
+  const members = compileSelectorList(selectorText).map((selector) => normalizePseudoElement(selector.pseudoElement).replace(/^::/, ''));
+  assert(members.length <= selectorText.length + 1, 'pseudoChipApplies: one member per selector in the list');
+  if (members.length === 0) {
+    return true;
+  }
+  return members.some((member) => {
+    const known = PSEUDO_ELEMENTS.find((name) => name === member);
+    if (known === undefined) {
+      return true; // The element itself (''), or a pseudo-element the table does not judge (`::selection`).
+    }
+    return pseudoValidityForTag(tag.toLowerCase(), known) !== 'invalid';
+  });
 }
 
 // Every selector (with styles) that targets the element in the current context, for
@@ -245,11 +281,17 @@ export function chipsFor(inputs: ChipInputs): MatchedSelector[] {
   // own (`.stat_wrap`) and the other pseudo-element's are left out. The element's
   // list likewise leaves out its pseudo-elements'. A pseudo-element selector typed
   // on the element's row is the exception: it is the target, so its chip stays.
-  const layered = pseudoLayerChips(list, inputs.pseudo ?? '');
-  const typed = list.filter((entry) => chipLayer(entry) !== '' && !layered.includes(entry) && selectorsMatch(entry.text, inputs.activeSelector));
+  const drawable = list.filter((entry) => pseudoChipApplies(entry.text, inputs.elementTag) || selectorsMatch(entry.text, inputs.activeSelector));
+  assert(drawable.length <= list.length, 'chipsFor: the pseudo-element filter never adds');
+  const layered = pseudoLayerChips(drawable, inputs.pseudo ?? '');
+  const typed = drawable.filter((entry) => chipLayer(entry) !== '' && !layered.includes(entry) && selectorsMatch(entry.text, inputs.activeSelector));
   // A chip is the component's (green) when the markup writes what it needs; an
   // instance's class is never written there, so its chip is not.
-  const shown = [...layered, ...typed].map((entry) => (writtenInMarkup(entry.text, inputs.componentMarkup) ? { ...entry, inComponentMarkup: true } : entry));
+  const shown = [...layered, ...typed].map((entry) =>
+    writtenInMarkup(entry.text, inputs.componentMarkup) || inputs.rememberedGreen?.has(selectorKey(entry.text)) === true
+      ? { ...entry, inComponentMarkup: true }
+      : entry,
+  );
   // The well reads broadest first (wellOrder): the styled tag, the global chips
   // (`:target`, `*`), the component's chips together, then the element's classes and
   // the nested selectors, each group least specific first. A specificity tie keeps the
@@ -421,8 +463,24 @@ export function upgradedDefault(
 ): MatchedSelector | undefined {
   const { tokens, classList } = element;
   const defaultSelector = tokensToSelector(element.defaultTokens, tokens);
-  if (defaultSelector && local.some((entry) => selectorsMatch(entry.text, defaultSelector))) {
+  const defaultClass = /^\.([\w-]+)$/.exec(defaultSelector)?.[1];
+  // A styled default stays, unless it is a utility: that is nobody's own selector.
+  if (
+    defaultSelector &&
+    !(defaultClass !== undefined && isUtilityClassName(defaultClass)) &&
+    local.some((entry) => selectorsMatch(entry.text, defaultSelector))
+  ) {
     return undefined;
+  }
+  // A regular class, else the component's `:where(.base)`, else the tag (model/defaultSelector.ts).
+  const pickedText = defaultSelectorPick({
+    styled: local.map((entry) => entry.text),
+    classes: tokens.filter((token) => token.kind === 'class').map((token) => token.label ?? token.name.slice('class:'.length)),
+    tag: tokens.find((token) => token.kind === 'tag')?.label,
+  });
+  const picked = pickedText === undefined ? undefined : local.find((entry) => entry.text === pickedText);
+  if (picked !== undefined) {
+    return picked;
   }
   // Fall back to the FIRST applied class that has styles (the primary block class in
   // Lumos) rather than styled[last] — utility classes (u-*) sort last by name and
@@ -538,6 +596,8 @@ export function createRuleForWrite(
     wrapper: string | undefined;
     selector: string;
     write: PropWrite;
+    /** The blocks the project's new-style-tag template puts rules in, for a `<style>` tag target; absent for a stylesheet. */
+    templateWrappers?: readonly TemplateWrapper[];
   },
 ): boolean {
   const { nested, bpMedia, embedContext, selector, wrapper } = where;
@@ -554,7 +614,7 @@ export function createRuleForWrite(
     return createRuleInMedia(region, bpMedia, selector, prop, { value, important });
   }
   if (!embedContext) {
-    return createRuleAtRoot(region, selector, prop, { value, important });
+    return createRuleAtRoot(region, selector, prop, { value, important }, where.templateWrappers ?? []);
   }
   const block = listAtRuleBlocks(region).find((entry) => entry.atContext.join(' › ') === embedContext && entry.placement.kind === 'top-level');
   return block
@@ -587,6 +647,7 @@ export function unselectedScanState(content: Content, rememberedPageEmbedCount: 
     inComponentContext: content.scan.inComponentContext,
     // No element, so no selectors on their way: nothing to hold for.
     settled: true,
+    awaitingFirstAnswer: false,
   };
 }
 
@@ -608,6 +669,7 @@ export function scanStateFor(
     errors: content.errors,
     inComponentContext: content.scan.inComponentContext,
     settled,
+    awaitingFirstAnswer: false,
   };
 }
 
@@ -616,11 +678,14 @@ export function scanStateFor(
 export function resolveStatus(content: Content, model: RuleModel): string {
   const count = model.matchedRuleCount;
   if (content.partial) {
+    // i18n-ignore: write-only status (useScanState discards it); nothing renders this text.
     return count > 0 ? `${count} matching rule${count === 1 ? '' : 's'} so far — scanning components…` : 'Scanning component embeds…';
   }
   if (count > 0) {
+    // i18n-ignore: write-only status (useScanState discards it); nothing renders this text.
     return `${count} matching rule${count === 1 ? '' : 's'}.`;
   }
+  // i18n-ignore: write-only status (useScanState discards it); nothing renders this text.
   return content.embedCount ? 'No embed styles target this element.' : 'No HTML embeds with <style> blocks found.';
 }
 
@@ -946,10 +1011,18 @@ export function readPseudoTarget(): PseudoTarget | undefined {
   if (request === undefined) {
     return undefined;
   }
-  if (request.nodeId === host.selectedId) {
-    return request.pseudo === 'before' ? '::before' : '::after';
+  if (request.nodeId !== host.selectedId) {
+    return undefined;
   }
-  return undefined;
+  // A pick reaches the panel only for an HTML element (the app parses it,
+  // shared/page/pseudoElements.ts); one on a node the open file shows as a loop
+  // or an instance is refused here as well, so the panel never styles a box the
+  // node has not got.
+  const node = findNode(host.nodes, request.nodeId);
+  if (node !== undefined && !pseudoLayerAllowed(node, request.pseudo)) {
+    return undefined;
+  }
+  return request.pseudo === 'before' ? '::before' : '::after';
 }
 
 /**

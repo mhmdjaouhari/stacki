@@ -4,6 +4,7 @@
 import { useState } from 'react';
 import type { KeyboardEvent, ReactNode } from 'react';
 import Dropdown from '../../ui/Dropdown';
+import { useLocale, useTranslate } from '../../lib/i18n/useTranslate';
 import {
   astroConditionCode,
   groqConditionCode,
@@ -31,6 +32,7 @@ import {
 import { CodeBox, EditorRow, ListRow, SectionHeader } from './LoopRows';
 import { useCollectionSample, useReferenceChoices } from './loopSettingsData';
 import { FieldPicker } from './LoopFieldPicker';
+import { TypedFieldForm, type TypedFieldSupport } from './LoopTypedFieldForm';
 import { SettingDot, type BindingContext, type DraftEditor } from './LoopBinding';
 import { LinkedSetting } from './LoopLinked';
 import { moved, staysPut } from './LoopItems';
@@ -44,6 +46,8 @@ export interface SectionProps {
   readonly fields: readonly CatalogField[] | undefined;
   /** Where a kept list's items hold their fields (`fields`); absent for a collection's own `data`. */
   readonly itemPath?: readonly string[] | undefined;
+  /** Present for a list whose items are not known: a field can be typed by name. */
+  readonly typed?: TypedFieldSupport | undefined;
   readonly onChange: (query: LoopQuery) => void;
 }
 
@@ -94,6 +98,7 @@ function filterDraft(props: FilterSectionProps): DraftEditor {
 }
 
 function FilterEditor(props: FilterSectionProps) {
+  const translate = useTranslate();
   const { query, fields } = props;
   // One item, read once for the section: every Field picker shows its values.
   const sample = useCollectionSample(props.projectPath, props.catalog, query.source);
@@ -122,7 +127,7 @@ function FilterEditor(props: FilterSectionProps) {
   return (
     <div className="loop-settings-section">
       <SectionHeader
-        title="Filters"
+        title={translate('props.loop.filters.title')}
         label={props.label}
         dot={<SettingDot setting="filter" binding={props.binding} draft={filterDraft(props)} />}
         toggle={props.toggle}
@@ -172,16 +177,17 @@ function FilterEditor(props: FilterSectionProps) {
 
 // "Match all" or "Match any", beside the add button once there are two filters.
 function MatchMenu(props: { readonly query: LoopQuery; readonly onChange: (query: LoopQuery) => void }) {
+  const translate = useTranslate();
   return (
     <Dropdown<'all' | 'any'>
       livePreview={false}
       value={props.query.match}
-      ariaLabel="Match"
+      ariaLabel={translate('props.loop.filters.match')}
       className="loop-settings-match"
       menuWidthMin={140}
       options={[
-        { value: 'all', label: 'Match all' },
-        { value: 'any', label: 'Match any' },
+        { value: 'all', label: translate('props.loop.filters.matchAll') },
+        { value: 'any', label: translate('props.loop.filters.matchAny') },
       ]}
       onChange={(match) => props.onChange({ ...props.query, match })}
     />
@@ -196,24 +202,37 @@ function NewFilterRow(props: {
   readonly onCommit: (condition: LoopCondition) => void;
   readonly onClose: () => void;
 }) {
-  // With no field to filter by, custom code is the only filter there is.
-  const [custom, setCustom] = useState(props.first === undefined);
+  const translate = useTranslate();
+  const { typed } = props.context;
+  // With no field to filter by, a list's field is typed by name; any other source has custom code only.
+  const [custom, setCustom] = useState(props.first === undefined && typed === undefined);
   // The field picked in the code editor's Field menu, to start the field editor on.
   const [picked, setPicked] = useState<CatalogField | undefined>(undefined);
   const first = picked ?? props.first;
+  const fields = picked !== undefined && !props.fields.some((field) => field.path === picked.path) ? [...props.fields, picked] : props.fields;
   return (
     <ListRow
-      parts={{ lead: custom || first === undefined ? 'Custom code' : first.title, rest: 'New filter' }}
+      parts={{
+        lead: custom ? translate('props.loop.customCode') : first === undefined ? translate('props.loop.field') : first.title,
+        rest: translate('props.loop.filters.new'),
+      }}
       open={true}
-      removeLabel="Discard filter"
+      removeLabel={translate('props.loop.filters.discard')}
       editor={
-        custom || first === undefined ? (
+        first === undefined && !custom && typed !== undefined ? (
+          <>
+            <TypedFieldForm item={typed.item} onUse={setPicked} />
+            <button type="button" className="loop-quiet-row" onClick={() => setCustom(true)}>
+              {translate('props.loop.customCode')}
+            </button>
+          </>
+        ) : custom || first === undefined ? (
           <CustomConditionEditor
             code=""
-            fields={props.fields}
+            fields={fields}
             context={props.context}
-            onField={(path) => {
-              setPicked(fieldNamed(props.fields, path));
+            onField={(path, field) => {
+              setPicked(field ?? fieldNamed(fields, path));
               setCustom(false);
             }}
             onCommit={props.onCommit}
@@ -222,7 +241,7 @@ function NewFilterRow(props: {
           <ConditionEditor
             key={first.path}
             draft={draftFor(first)}
-            fields={props.fields}
+            fields={fields}
             context={props.context}
             onCustom={() => setCustom(true)}
             onCommit={props.onCommit}
@@ -241,26 +260,28 @@ function CustomConditionEditor(props: {
   readonly fields: readonly CatalogField[];
   readonly context: ChoiceContext;
   /** Back to a field's editor, on the field picked; absent where there are no fields. */
-  readonly onField: ((path: string) => void) | undefined;
+  readonly onField: ((path: string, typed?: CatalogField) => void) | undefined;
   readonly onCommit: (condition: LoopCondition) => void;
 }) {
+  const translate = useTranslate();
   const source = props.context.query.source.kind;
   return (
     <div className="loop-settings-editor">
-      <EditorRow label="Field">
+      <EditorRow label={translate('props.loop.field')}>
         <FieldMenu
           value={CUSTOM_FIELD}
           fields={props.fields}
           custom={true}
           sample={props.context.sample}
-          onChange={(path) => (path === CUSTOM_FIELD ? undefined : props.onField?.(path))}
+          typed={props.context.typed}
+          onChange={(path, typed) => (path === CUSTOM_FIELD ? undefined : props.onField?.(path, typed))}
         />
       </EditorRow>
       <CodeBox
         value={props.code}
-        label="Filter code"
+        label={translate('props.loop.filters.code')}
         placeholder={customFilterPlaceholder(source)}
-        check={(code) => customFilterProblem(code, source)}
+        check={(code) => customFilterProblem(code, source, translate)}
         onCommit={(code) => props.onCommit({ kind: 'custom', code })}
       />
     </div>
@@ -290,14 +311,17 @@ function FieldMenu(props: {
   readonly fields: readonly CatalogField[];
   readonly custom: boolean;
   readonly sample: unknown;
-  readonly onChange: (path: string) => void;
+  readonly typed?: TypedFieldSupport | undefined;
+  readonly onChange: (path: string, typed?: CatalogField) => void;
 }) {
+  const translate = useTranslate();
   return (
     <FieldPicker
       value={props.value}
       fields={props.fields}
       sample={props.sample}
-      extras={props.custom ? [{ value: CUSTOM_FIELD, label: 'Custom code', icon: <CodeIcon size={13} /> }] : []}
+      typed={props.typed}
+      extras={props.custom ? [{ value: CUSTOM_FIELD, label: translate('props.loop.customCode'), icon: <CodeIcon size={13} /> }] : []}
       usable={(field) => operatorsFor(field.kind).length > 0}
       onChange={props.onChange}
     />
@@ -311,6 +335,7 @@ export interface ChoiceContext {
   readonly operatorSet: OperatorSet;
   /** One item of the collection, whose values the Field picker shows. */
   readonly sample?: unknown;
+  readonly typed?: TypedFieldSupport | undefined;
 }
 
 // Settings stored as data (a builder's options object) compare with values
@@ -331,6 +356,8 @@ function FilterChip(props: {
   readonly onToggle: () => void;
   readonly onChange: (condition: LoopCondition | undefined) => void;
 }) {
+  const translate = useTranslate();
+  const { locale } = useLocale();
   const { condition, fields } = props;
   const field = condition.kind === 'test' ? fieldNamed(fields, condition.field) : undefined;
   const choices = useReferenceChoices(props.context, field);
@@ -360,8 +387,8 @@ function FilterChip(props: {
           onField={
             first === undefined
               ? undefined
-              : (path) => {
-                  setPicked(fieldNamed(filterable, path));
+              : (path, typed) => {
+                  setPicked(typed ?? fieldNamed(filterable, path));
                   setShown('field');
                 }
           }
@@ -376,7 +403,7 @@ function FilterChip(props: {
       <ConditionEditor
         key={first.path}
         draft={condition.kind === 'test' && picked === undefined ? draftOf(condition) : draftFor(first)}
-        fields={filterable}
+        fields={picked !== undefined && !filterable.some((candidate) => candidate.path === picked.path) ? [...filterable, picked] : filterable}
         context={props.context}
         onCustom={codeAllowed ? () => setShown('code') : undefined}
         onCommit={commit}
@@ -387,10 +414,10 @@ function FilterChip(props: {
     <>
       <ListRow
         dragThrough={true}
-        parts={conditionParts(condition, fields, choices)}
+        parts={conditionParts(condition, fields, choices, translate, locale)}
         open={props.open}
         locked={condition.kind === 'custom' && !codeAllowed}
-        removeLabel="Remove filter"
+        removeLabel={translate('props.loop.filters.remove')}
         editor={editor()}
         onToggle={props.onToggle}
         onRemove={() => props.onChange(undefined)}
@@ -409,8 +436,11 @@ function ConditionEditor(props: {
   readonly onCustom?: (() => void) | undefined;
   readonly onCommit: (condition: LoopCondition) => void;
 }) {
+  const translate = useTranslate();
   const [draft, setDraft] = useState(props.draft);
-  const field = fieldNamed(props.fields, draft.field);
+  // A field typed in the Field menu is not among the list's own until the filter is written.
+  const [typedField, setTypedField] = useState<CatalogField | undefined>(undefined);
+  const field = fieldNamed(props.fields, draft.field) ?? (typedField?.path === draft.field ? typedField : undefined);
   const kind: LoopFieldKind = field?.kind ?? 'other';
   const choices = useReferenceChoices(props.context, field);
   const commit = (next: ConditionDraft): void => {
@@ -420,27 +450,35 @@ function ConditionEditor(props: {
       props.onCommit(condition);
     }
   };
-  const changeField = (path: string): void => {
+  const changeField = (path: string, typed?: CatalogField): void => {
     if (path === CUSTOM_FIELD) {
       props.onCustom?.();
       return;
     }
-    const picked = fieldNamed(props.fields, path);
+    const picked = typed ?? fieldNamed(props.fields, path);
     if (picked !== undefined) {
+      setTypedField(typed);
       commit(draftFor(picked));
     }
   };
   return (
     <div className="loop-settings-editor">
-      <EditorRow label="Field">
-        <FieldMenu value={draft.field} fields={props.fields} custom={props.onCustom !== undefined} sample={props.context.sample} onChange={changeField} />
+      <EditorRow label={translate('props.loop.field')}>
+        <FieldMenu
+          value={draft.field}
+          fields={props.fields}
+          custom={props.onCustom !== undefined}
+          sample={props.context.sample}
+          typed={props.context.typed}
+          onChange={changeField}
+        />
       </EditorRow>
-      <EditorRow label="When">
+      <EditorRow label={translate('props.loop.when')}>
         <Dropdown
           livePreview={false}
           value={draft.operator}
-          ariaLabel="When"
-          options={operatorsIn(kind, props.context.operatorSet).map((operator) => ({ value: operator, label: operatorLabel(operator) }))}
+          ariaLabel={translate('props.loop.when')}
+          options={operatorsIn(kind, props.context.operatorSet).map((operator) => ({ value: operator, label: operatorLabel(operator, translate) }))}
           onChange={(operator) => commit({ ...draft, operator })}
         />
       </EditorRow>
@@ -464,6 +502,7 @@ function ValueRow(props: {
   readonly onChange: (value: string) => void;
   readonly onCommit: (value: string) => void;
 }) {
+  const translate = useTranslate();
   const { draft, kind } = props;
   const operator = draft.operator;
   const valueless =
@@ -484,8 +523,8 @@ function ValueRow(props: {
       <Dropdown<string>
         livePreview={false}
         value={draft.value}
-        ariaLabel="Value"
-        placeholder="Choose…"
+        ariaLabel={translate('props.loop.value')}
+        placeholder={translate('ui.choose')}
         searchable={options.length > 10}
         options={options.map((option) => ({ value: option.value, label: option.title }))}
         onChange={props.onCommit}
@@ -499,7 +538,7 @@ function ValueRow(props: {
       <input
         type={numeric ? 'number' : 'text'}
         value={draft.value}
-        placeholder={numeric ? '0' : 'Value'}
+        placeholder={numeric ? '0' : translate('props.loop.value')}
         maxLength={LOOP_QUERY_LIMITS.valueCharsMax}
         spellCheck={false}
         onChange={(event) => props.onChange(event.target.value)}
@@ -508,5 +547,5 @@ function ValueRow(props: {
       />
     );
   }
-  return <EditorRow label="Value">{control}</EditorRow>;
+  return <EditorRow label={translate('props.loop.value')}>{control}</EditorRow>;
 }

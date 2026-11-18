@@ -2,9 +2,20 @@
 // the native target, a component's own source, the resolved properties, the
 // selector chips and changing context (EmbedEditor.tsx).
 
+import { useTranslate } from '../../../lib/i18n/useTranslate';
 import { chipStyleOf, inlineResolveInput, inlineTargetOf, type InlineState } from './useInlineTarget';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { resolveStyle, selectorsMatch, type ContextInfo, type ContextKey, type MatchedSelector, type SourceKey, type StyleContext } from '../model/resolved';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import {
+  contextKeyOf,
+  resolveStyle,
+  selectorKey,
+  selectorsMatch,
+  type ContextInfo,
+  type ContextKey,
+  type MatchedSelector,
+  type SourceKey,
+  type StyleContext,
+} from '../model/resolved';
 import { breakpointForAtContext, breakpointTier, buildStyleContexts, nativeContribsFor, nativeHasValues, selectedNativeIndexFor } from '../model/nativeStyles';
 import { listAtRuleBlocks } from '../model/css';
 import {
@@ -21,15 +32,27 @@ import {
 } from '../model/queryWrapper';
 import { reachOfWrapper, wrapperOnLayer, type WrapperReach } from '../model/queryReach';
 import { canvasWidthForQuery } from '../model/queryWidth';
+import { baseCanvasTarget } from '../model/baseWidth';
+import { followedContextKey } from '../model/followWidth';
+import { followBreakpoint } from './followBreakpoint';
+import { useProjectBreakpoints } from '../../../ipc/useProjectBreakpoints';
+import { followRetargetKey, useCanvasWidthPx, useFollowMode } from './contextFollow';
 import { isGlobalSelector, type MatchTarget } from '../model/selectors';
-import { selectedInstanceMarkup, selectedInstanceMarkupPending } from '../model/webflowElement';
+import { selectedInstanceMarkup, selectedInstanceMarkupPending, selectedInstanceScope } from '../model/webflowElement';
+import { rememberChipProvenance, rememberedGreenChips } from '../model/chipProvenanceMemory';
 import { componentSource, componentSourcePending } from '../model/componentSourceCache';
-import { assert } from '../../../../shared/core/assert';
+import { applyCascadeTruth } from '../model/cascadeTruth';
+import { useCascadeTruth } from '../model/computedStyle';
 import { useComponentSourceTick } from './useComponentSourceTick';
 import { nativeStylingAvailable, rebuildRules } from '../model/webflow';
 import { indexQueriesByClass, orderContexts, relativeContexts, relativesOf } from '../model/contextOrder';
 import { getHost, onHostChange } from '../model/host';
 import { instanceSourceKey, type InstanceStyleDocument } from '../model/instanceClasses';
+import { followSource, selectorHomeKey } from '../model/selectorHome';
+import { CREATE_STYLE_TAG_KEY, defaultStyleTarget, defaultTargetKey, type StyleTagFact } from '../model/newStyleTarget';
+import { getNewStyleTagSettings, onNewStyleTagSettings } from '../model/newStyleTagSettings';
+import { styleTagScopeOf } from '../../../../shared/properties/newStyleTag';
+import { styleBlockFileSupported } from '../model/firstStyleBlock';
 import { contextAfterDevice, deviceTargetOf } from '../model/deviceContext';
 import { EMPTY_RULE_MODEL } from './EditorBasics';
 import { chipsFor, pseudoLayerChips, readPanelLayer, styledSelectorsFor, usePanelLayer, usePseudoTarget } from './editorModel';
@@ -101,11 +124,12 @@ export function useStyleContexts(
   embedContexts: ReturnType<typeof useEmbedContexts>,
   wrapperReachHook: ReturnType<typeof useWrapperReach>,
 ) {
+  const translate = useTranslate();
   const { context, setContext, stickyContextRef } = selectionState;
   const { nativeModel } = nativeState;
   const { allContextKeys } = contextKeys;
   const { sourceContexts, styledEmbedContexts } = embedContexts;
-  const { reachOf } = wrapperReachHook;
+  const { reachOf, reachPending } = wrapperReachHook;
 
   // The unified context list: Base + the breakpoints/queries that are written
   // somewhere (never a preset nobody authored). Drives the dropdown and which
@@ -113,7 +137,9 @@ export function useStyleContexts(
   const styleContexts = useMemo<StyleContext[]>(() => {
     // A query nested inside a rule is listed only where it can reach the element
     // (model/queryReach.ts): undecided ones stay, misses go.
-    const list = buildStyleContexts(allContextKeys, nativeModel, styledEmbedContexts, sourceContexts).filter((entry) => reachOf(entry.key).kind !== 'misses');
+    const list = buildStyleContexts(allContextKeys, nativeModel, styledEmbedContexts, sourceContexts, translate).filter(
+      (entry) => reachOf(entry.key).kind !== 'misses',
+    );
     // Keep the manually-selected query available on any element — even one with no
     // styles there yet — so switching elements stays on it and you can add a style.
     // Only needed for custom @media/@container (breakpoints are always built). A
@@ -124,15 +150,15 @@ export function useStyleContexts(
       list.push(sticky);
     }
     return list;
-  }, [allContextKeys, nativeModel, styledEmbedContexts, sourceContexts, context, stickyContextRef, reachOf]);
+  }, [allContextKeys, nativeModel, styledEmbedContexts, sourceContexts, context, stickyContextRef, reachOf, translate]);
   const currentContext = useMemo<StyleContext>(
     () =>
       styleContexts.find((entry) => entry.key === context) ??
       // A typed query, once written, is listed under its stylesheet: the typed key
       // names no stylesheet, so it is the written row's place that matches.
       styleContexts.find((entry) => splitSourcedKey(context).source === undefined && entry.key !== '' && splitSourcedKey(entry.key).placed === context) ??
-      styleContexts[0] ?? { key: '', label: 'Base', breakpoint: 'main', embedAtContext: '' },
-    [styleContexts, context],
+      styleContexts[0] ?? { key: '', label: translate('styleModel.breakpoint.main'), breakpoint: 'main', embedAtContext: '' },
+    [styleContexts, context, translate],
   );
   // Remember the selected context object so it survives an element switch (the list
   // rebuilds per element; a custom query the new element lacks gets re-injected above).
@@ -144,7 +170,13 @@ export function useStyleContexts(
       setContext(currentContext.key);
     }
   }, [currentContext, context, stickyContextRef, setContext]);
-  useDesktopReturnsToBase(currentContext, setContext);
+  // Where a canvas width is known the panel owns its target: following moves it with the width, and
+  // holding leaves it exactly where the person put it, through every width and device change (a held
+  // breakpoint must not fall back to Base on Desktop). The Desktop-returns-to-Base rule is only for a
+  // panel with no canvas width to follow or hold against.
+  const canvasWidthKnown = useCanvasWidthPx() !== undefined;
+  const followsCanvas = canvasWidthKnown;
+  useDesktopReturnsToBase({ currentContext, followsCanvas }, setContext);
   // The selection moved somewhere the chosen nested query cannot reach: writing
   // there would do nothing, so the panel goes back to Base.
   const contextReach = reachOf(context).kind;
@@ -153,7 +185,7 @@ export function useStyleContexts(
       setContext('');
     }
   }, [contextReach, setContext]);
-  return { currentContext, styleContexts };
+  return { currentContext, styleContexts, reachPending };
 }
 
 /**
@@ -223,14 +255,22 @@ export function useWrapperReach(
     },
     [answers, layer, selectedRef, targetRef],
   );
-  return { reachOf };
+  // The answers are for another element than the one selected: nested rows are undecided and shown, and
+  // would then be dropped, so the list is not yet the one to draw.
+  const reachPending = wrappers.length > 0 && answers.target !== (selectedRef.current ? targetRef.current : undefined);
+  return { reachOf, reachPending };
 }
 
 // Switching the canvas to desktop takes an `@media` context back to Base
 // (model/deviceContext.ts says why and which contexts stay). It reacts to the
 // host's device CHANGING to desktop: pressing Desktop while already on it is no
 // switch, and so changes nothing.
-function useDesktopReturnsToBase(currentContext: StyleContext, setContext: (context: ContextKey) => void): void {
+function useDesktopReturnsToBase(
+  { currentContext, followsCanvas }: { readonly currentContext: StyleContext; readonly followsCanvas: boolean },
+  setContext: (context: ContextKey) => void,
+): void {
+  const followsCanvasRef = useRef(followsCanvas);
+  followsCanvasRef.current = followsCanvas;
   // Read through a ref so the subscription is made once, not on every context change.
   const currentContextRef = useRef(currentContext);
   currentContextRef.current = currentContext;
@@ -242,6 +282,9 @@ function useDesktopReturnsToBase(currentContext: StyleContext, setContext: (cont
         return;
       }
       deviceLast = device;
+      if (followsCanvasRef.current) {
+        return;
+      }
       const next = contextAfterDevice(currentContextRef.current, deviceTargetOf(device));
       switch (next.kind) {
         case 'base':
@@ -298,11 +341,32 @@ export function useNativeTarget(
   // lands in the selected embed. The user's pick (sourceSel) overrides the default
   // (first embed in page order) and persists across element switches.
   const sourceKeys = useMemo(() => embedList.map((embedDocument) => embedDocument.source.key), [embedList]);
+  // The open file's own `<style>` tags decide where a selector with no rules goes (newStyleTarget.ts):
+  // the first usable tag, or, with none in the file, the virtual "Create <style>" entry.
+  const newStyleTag = useSyncExternalStore(onNewStyleTagSettings, getNewStyleTagSettings);
+  const openFile = getHost().openFilePath;
+  const canAddTag = styleBlockFileSupported(openFile) && getHost().addStyleBlock !== undefined;
+  const styleTags = useMemo(
+    () =>
+      embedList.flatMap((embedDocument): StyleTagFact[] => {
+        const { origin, styleTag } = embedDocument.source;
+        const own = origin.kind === 'node' && origin.filePath === openFile && styleTag !== undefined;
+        return own ? [{ key: embedDocument.source.key, scope: styleTag.scope, variables: styleTag.variables, order: embedDocument.source.order }] : [];
+      }),
+    [embedList, openFile],
+  );
+  const fileCanHoldTag = canAddTag ? 'yes' : 'no';
+  const defaultTarget = defaultStyleTarget({ tags: styleTags, preferredScope: styleTagScopeOf(newStyleTag.attributes), fileCanHoldTag });
+  const createOffered = defaultTarget.kind === 'create';
+  const defaultKey = defaultTargetKey(defaultTarget);
   // The source dropdown only picks where NEW styles are created — it does not scope
   // which existing rule is editable. So it just tracks the user's pick, defaulting to
   // the first embed in page order.
-  const effectiveSourceSelection = sourceSelection && sourceKeys.includes(sourceSelection) ? sourceSelection : (sourceKeys[0] ?? '');
-  return { canNative, creatableClass, effectiveSourceSelection, embedList, nativeIndex };
+  // The virtual entry is a choice only while the file has no tag; the fallback is the first real source.
+  const picked = sourceSelection === CREATE_STYLE_TAG_KEY ? (createOffered ? sourceSelection : undefined) : sourceSelection;
+  const effectiveSourceSelection =
+    picked && (picked === CREATE_STYLE_TAG_KEY || sourceKeys.includes(picked)) ? picked : (sourceKeys[0] ?? (createOffered ? CREATE_STYLE_TAG_KEY : ''));
+  return { canNative, creatableClass, createOffered, defaultKey, effectiveSourceSelection, embedList, nativeIndex };
 }
 
 // Point the style source at an open component's own embed.
@@ -366,7 +430,7 @@ export function useResolved(
   const { elementIdentity } = tokenDefault;
   const { activeSelector } = activeSelectorHook;
   const { currentContext } = styleContextsHook;
-  const { canNative, effectiveSourceSelection, embedList, nativeIndex } = nativeTarget;
+  const { canNative, defaultKey, effectiveSourceSelection, embedList, nativeIndex } = nativeTarget;
   const { inComponentContext } = componentSource;
 
   // Webflow's native style system only supports its own breakpoints (Base/Tablet/…)
@@ -402,7 +466,7 @@ export function useResolved(
   // eslint-disable-next-line react-hooks/exhaustive-deps -- inlineKey stands for inlineNow's contents
   const inline = useMemo(() => inlineNow, [inlineKey]);
 
-  const resolved = useMemo(
+  const ranked = useMemo(
     () =>
       resolveStyle(
         modelForContext(model ?? EMPTY_RULE_MODEL, currentContext),
@@ -421,23 +485,56 @@ export function useResolved(
     [model, currentContext, activeSelector, effectiveSource, nativeContribs, selectedNativeIndex, selectedEmbedKey, pseudoLayer, inline],
   );
 
-  // The stylesheet the active selector's rule already lives in. resolveStyle
-  // picks selectedRule by selector identity and explicitly does NOT scope it to
-  // the source dropdown, so reading it here can't feed back into itself.
-  const homeEmbedKey = resolved.selectedRule?.embedKey;
+  // The page is asked which declaration it really applies, and the ranking is checked against it
+  // (model/cascadeTruth.ts). Only the element at rest in the base context is checked: the page
+  // answers for the element as it renders now, not for a hover state or a ::before box.
+  const checkable =
+    stateKey === '' && pseudoLayer === undefined && (currentContext.embedAtContext ?? ' native-only') === '' && !/::|:(before|after)\b/.test(activeSelector);
+  const checkedProps = useMemo(() => (checkable ? [...ranked.props.keys()] : []), [ranked, checkable]);
+  const cascadeTruth = useCascadeTruth(checkedProps);
+  const resolved = useMemo(() => (checkable ? applyCascadeTruth(ranked, cascadeTruth) : ranked), [ranked, checkable, cascadeTruth]);
 
-  // Selecting an element points "Add custom styles in" at the file that already
-  // defines its selector, so a new declaration joins the rule that's there
-  // instead of landing in whichever stylesheet happens to be first in page
-  // order. An explicit pick still wins: the effect only re-runs when the element
-  // or the selector's home changes, not on every render. Left alone inside a
-  // component, where the source is pinned to that component's own embed.
+  // The stylesheet the active selector's rules already live in: its selected rule's file
+  // (resolveStyle picks that by selector identity and does NOT scope it to the source
+  // dropdown, so reading it here can't feed back into itself), else the file of a rule
+  // for part of it, such as `.home-hero_height` for `div.home-hero_height[data-x]`.
+  const homeEmbedKey = useMemo(
+    () =>
+      resolved.selectedRule?.embedKey ??
+      selectorHomeKey(
+        [...(model?.base ?? []), ...(model?.conditional ?? [])].map((matched) => ({
+          embedKey: matched.rule.embedKey,
+          order: matched.rule.order,
+          context: contextKeyOf(matched.rule),
+          selectorTexts: [matched.rule.selectorText, ...matched.matchedSelectors.map((selector) => selector.text)],
+        })),
+        currentContext.embedAtContext ?? '',
+        activeSelector,
+      ),
+    [resolved.selectedRule, model, currentContext, activeSelector],
+  );
+
+  // Selecting an element or a selector points "Add custom styles in" at the file that
+  // already defines it, so a new declaration joins the rule that's there instead of
+  // landing in whichever stylesheet happens to be first in page order (followSource,
+  // model/selectorHome.ts). The person's own pick wins until the element or selector
+  // changes. Selecting only reads; nothing is written. Left alone inside a component,
+  // where the source is pinned to that component's own embed.
+  const { manualSourcePickRef, selectionKeyRef } = nativeState;
+  const selectionKey = `${elementIdentity}\u0000${activeSelector}`;
+  selectionKeyRef.current = selectionKey;
   useEffect(() => {
-    if (!homeEmbedKey || inComponentContext) {
+    if (inComponentContext) {
       return;
     }
-    setSourceSelection((previous) => (previous === homeEmbedKey ? previous : homeEmbedKey));
-  }, [elementIdentity, activeSelector, homeEmbedKey, inComponentContext, setSourceSelection]);
+    // A selector with no rules anywhere has no home: it goes to the page's own tag, or to the
+    // virtual "Create <style>" entry (newStyleTarget.ts). Selecting only moves the dropdown.
+    const follow = followSource({ selectionKey, homeKey: homeEmbedKey ?? defaultKey, manualPick: manualSourcePickRef.current });
+    manualSourcePickRef.current = follow.manualPick;
+    if (follow.kind === 'move') {
+      setSourceSelection((previous) => (previous === follow.sourceKey ? previous : follow.sourceKey));
+    }
+  }, [selectionKey, homeEmbedKey, defaultKey, inComponentContext, manualSourcePickRef, setSourceSelection]);
 
   useInstanceSource({
     activeSelector,
@@ -535,13 +632,16 @@ export function useSelectorChips(
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the tick stands for the cache's contents
     [elementTokens.componentMarkup, snapshot, documentByKey, componentSourceTick],
   );
-  // While the instance's component file is still being read, its chips' colour is unknown.
+  // While the instance's component file is still being read, its chips keep the colour
+  // they last settled in (chipProvenanceMemory.ts); the read only refines it.
   const provenancePending = useMemo(
     () =>
       elementTokens.componentMarkup === undefined && snapshot !== undefined && selectedInstanceMarkupPending(documentByKey.values(), componentSourcePending),
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the tick stands for the cache's contents
     [elementTokens.componentMarkup, snapshot, documentByKey, componentSourceTick],
   );
+  const instanceScope = selectedInstanceScope();
+  const rememberedGreen = provenancePending && instanceScope !== undefined ? rememberedGreenChips(instanceScope) : undefined;
   const { activeSelector } = activeSelectorHook;
   const { currentContext, styleContexts } = styleContextsHook;
   const pseudo = usePanelLayer();
@@ -552,25 +652,24 @@ export function useSelectorChips(
   // pick/typed one) so it shows as selected while you add its first property.
   const selectorChips = useMemo<MatchedSelector[]>(
     () =>
-      withProvenancePending(
-        chipsFor({
-          model: model === undefined ? undefined : modelForContext(model, currentContext),
-          nativeModel,
-          currentContext,
-          activeSelector,
-          selectedSelectorText,
-          tokens,
-          classList: snapshot?.classList ?? [],
-          removedClasses,
-          pseudo,
-          instanceClasses,
-          componentMarkup,
-          typedLabels,
-        }),
-        { pending: provenancePending },
-      ),
+      chipsFor({
+        model: model === undefined ? undefined : modelForContext(model, currentContext),
+        nativeModel,
+        currentContext,
+        activeSelector,
+        selectedSelectorText,
+        tokens,
+        classList: snapshot?.classList ?? [],
+        removedClasses,
+        pseudo,
+        elementTag: snapshot?.tag,
+        instanceClasses,
+        componentMarkup,
+        rememberedGreen,
+        typedLabels,
+      }),
     [
-      provenancePending,
+      rememberedGreen,
       model,
       nativeModel,
       currentContext,
@@ -585,6 +684,17 @@ export function useSelectorChips(
       typedLabels,
     ],
   );
+
+  // A settled answer is remembered, so the next read of the same component starts
+  // from it. Never while pending: that would remember the memory.
+  useEffect(() => {
+    if (!provenancePending && instanceScope !== undefined) {
+      rememberChipProvenance(instanceScope, {
+        greenKeys: selectorChips.filter((chip) => chip.inComponentMarkup === true).map((chip) => selectorKey(chip.text)),
+        plainKeys: selectorChips.filter((chip) => chip.inComponentMarkup !== true && chip.pending !== true).map((chip) => selectorKey(chip.text)),
+      });
+    }
+  }, [provenancePending, instanceScope, selectorChips]);
 
   // Per-context dropdown info: embed hasStyles/combos (for the dot + auto-highlight)
   // plus whether the breakpoint carries native values.
@@ -633,21 +743,31 @@ export function useSelectorChips(
   return { contextInfos, orderedContexts, selectorChips };
 }
 
-/** The chips with their colour marked unknown while the component file is read; a pending chip has no colour to wait on. */
-export function withProvenancePending(chips: MatchedSelector[], provenance: { readonly pending: boolean }): MatchedSelector[] {
-  if (!provenance.pending) {
-    return chips;
-  }
-  const marked = chips.map((chip) => (chip.pending === true ? chip : { ...chip, provenancePending: true }));
-  assert(marked.length === chips.length, 'withProvenancePending: every chip is kept');
-  return marked;
-}
-
 // The canvas page's root font size, for a `rem` query width. The canvas query
 // protocol does not report the root element's computed font size, so this is
 // the browser default; a page that changes it gets a canvas a little off the
 // query's edge, still on the side the arithmetic put it.
 const ROOT_FONT_SIZE_PX = 16;
+
+// Puts the canvas where Base holds, through the host's one width or device action.
+function showBaseOnCanvas(atContexts: readonly string[]): void {
+  const target = baseCanvasTarget(atContexts, ROOT_FONT_SIZE_PX);
+  const host = getHost();
+  switch (target.kind) {
+    case 'width':
+      host.setCanvasWidth?.(target.widthPx);
+      return;
+    case 'desktop':
+      host.showDesktopCanvas?.();
+      return;
+    case 'keep':
+      return;
+    default: {
+      const exhaustive: never = target;
+      return exhaustive;
+    }
+  }
+}
 
 // Switch context, keeping or re-picking a selector styled there.
 export function useContextChange(
@@ -658,31 +778,64 @@ export function useContextChange(
   selectorPick: ReturnType<typeof useSelectorPick>,
   styleContextsHook: ReturnType<typeof useStyleContexts>,
 ) {
-  const { pendingDefaultRef, setContext } = selectionState;
+  const { context, pendingDefaultRef, setContext } = selectionState;
   const { nativeModel } = nativeState;
-  const { model } = elementTokens;
+  const { model, scan } = elementTokens;
   const { activeSelector } = activeSelectorHook;
-  const { selectActiveSelector } = selectorPick;
-  const { styleContexts } = styleContextsHook;
+  const { selectActiveSelector, setTypedContexts } = selectorPick;
+  const { styleContexts, reachPending } = styleContextsHook;
+  const [followMode, setFollowMode] = useFollowMode(getHost().projectPath);
+  const canvasWidthPx = useCanvasWidthPx();
+  // In a desktop-first component the breakpoint that holds at the canvas width is the target even before
+  // any rule is written for it (embed/followBreakpoint.ts); its row is added to the ones that hold.
+  const { resolved: projectBreakpoints } = useProjectBreakpoints(getHost().projectPath);
+  const breakpointTarget = useMemo(
+    () => (canvasWidthPx === undefined ? undefined : followBreakpoint(styleContexts, canvasWidthPx, projectBreakpoints)),
+    [canvasWidthPx, styleContexts, projectBreakpoints],
+  );
+  // The row that holds at the canvas's width, whether or not the panel is following it.
+  const matchedKey = useMemo(() => {
+    if (canvasWidthPx === undefined) {
+      return undefined;
+    }
+    const rows =
+      breakpointTarget === undefined || breakpointTarget.existingKey !== undefined
+        ? styleContexts
+        : [...styleContexts, { key: breakpointTarget.query, embedAtContext: breakpointTarget.query }];
+    return followedContextKey(rows, canvasWidthPx, ROOT_FONT_SIZE_PX);
+  }, [canvasWidthPx, styleContexts, breakpointTarget]);
 
   // Switching context auto-selects a selector that has styles in the new query:
   // keep the current pick if it's styled there, otherwise jump to the strongest.
-  const onContextChange = useCallback(
-    (next: ContextKey) => {
-      pendingDefaultRef.current = false;
+  // `canvas` says whether the switch moves the canvas to the query's width: a person's pick
+  // does; following the canvas, or unchecking the matched query, must not (the canvas is
+  // where the person put it, and it is the target that moves, never the other way round).
+  const changeContext = useCallback(
+    (next: ContextKey, options: { readonly canvas: 'move' | 'keep'; readonly selector: 'repick' | 'keep' }) => {
+      if (options.selector === 'repick') {
+        pendingDefaultRef.current = false;
+      }
       setContext(next);
       const nextContext = styleContexts.find((entry) => entry.key === next);
       // A picked media query moves the canvas inside it, so the styles written
       // there show (model/queryWidth.ts). The canvas becomes a `custom` width,
       // never `desktop`, so this can't trip the Desktop-returns-to-Base rule
       // (model/deviceContext.ts) and undo the pick it was made for.
-      if (nextContext?.embedAtContext) {
-        const width = canvasWidthForQuery(nextContext.embedAtContext, ROOT_FONT_SIZE_PX);
-        if (width.kind === 'width') {
-          getHost().setCanvasWidth?.(width.widthPx);
+      if (options.canvas === 'move') {
+        if (nextContext?.embedAtContext) {
+          const width = canvasWidthForQuery(nextContext.embedAtContext, ROOT_FONT_SIZE_PX);
+          if (width.kind === 'width') {
+            getHost().setCanvasWidth?.(width.widthPx);
+          }
+        } else if (next === '') {
+          // Base moves the canvas to where Base is the layer in effect, judged by the
+          // queries this same dropdown lists for the element (styleContexts): below the
+          // smallest of mobile-first queries, above the largest of desktop-first ones, else
+          // the desktop preset through the toolbar's own desktop action (model/baseWidth.ts).
+          showBaseOnCanvas(styleContexts.map((entry) => entry.embedAtContext ?? ''));
         }
       }
-      if (!nextContext || !model) {
+      if (options.selector === 'keep' || !nextContext || !model) {
         return;
       }
       // Only selectors with styles IN this context (drop the dimmed other-context ones).
@@ -706,5 +859,70 @@ export function useContextChange(
     },
     [styleContexts, model, nativeModel, activeSelector, selectActiveSelector, pendingDefaultRef, setContext],
   );
-  return { onContextChange };
+  const changeContextRef = useRef(changeContext);
+  changeContextRef.current = changeContext;
+
+  // The dropdown's pick. Three different things can happen to a row press, and they are told
+  // apart here, in one place:
+  //   - the checked, matched row while following: UNCHECK. The target becomes Base and the
+  //     panel is pinned; the canvas stays exactly where it is, so edits apply to every size
+  //     without resizing the canvas;
+  //   - the matched row while pinned: CHECK AGAIN. The panel follows the canvas again; the
+  //     canvas is already inside that query, so it does not move either;
+  //   - any other row, Base included: a choice. The panel is pinned to it and the canvas moves
+  //     to show it (Base lands where Base is the layer in effect), as picking always has.
+  const onContextChange = useCallback(
+    (next: ContextKey) => {
+      if (followMode === 'follow' && next !== '' && next === context && next === matchedKey) {
+        setFollowMode('pinned');
+        changeContext('', { canvas: 'keep', selector: 'keep' });
+        return;
+      }
+      if (followMode === 'pinned' && next !== '' && next === matchedKey) {
+        setFollowMode('follow');
+        changeContext(next, { canvas: 'keep', selector: 'keep' });
+        return;
+      }
+      // Held (Follow canvas size off): the pick is only the style target, and the canvas stays at the
+      // width the person set. Following: a pick pins the target and moves the canvas to show it, as it
+      // always has (Base lands where Base is the layer in effect), so Phone, Tablet and Base agree.
+      const held = followMode === 'pinned' && canvasWidthPx !== undefined;
+      if (followMode === 'follow' && canvasWidthPx !== undefined) {
+        setFollowMode('pinned');
+      }
+      changeContext(next, { canvas: held ? 'keep' : 'move', selector: 'repick' });
+    },
+    [followMode, context, matchedKey, canvasWidthPx, changeContext, setFollowMode],
+  );
+
+  // While following, the target is the row that holds at the canvas's width. It moves the
+  // target only: no write, no canvas move, and the active selector stays where it is. The
+  // dropdown, if open, just checks the new row in place.
+  const following = followMode === 'follow' && matchedKey !== undefined;
+  // The element's rules and the reach of its nested queries have both been answered.
+  const settled = (scan === undefined || scan.settled) && !reachPending;
+  useEffect(() => {
+    const target = followRetargetKey({ following, settled, matchedKey, context });
+    if (target !== undefined) {
+      // A breakpoint nobody has written yet is registered like a typed query: it is listed and checked, and the
+      // first style written under it creates the block. Nothing is written here.
+      if (breakpointTarget !== undefined && breakpointTarget.existingKey === undefined && target === breakpointTarget.query) {
+        setTypedContexts((previous) => (previous.includes(target) ? previous : [...previous, target]));
+      }
+      changeContextRef.current(target, { canvas: 'keep', selector: 'keep' });
+    }
+  }, [following, settled, matchedKey, context, breakpointTarget, setTypedContexts]);
+
+  // The follow control exists only where there is a canvas width to follow. Checking the
+  // matching row, the Follow canvas size row or the pin on the trigger lets go of a hold;
+  // resizing the canvas never does.
+  const contextFollow =
+    canvasWidthPx === undefined
+      ? undefined
+      : {
+          following: followMode === 'follow',
+          onFollow: () => setFollowMode('follow'),
+          onHold: () => setFollowMode('pinned'),
+        };
+  return { onContextChange, contextFollow, contextsSettled: settled };
 }

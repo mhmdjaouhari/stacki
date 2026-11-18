@@ -10,15 +10,16 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { assert } from '../../../shared/core/assert';
 import type { Attr } from '../../../shared/page/pageNode';
-import { CLASS_LIST_LIMITS, type ClassListValue, type GroupMatch } from '../../editor/conditionalValue';
-import Dropdown from '../../ui/Dropdown';
+import { CLASS_LIST_LIMITS, emitClassListExpression, readClassListExpression, type ClassListValue } from '../../editor/conditionalValue';
+import { useTranslate } from '../../lib/i18n/useTranslate';
 import useListReorder from '../../ui/useListReorder';
 import { DropLine } from '../../ui/DropLine';
-import { BranchIcon, CloseIcon, DragIcon, PlusIcon, TrashIcon } from '../../ui/Icons';
-import { ConditionRow, ResultField, ResultWords, useConditionCatalog } from './ConditionalValue';
+import { BranchIcon, CloseIcon, PlusIcon } from '../../ui/Icons';
+import { ConditionGroupBody, ResultField, ResultWords, useConditionCatalog } from './ConditionalValue';
 import {
   appliedClassList,
   classDraftOf,
+  classModelOf,
   whenWords,
   withClassEntry,
   withClassEntryAdded,
@@ -31,17 +32,14 @@ import {
   type ConditionProp,
 } from './conditionalModel';
 import { RowPopup } from './LoopRows';
+import { ConditionCodeBox, ConditionCodeToggle } from './ConditionCodeToggle';
+import { appliedCode, CONTROLS_DECISION, decideConditionView, type ConditionView } from './conditionViewDecision';
 import type { RichContext } from './RichContent';
 import './conditionalValue.css';
 
 const EDITOR_HEIGHT_PX_MAX = 640;
 // Wide enough for a property, an operator and its values on one line; it slides left over the canvas to fit.
 const EDITOR_WIDTH_PX_MIN = 520;
-
-const MATCH_OPTIONS: readonly { readonly value: GroupMatch; readonly label: string }[] = [
-  { value: 'all', label: 'all' },
-  { value: 'any', label: 'any' },
-];
 
 export interface ClassListFieldProps {
   readonly model: ClassListValue;
@@ -53,21 +51,22 @@ export interface ClassListFieldProps {
 
 /** A class list, collapsed: its chip and one line per class, either opening the editor. */
 export function ClassListField(props: ClassListFieldProps) {
-  const catalog = useConditionCatalog(props.bindContext);
+  const translate = useTranslate();
+  const catalog = useConditionCatalog(props.bindContext, 'template');
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   return (
     <div className="conditional-field" ref={ref}>
       <button type="button" className="conditional-chip" aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>
         <BranchIcon size={11} />
-        Class list
+        {translate('props.classList.title')}
       </button>
-      <button type="button" className="conditional-summary class-list-summary" title="Edit the classes" onClick={() => setOpen(true)}>
+      <button type="button" className="conditional-summary class-list-summary" title={translate('props.classList.edit')} onClick={() => setOpen(true)}>
         <span className="conditional-lines">
           {props.model.entries.map((entry, index) => (
             <span key={index} className="conditional-line class-list-line">
               <ResultWords result={entry.value} language="text" />
-              {entry.when.length > 0 && <span className="conditional-bullet-when">{whenWords(entry.when, entry.match, catalog)}</span>}
+              {entry.when.length > 0 && <span className="conditional-bullet-when">{whenWords(entry.when, entry.match, catalog, translate)}</span>}
             </span>
           ))}
         </span>
@@ -95,19 +94,33 @@ export interface ClassListEditorProps {
   readonly onClose: () => void;
 }
 
+const isReadableClassList = (source: string): boolean => readClassListExpression(source) !== undefined;
+
 /** The Class list pop-up, writing its draft once as it closes (as the Value conditions editor does). */
 export function ClassListEditor(props: ClassListEditorProps) {
-  const catalog = useConditionCatalog(props.bindContext);
+  const translate = useTranslate();
+  const catalog = useConditionCatalog(props.bindContext, 'template');
   const [draft, setDraft] = useState<ClassListDraft>(() => classDraftOf(props.model));
   const written = useRef(false);
   const frontmatter = props.bindContext?.frontmatter ?? '';
-  const latest = useRef({ draft, value: props.value, onApply: props.onApply, frontmatter });
-  latest.current = { draft, value: props.value, onApply: props.onApply, frontmatter };
+  // The {} swaps the entries for the expression; code the controls cannot show stays code (conditionViewDecision.ts).
+  const [view, setView] = useState<ConditionView>('visual');
+  const [code, setCode] = useState('');
+  const [codeSeed, setCodeSeed] = useState('');
+  const latest = useRef({ draft, value: props.value, onApply: props.onApply, frontmatter, view, code });
+  latest.current = { draft, value: props.value, onApply: props.onApply, frontmatter, view, code };
   const apply = (from: ClassListDraft): void => {
     if (written.current) {
       return;
     }
     written.current = true;
+    if (latest.current.view === 'code') {
+      const typed = appliedCode(latest.current.code, latest.current.value);
+      if (typed.kind === 'write') {
+        latest.current.onApply(typed.value);
+      }
+      return;
+    }
     const next = appliedClassList(from, latest.current.value, writeOptionsFor(latest.current.value, latest.current.frontmatter));
     if (next.kind === 'write') {
       latest.current.onApply(next.value);
@@ -123,25 +136,52 @@ export function ClassListEditor(props: ClassListEditorProps) {
     apply(draft);
     props.onClose();
   };
+  const decision = view === 'code' ? decideConditionView({ source: code, readable: isReadableClassList, chosen: 'code' }) : CONTROLS_DECISION;
+  const choose = (next: ConditionView): void => {
+    if (next === 'code') {
+      const model = classModelOf(draft);
+      const before = latest.current.value;
+      const text =
+        model.entries.length > 0 ? emitClassListExpression(model, writeOptionsFor(before, frontmatter)) : before?.type === 'expr' ? before.value : '';
+      setCode(text);
+      setCodeSeed(text);
+      setView('code');
+      return;
+    }
+    const model = readClassListExpression(code);
+    if (model !== undefined) {
+      setDraft(classDraftOf(model));
+      setView('visual');
+    }
+  };
   return (
-    <RowPopup anchor={anchor} heightPxMax={EDITOR_HEIGHT_PX_MAX} widthPxMin={EDITOR_WIDTH_PX_MIN} label="Class list" onClose={close}>
+    <RowPopup anchor={anchor} heightPxMax={EDITOR_HEIGHT_PX_MAX} widthPxMin={EDITOR_WIDTH_PX_MIN} label={translate('props.classList.title')} onClose={close}>
       <div className="conditional-editor class-list-editor">
         <div className="loop-property-head">
-          <span className="loop-bind-title">Class list</span>
-          <button type="button" className="loop-settings-remove" aria-label="Close class list" title="Close" onClick={close}>
+          <span className="loop-bind-title">{translate('props.classList.title')}</span>
+          <ConditionCodeToggle decision={decision} onChoose={choose} />
+          <button type="button" className="loop-settings-remove" aria-label={translate('props.classList.close')} title={translate('ui.close')} onClick={close}>
             <CloseIcon size={12} />
           </button>
         </div>
-        <EntryList draft={draft} catalog={catalog} bindContext={props.bindContext} setDraft={setDraft} />
-        <button
-          type="button"
-          className="conditional-add"
-          disabled={draft.entries.length >= CLASS_LIST_LIMITS.entriesMax}
-          onClick={() => setDraft((current) => withClassEntryAdded(current))}
-        >
-          <PlusIcon size={11} />
-          Add class
-        </button>
+        {view === 'code' ? (
+          <>
+            <ConditionCodeBox code={code} seed={codeSeed} context={props.bindContext} onChange={setCode} />
+          </>
+        ) : (
+          <>
+            <EntryList draft={draft} catalog={catalog} bindContext={props.bindContext} setDraft={setDraft} />
+            <button
+              type="button"
+              className="conditional-add"
+              disabled={draft.entries.length >= CLASS_LIST_LIMITS.entriesMax}
+              onClick={() => setDraft((current) => withClassEntryAdded(current))}
+            >
+              <PlusIcon size={11} />
+              {translate('props.classList.add')}
+            </button>
+          </>
+        )}
       </div>
     </RowPopup>
   );
@@ -156,6 +196,7 @@ function EntryList(props: {
   readonly bindContext: RichContext | undefined;
   readonly setDraft: (change: (draft: ClassListDraft) => ClassListDraft) => void;
 }) {
+  const translate = useTranslate();
   const { draft, setDraft, catalog } = props;
   const count = draft.entries.length;
   const move = (source: number, target: number): void => {
@@ -195,81 +236,48 @@ function EntryList(props: {
         className={`conditional-group class-list-entry${reorder.dragIndex === index ? ' is-dragging' : ''}`}
         role="group"
         tabIndex={0}
-        aria-label={`Class ${index + 1}`}
+        aria-label={translate('props.classList.entry', { number: index + 1 })}
       >
         {(gap === index || (gap === count && index === count - 1)) && (
           <span className={`conditional-gap is-${gap === index ? 'before' : 'after'}`}>
             <DropLine />
           </span>
         )}
-        <div className="class-list-entry-head">
-          <button type="button" className="conditional-grip" aria-label={`Drag to reorder class ${index + 1}`} data-drag-through tabIndex={-1}>
-            <DragIcon size={12} />
-          </button>
-          <ResultField
-            label="Class"
-            placeholder="Class name"
-            result={entry.value}
-            bindContext={props.bindContext}
-            language="text"
-            onChange={(value) => change((current) => ({ ...current, value }))}
-          />
-          <button
-            type="button"
-            className="loop-settings-remove"
-            aria-label="Remove class"
-            title="Remove class"
-            onClick={() => setDraft((current) => withClassEntryRemoved(current, index))}
-          >
-            <TrashIcon size={12} />
-          </button>
-        </div>
-        {entry.when.length > 0 && (
-          <div className="conditional-group-head">
-            Only when
-            <Dropdown
-              ariaLabel="Match"
-              className="conditional-match"
-              value={entry.match}
-              options={MATCH_OPTIONS}
-              onChange={(match) => change((current) => ({ ...current, match }))}
+        <ConditionGroupBody
+          match={entry.match}
+          conditions={entry.when}
+          catalog={catalog}
+          conditionsMax={CLASS_LIST_LIMITS.conditionsPerEntryMax}
+          dragGroupLabel={translate('props.classList.drag', { number: index + 1 })}
+          removeLabel={translate('props.classList.remove')}
+          onMatch={(match) => change((current) => ({ ...current, match }))}
+          onCondition={(conditionIndex, next) =>
+            change((current) => ({
+              ...current,
+              when: withCondition({ match: current.match, conditions: current.when, value: current.value }, conditionIndex, next).conditions,
+            }))
+          }
+          // The last condition gone, the class is given always again: it is not removed with it.
+          onConditionRemove={(conditionIndex) =>
+            change((current) => {
+              const when = current.when.filter((_, at) => at !== conditionIndex);
+              return { ...current, when, match: when.length === 0 ? 'all' : current.match };
+            })
+          }
+          onConditionAdd={() => change((current) => withWhenAdded(current, catalog))}
+          onRemove={() => setDraft((current) => withClassEntryRemoved(current, index))}
+          value={
+            <ResultField
+              label={translate('props.classList.class')}
+              placeholder={translate('props.classList.className')}
+              result={entry.value}
+              bindContext={props.bindContext}
+              language="text"
+              shapes="rich"
+              onChange={(value) => change((current) => ({ ...current, value }))}
             />
-            <span className="conditional-phrase">conditions are true</span>
-            {/* Takes the condition away, not the class: it is given always again. */}
-            <button
-              type="button"
-              className="loop-settings-remove"
-              aria-label="Remove condition"
-              title="Remove condition"
-              onClick={() => change((current) => ({ ...current, match: 'all', when: [] }))}
-            >
-              <TrashIcon size={12} />
-            </button>
-          </div>
-        )}
-        {entry.when.map((condition, conditionIndex) => (
-          <ConditionRow
-            key={conditionIndex}
-            condition={condition}
-            catalog={catalog}
-            onChange={(next) =>
-              change((current) => ({
-                ...current,
-                when: withCondition({ match: current.match, conditions: current.when, value: current.value }, conditionIndex, next).conditions,
-              }))
-            }
-            onRemove={() => change((current) => ({ ...current, when: current.when.filter((_, at) => at !== conditionIndex) }))}
-          />
-        ))}
-        <button
-          type="button"
-          className="conditional-add"
-          disabled={entry.when.length >= CLASS_LIST_LIMITS.conditionsPerEntryMax}
-          onClick={() => change((current) => withWhenAdded(current, catalog))}
-        >
-          <PlusIcon size={11} />
-          {entry.when.length === 0 ? 'Only when' : 'New condition'}
-        </button>
+          }
+        />
       </div>
     );
   });

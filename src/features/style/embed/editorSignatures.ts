@@ -6,16 +6,40 @@ import { type RuleModel } from '../model/cascade';
 import { listMatchedSelectors, selectorKey, type MatchedSelector, type StyleContext } from '../model/resolved';
 import { nativeSelectorChips } from '../model/nativeStyles';
 import { canonicalCompound, compareSpecificity } from '../model/selectors';
-import { getHost } from '../model/host';
+import { getHost, walkNodes, type HostNode } from '../model/host';
 import type { ElementSnapshot, NativeModel, ParsedRule, Specificity } from '../model/styleTypes';
+import { matchedTexts, type CanvasAsk } from '../model/canvasAsk';
 
 // Re-read every embed no more than this often when just switching selection.
 export const BG_REFRESH_THROTTLE_MS = 4000;
 
-/** Which stylesheets the host is offering, as a comparable string. */
+/** Which stylesheets the host is offering, as a comparable string: the files, the components
+ *  with a global block, and the open file's own `<style>` blocks. A block that appears (the
+ *  first styles of a page, or one inserted from the palette) is a new place for rules, so it
+ *  must change this, or the panel would not look for them until its next poll. */
 export function sheetSignature(): string {
   const host = getHost();
-  return [...host.files, ...host.astroFiles].map((file) => file.path).join('|');
+  return [...host.files, ...host.astroFiles].map((file) => file.path).join('|') + `#${styleBlockIds(host.nodes)}`;
+}
+
+// The ids of the `<style>` blocks of a node list. A signature is asked for on every host
+// change, and the host swaps `nodes` only when the page model changes, so the answer is kept
+// per list.
+const styleBlockIdsOf = new WeakMap<readonly HostNode[], string>();
+function styleBlockIds(nodes: readonly HostNode[]): string {
+  const known = styleBlockIdsOf.get(nodes);
+  if (known !== undefined) {
+    return known;
+  }
+  const ids: string[] = [];
+  walkNodes(nodes, (node) => {
+    if (node.kind === 'raw' && node.name === 'style') {
+      ids.push(node.id);
+    }
+  });
+  const joined = ids.join(',');
+  styleBlockIdsOf.set(nodes, joined);
+  return joined;
 }
 // How often to poll the Designer for out-of-app edits (classes / attributes /
 // native styles). The API has no change events, so we re-read on this cadence and
@@ -32,6 +56,23 @@ export const selectorKeyOf = (rules: ParsedRule[]): string => rules.map((rule) =
 export function snapshotSignature(snap: ElementSnapshot): string {
   return JSON.stringify([snap.tag, snap.id, snap.classes, snap.attributes]);
 }
+// Whether the page now answers a selector differently from the match the panel is showing. A
+// structural edit next to the element (a deleted last sibling, an inserted first child) changes
+// `:last-child`, `:first-child`, `+` and `:has()` without touching the element's own tag, classes
+// or attributes, so the snapshot signature alone never noticed. Nothing is compared until the
+// panel has a match to compare with, and an unanswered question is not a change.
+export function domMatchesChanged(shown: ReadonlyMap<string, boolean> | undefined, ask: CanvasAsk): boolean {
+  if (shown === undefined || ask.kind !== 'asked' || ask.answer === undefined) {
+    return false;
+  }
+  for (const [text, hit] of matchedTexts(ask)) {
+    if (shown.get(text) !== hit) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // A fingerprint of the element's native Webflow class styles — changes when a
 // style value is edited on a class (even without touching the element's classes).
 export function nativeSignature(model: NativeModel | undefined): string {

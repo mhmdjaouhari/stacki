@@ -2,13 +2,14 @@ import { outsideScope } from '../../../shared/properties/deepOutline';
 import { canvasHighlight, deepHoverNode, subscribeCanvasHighlight } from '../../ui/canvasOutlineMode';
 import type { CanvasHighlight } from '../../../shared/properties/deepOutline';
 import React, { useSyncExternalStore } from 'react';
+import { useTranslate } from '../../lib/i18n/useTranslate';
 import { assert } from '../../../shared/core/assert';
 import { pseudoPath, type PseudoLayer } from '../../../shared/page/pseudoPath';
 import type { Box } from './outlineBoxes';
 import type { PreviewMessage } from './previewMessages';
 import { NO_TEXT_MARKS, type TextMarks } from './previewMessages';
-import { hoverIsSelection, loopChildPaths, onePerPlace, outlineBoxPath, unionBox } from './outlineBoxes';
-import { spacingBands, withLiveSpacing } from './spacingBands';
+import { copiesToDraw, hoverIsSelection, loopChildPaths, collapseKind, onePerPlace, outlineBoxPath, unionBox } from './outlineBoxes';
+import { clipBand, spacingBands, withLiveSpacing, type CollapsePartner } from './spacingBands';
 import {
   BranchIcon,
   CodeIcon,
@@ -56,6 +57,8 @@ interface PreviewOverlaysProps {
   readonly rects: RectMap;
   readonly spacing: SpacingMap;
   readonly scale: number;
+  /** The frame's size in its own px: a spacing band is cut to it so its label stays on what is visible. */
+  readonly viewport?: { readonly w: number; readonly h: number } | undefined;
   readonly spacingHover?: SpacingHover | undefined;
   readonly selPath: string | undefined;
   readonly selOcc: number | undefined;
@@ -117,7 +120,12 @@ function FocusOverlays({ path, rects, scale }: { readonly path: string | undefin
   return onePerPlace(rects[path] ?? undefined).map((box, index) => <div key={`focus-${index}`} className="node-focus" style={boxStyle(box, scale)} />);
 }
 
+// What hovering a side of the Spacing box shows on the canvas: that side's strip, from the page as laid
+// out (the used geometry, so a margin the page collapsed is not drawn as if it held space open).
+// Drawn in the overlay layer, above the page and in the frame's own coordinates, so no ancestor's
+// `overflow: hidden` in the page can cut it. Purely a view: nothing here writes.
 function SpacingOverlays(props: PreviewOverlaysProps) {
+  const translate = useTranslate();
   const { spacingHover, selPath: selectedPath } = props;
   if (!spacingHover || !selectedPath) {
     return undefined;
@@ -127,11 +135,38 @@ function SpacingOverlays(props: PreviewOverlaysProps) {
   const box = boxes[props.selOcc ?? 0] ?? boxes[0];
   const measurement = measurements[props.selOcc ?? 0] ?? measurements[0] ?? undefined;
   const sized = withLiveSpacing(measurement, spacingHover.kind, spacingHover.live);
-  return spacingBands(box, sized, spacingHover.kind, spacingHover.sides).map((band, index) => (
-    <div key={`sp-${band.side}-${index}`} className={`spacing-band is-${spacingHover.kind}`} style={boxStyle(band, props.scale)}>
-      <span className="spacing-band-label">{spacingHover.labels?.[band.side] ?? spacingLabel(band)}</span>
-    </div>
-  ));
+  return spacingBands(box, sized, spacingHover.kind, spacingHover.sides).flatMap((drawn, index) => {
+    const band = clipBand(drawn, props.viewport);
+    if (!band) {
+      return [];
+    }
+    const collapsed = band.collapsedInto;
+    const label = collapsed === undefined ? (spacingHover.labels?.[band.side] ?? spacingLabel(band)) : translate(collapseKey(collapsed));
+    return [
+      <div
+        key={`sp-${band.side}-${index}`}
+        className={`spacing-band is-${spacingHover.kind}${collapsed === undefined ? '' : ` is-collapsed is-${band.side}`}`}
+        style={boxStyle(band, props.scale)}
+      >
+        <span className="spacing-band-label">{label}</span>
+      </div>,
+    ];
+  });
+}
+
+function collapseKey(partner: CollapsePartner) {
+  switch (partner) {
+    case 'previous':
+      return 'preview.spacing.collapsedPrevious';
+    case 'next':
+      return 'preview.spacing.collapsedNext';
+    case 'parent':
+      return 'preview.spacing.collapsedParent';
+    default: {
+      const exhaustive: never = partner;
+      return exhaustive;
+    }
+  }
 }
 
 function NodeOutlines(props: PreviewOverlaysProps) {
@@ -150,33 +185,33 @@ function NodeOutlines(props: PreviewOverlaysProps) {
     if (!all || !info) {
       return [];
     }
-    // No occurrence means the node, so draw one box per place. A number means
-    // the specific repeated copy clicked on the canvas. A loop is every copy.
-    const selected = outline.occ === undefined ? undefined : all[outline.occ];
+    // A loop is every copy; anything else is the copy it names (copiesToDraw).
     const loop = info.nodeKind === 'map' ? loopBox(props.rects, outline.path, info.childCount) : undefined;
-    const copies = outline.occ === undefined ? onePerPlace(all) : selected ? [selected] : all.slice(0, 1);
-    const boxes = loop !== undefined ? [loop] : copies;
-    return boxes.map((box, index) => (
-      <div
-        key={`${outline.slot}-${index}`}
-        className={`node-outline ${outline.type} ${info.kind}${info.bound ? ' bound' : ''}${
-          outline.type === 'sel' ? textMarkState(props.textMarks, { pointedAt: props.hoverPath === outline.path }) : ''
-        }`}
-        style={boxStyle(box, props.scale)}
-      >
-        <span className={`node-outline-tag ${box.y * props.scale < 20 ? 'inside' : ''}`}>
-          {outlineIcon(info)}
-          {info.label}
-          {outline.slot === 'sel' && <ComponentEditButton info={info} path={outline.path} occurrence={all.indexOf(box)} onOpen={props.onOpenComponent} />}
-          {/* A highlight shows the selected chip's component icon, but opens nothing: it is display only. */}
-          {outline.slot === 'highlight' && outline.type === 'sel' && info.kind === 'component' && (
-            <span className="node-outline-edit" aria-hidden="true">
-              <ComponentEditIcon size={14} />
-            </span>
-          )}
-        </span>
-      </div>
-    ));
+    const boxes = loop !== undefined ? [loop] : copiesToDraw(all, outline.occ);
+    return boxes.map((box, index) => {
+      const collapse = collapseKind(box);
+      return (
+        <div
+          key={`${outline.slot}-${index}`}
+          className={`node-outline ${outline.type} ${info.kind}${info.bound ? ' bound' : ''}${collapse === 'none' ? '' : ` collapsed is-${collapse}`}${
+            outline.type === 'sel' ? textMarkState(props.textMarks, { pointedAt: props.hoverPath === outline.path }) : ''
+          }`}
+          style={boxStyle(box, props.scale)}
+        >
+          <span className={`node-outline-tag ${box.y * props.scale < 20 ? 'inside' : ''}`}>
+            {outlineIcon(info)}
+            {info.label}
+            {outline.slot === 'sel' && <ComponentEditButton info={info} path={outline.path} occurrence={all.indexOf(box)} onOpen={props.onOpenComponent} />}
+            {/* A highlight shows the selected chip's component icon, but opens nothing: it is display only. */}
+            {outline.slot === 'highlight' && outline.type === 'sel' && info.kind === 'component' && (
+              <span className="node-outline-edit" aria-hidden="true">
+                <ComponentEditIcon size={12} />
+              </span>
+            )}
+          </span>
+        </div>
+      );
+    });
   });
 }
 
@@ -191,6 +226,7 @@ function ComponentEditButton({
   readonly occurrence: number;
   readonly onOpen: PreviewOverlaysProps['onOpenComponent'];
 }) {
+  const translate = useTranslate();
   if (info.kind !== 'component') {
     return undefined;
   }
@@ -207,8 +243,8 @@ function ComponentEditButton({
     <button
       type="button"
       className="node-outline-edit"
-      aria-label={`Edit ${info.label} component`}
-      data-tooltip="Edit component"
+      aria-label={translate('preview.overlay.editComponent', { name: info.label })}
+      data-tooltip={translate('preview.overlay.editTip')}
       onPointerDown={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
       onClick={(event) => {
@@ -216,7 +252,7 @@ function ComponentEditButton({
         onOpen(path, occurrence);
       }}
     >
-      <ComponentEditIcon size={14} />
+      <ComponentEditIcon size={12} />
     </button>
   );
 }
@@ -263,8 +299,7 @@ function PseudoOutline({ outline, rects, scale }: { readonly outline: OutlineTar
   if (!all) {
     return [];
   }
-  const selected = outline.occ === undefined ? undefined : all[outline.occ];
-  const boxes = outline.occ === undefined ? onePerPlace(all) : selected ? [selected] : all.slice(0, 1);
+  const boxes = copiesToDraw(all, outline.occ);
   return boxes.map((box, index) => (
     <div key={`${outline.type}-pseudo-${index}`} className={`node-outline ${outline.type} element`} style={boxStyle(box, scale)}>
       <span className={`node-outline-tag ${box.y * scale < 20 ? 'inside' : ''}`}>
@@ -344,11 +379,7 @@ function selectionBoxes(props: PreviewOverlaysProps): readonly Box[] {
   if (loop !== undefined) {
     return [loop];
   }
-  if (props.selOcc === undefined) {
-    return onePerPlace(all);
-  }
-  const selected = all[props.selOcc];
-  return selected ? [selected] : all.slice(0, 1);
+  return copiesToDraw(all, props.selOcc);
 }
 
 // Tags sit on their box's top-left corner, so two boxes whose corners lie

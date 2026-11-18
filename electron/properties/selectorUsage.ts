@@ -16,6 +16,7 @@
 // `unused` into `unknown`, naming the file and the reason.
 import { createHash } from 'node:crypto';
 import { assert } from '../../shared/core/assert';
+import { described, englishText, messageRef, type Described, type MessageKey, type MessageRef } from '../../shared/properties/i18n/messageRef';
 import { toDigest } from '../../shared/core/brand';
 import { keepMatcher, stylesheetLockMatcher, type StyleKeepList } from '../../shared/properties/styleKeepList';
 import {
@@ -52,7 +53,7 @@ export type PackageScan =
   | { readonly kind: 'complete'; readonly hits: MentionHits }
   /** Answered from earlier searches only; `unanswered` is what no search has looked for yet. */
   | { readonly kind: 'pending'; readonly hits: MentionHits; readonly unanswered: MentionInterest }
-  | { readonly kind: 'incomplete'; readonly reason: string };
+  | { readonly kind: 'incomplete'; readonly reason: string; readonly reasonRef?: MessageRef | undefined };
 
 export interface UsageInput {
   /** Plain stylesheet files, by project-relative path. */
@@ -85,7 +86,8 @@ export async function analyzeSelectorUsage(input: UsageInput, scanPackages: (int
   for (const sheet of input.astro) {
     astroByRel.set(sheet.rel, sheet);
     if (sheet.unreadable !== undefined) {
-      notes.push({ rel: sheet.rel, message: `Its styles were not checked: ${sheet.unreadable}` });
+      // i18n-ignore: the English diagnostic for logs and old readers; the Selectors panel shows the message reference beside it (electron/properties/selectorUsage.ts notes).
+      notes.push({ rel: sheet.rel, message: `Its styles were not checked: ${sheet.unreadable.message}`, messageRef: sheet.unreadable.messageRef });
     }
     regions.push(...sheet.regions);
   }
@@ -187,15 +189,14 @@ function hitsFor(region: StyleRegion, sheet: AstroSheet | undefined, scans: Proj
   return hits;
 }
 
-// A locked stylesheet (or one in a locked folder) is a library meant to sit
-// unused until needed: a selector the proof finds unused there is `kept`, so
-// every cleanup — the panel's, the delete offer and `style:removeSelectors`
-// itself, which re-runs this check — leaves it alone. Other verdicts stand:
-// "used" and "can't tell" are never removed anyway.
+// An explicit stylesheet lock is the user's decision to retain its selectors.
+// Surface that decision as `kept` even when outside data prevents an unused
+// proof: uncertainty must not hide the lock in the panel. Used and untracked
+// selectors retain their verdicts because they do not need retention protection.
 function lockedVerdict(verdict: SelectorVerdict, sheet: { readonly locked: boolean }): SelectorVerdict {
   if (sheet.locked) {
-    if (verdict.kind === 'unused') {
-      assert(verdict.names.length > 0, 'lockedVerdict: an unused selector names what is missing');
+    if (verdict.kind === 'unused' || verdict.kind === 'unknown') {
+      assert(verdict.names.length > 0, 'lockedVerdict: a protected selector names what is missing');
       return { kind: 'kept', names: verdict.names };
     }
     return verdict;
@@ -218,7 +219,7 @@ function verdictOf(
     return { kind: 'used' };
   }
   if (taint !== undefined) {
-    return { kind: 'unknown', names: absent, reason: taint.reason };
+    return { kind: 'unknown', names: absent, reason: taint.reason, reasonRef: taint.reasonRef };
   }
   // A name a package search has not answered yet is neither dead nor alive.
   const waiting = unanswered === undefined ? [] : absent.filter((name) => asksAbout(unanswered, name));
@@ -229,7 +230,7 @@ function verdictOf(
   if (dead.length > 0) {
     // One dead required name proves the selector matches nothing.
     if (rule.fixed !== undefined) {
-      return { kind: 'unknown', names: dead, reason: rule.fixed };
+      return { kind: 'unknown', names: dead, reason: rule.fixed.message, reasonRef: rule.fixed.messageRef };
     }
     return { kind: 'unused', names: dead };
   }
@@ -248,6 +249,7 @@ function verdictOf(
 /** Why a proof is weakened. */
 interface Weakness {
   readonly reason: string;
+  readonly reasonRef?: MessageRef | undefined;
 }
 
 interface ProjectTaint {
@@ -327,10 +329,11 @@ function taintOf(input: UsageInput, packages: PackageScan): ProjectTaint {
   if (input.unreadable.length > 0) {
     const first = input.unreadable[0];
     assert(first !== undefined, 'taintOf: the list is not empty');
-    weaknesses.push({ reason: `${first.rel} could not be read` });
+    const unreadable = described('selectors.reason.unreadable', { file: first.rel });
+    weaknesses.push({ reason: unreadable.message, reasonRef: unreadable.messageRef });
   }
   if (packages.kind === 'incomplete') {
-    weaknesses.push({ reason: packages.reason });
+    weaknesses.push({ reason: packages.reason, reasonRef: packages.reasonRef });
   }
   // Classes a script adds at runtime are not tracked: a script's own class
   // names count as mentions (so their rules stay), and nothing a script does
@@ -355,9 +358,8 @@ function taintOf(input: UsageInput, packages: PackageScan): ProjectTaint {
   // come from outside the project hides classes.
   return {
     everything: combined(weaknesses),
-    injected: injectFlow === undefined ? undefined : { reason: `${injectFlow.to} inserts HTML that ${injectFlow.from} can supply from outside the project` },
-    remote:
-      computedFlow === undefined ? undefined : { reason: `${computedFlow.to} computes classes from data ${computedFlow.from} loads from outside the project` },
+    injected: injectFlow === undefined ? undefined : weakness(described('selectors.reason.injectedHtml', { to: injectFlow.to, from: injectFlow.from })),
+    remote: computedFlow === undefined ? undefined : weakness(described('selectors.reason.computedClasses', { to: computedFlow.to, from: computedFlow.from })),
   };
 }
 
@@ -384,11 +386,36 @@ function firstRemoteLoader(texts: readonly ProjectText[]): string | undefined {
   return undefined;
 }
 
+function weakness(reason: Described): Weakness {
+  return { reason: reason.message, reasonRef: reason.messageRef };
+}
+
+// The packages weaknesses that can accompany an unreadable file, each with the sentence that names both.
+const WITH_UNREADABLE_FILE: Readonly<Record<string, MessageKey>> = {
+  'selectors.reason.packagesMissing': 'selectors.reason.unreadableAndPackagesMissing',
+  'selectors.reason.packageFile': 'selectors.reason.unreadableAndPackageFile',
+  'selectors.reason.packagesUnreadable': 'selectors.reason.unreadableAndPackagesUnreadable',
+  'selectors.reason.packagesDeep': 'selectors.reason.unreadableAndPackagesDeep',
+  'selectors.reason.packagesMany': 'selectors.reason.unreadableAndPackagesMany',
+};
+
 function combined(weaknesses: readonly Weakness[]): Weakness | undefined {
-  if (weaknesses.length === 0) {
+  const first = weaknesses[0];
+  if (first === undefined) {
     return undefined;
   }
-  return { reason: weaknesses.map((weakness) => weakness.reason).join('; and ') };
+  const second = weaknesses[1];
+  if (second === undefined) {
+    return first;
+  }
+  // Only an unreadable file and the package search can weaken a proof together, so the pair has a fixed sentence per case.
+  assert(weaknesses.length === 2, 'combined: an unreadable file and the package search are the only weaknesses');
+  const joined = second.reasonRef === undefined ? undefined : WITH_UNREADABLE_FILE[second.reasonRef.key];
+  if (first.reasonRef === undefined || joined === undefined) {
+    return { reason: weaknesses.map((item) => item.reason).join('; and ') };
+  }
+  const reasonRef = messageRef(joined, { ...first.reasonRef.params, ...second.reasonRef?.params });
+  return { reason: englishText(reasonRef), reasonRef };
 }
 
 // For data flow a component is its frontmatter and template, which run on the
@@ -409,11 +436,14 @@ function readRules(regions: readonly StyleRegion[], notes: SelectorNote[]): Rule
   for (const region of regions) {
     const read = readRegionRules(region);
     if (read.kind === 'unreadable') {
-      notes.push({ rel: region.rel, message: `Its styles were not checked: ${read.reason}` });
+      // i18n-ignore: the English diagnostic for logs and old readers; the Selectors panel shows the message reference beside it (electron/properties/selectorUsage.ts notes).
+      notes.push({ rel: region.rel, message: `Its styles were not checked: ${read.reason.message}`, messageRef: read.reason.messageRef });
       continue;
     }
     if (rules.length + read.selectors.length > SELECTOR_USAGE_LIMITS.entriesMax) {
-      notes.push({ rel: region.rel, message: 'Its styles were not checked: the project has too many selectors' });
+      const tooMany = described('selectors.problem.tooManySelectors');
+      // i18n-ignore: the English diagnostic for logs and old readers; the Selectors panel shows the message reference beside it (electron/properties/selectorUsage.ts notes).
+      notes.push({ rel: region.rel, message: `Its styles were not checked: ${tooMany.message}`, messageRef: tooMany.messageRef });
       continue;
     }
     rules.push(...read.selectors);

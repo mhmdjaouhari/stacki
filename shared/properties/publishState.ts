@@ -2,6 +2,7 @@ import { boolean, count, object, optional, record, text } from '../core/boundary
 import { assert } from '../core/assert';
 import { parseReviewReceipt, type ReviewReceipt } from './publishReview';
 import type { PublishTarget } from './publishConfig';
+import { parseMessageRef, type MessageRef } from '../core/i18n/messageReference';
 
 export type PublishDestinationState = 'current' | 'pending' | 'unknown' | 'unconfigured';
 
@@ -26,41 +27,64 @@ export const UNKNOWN_PUBLISH_AVAILABILITY: PublishAvailability = {
  * nothing left to commit, push or deploy, read from the same destination states the menu rows
  * use, so the button and the rows can never disagree. The button then rests as a neutral,
  * disabled control while its menu half stays open for settings.
+ *
+ * `ready` is only ever the answer to a check that confirmed changes. `unconfirmed` is "no
+ * check has answered yet": it looks neutral but stays clickable (Publish checks again itself),
+ * so the accent never appears for changes nobody has confirmed.
  */
-export type PublishButtonState = 'ready' | 'current';
+export type PublishButtonState = 'ready' | 'current' | 'unconfirmed';
+
+type DestinationNeed = 'done' | 'needed' | 'unconfirmed';
 
 export function publishButtonState(availability: PublishAvailability, target: PublishTarget): PublishButtonState {
   switch (target) {
     case 'github':
-      return availability.github === 'current' ? 'current' : 'ready';
+      return buttonStateOf([githubNeed(availability.github)]);
     case 'hosting':
-      return availability.hosting === 'current' ? 'current' : 'ready';
+      return buttonStateOf([hostingTargetNeed(availability.hosting)]);
     case 'all':
-      return publishButtonStateAll(availability);
+      // Publishing everything skips a destination that is not set up, so an unconfigured host
+      // is as finished as a current one.
+      return buttonStateOf([githubNeed(availability.github), hostingNeed(availability.hosting)]);
   }
 }
 
-// Publishing everything skips a destination that is not set up, so an unconfigured host is as
-// finished as a current one; an unknown status is never treated as finished.
-function publishButtonStateAll(availability: PublishAvailability): PublishButtonState {
-  switch (availability.github) {
-    case 'pending':
-    case 'unknown':
-      return 'ready';
+function buttonStateOf(needs: readonly DestinationNeed[]): PublishButtonState {
+  if (needs.includes('needed')) {
+    return 'ready';
+  }
+  if (needs.includes('unconfirmed')) {
+    return 'unconfirmed';
+  }
+  return 'current';
+}
+
+function githubNeed(state: PublishAvailability['github']): DestinationNeed {
+  switch (state) {
     case 'current':
-      return publishButtonStateHosting(availability.hosting);
+      return 'done';
+    case 'pending':
+      return 'needed';
+    case 'unknown':
+      return 'unconfirmed';
   }
 }
 
-function publishButtonStateHosting(hosting: PublishDestinationState): PublishButtonState {
-  switch (hosting) {
+function hostingNeed(state: PublishDestinationState): DestinationNeed {
+  switch (state) {
     case 'current':
     case 'unconfigured':
-      return 'current';
+      return 'done';
     case 'pending':
+      return 'needed';
     case 'unknown':
-      return 'ready';
+      return 'unconfirmed';
   }
+}
+
+// Hosting as the only default: an unconfigured host is not finished, the click opens its setup.
+function hostingTargetNeed(state: PublishDestinationState): DestinationNeed {
+  return state === 'unconfigured' ? 'needed' : hostingNeed(state);
 }
 
 export function parsePublishAvailability(input: unknown): PublishAvailability {
@@ -104,6 +128,8 @@ export type DesktopPublishState =
   | {
       readonly kind: 'running';
       readonly step: string;
+      /** The translatable form of `step`; absent from older producers, which show the English `step`. */
+      readonly stepRef?: MessageRef | undefined;
       readonly progress?: DesktopPublishProgress;
     }
   | {
@@ -114,6 +140,8 @@ export type DesktopPublishState =
   | {
       readonly kind: 'failed';
       readonly message: string;
+      /** The translatable form of `message` when Stacki wrote the sentence; free-form tool output has none. */
+      readonly messageRef?: MessageRef | undefined;
       readonly github: boolean;
       readonly hosting: boolean;
     };
@@ -142,6 +170,7 @@ export function parseDesktopPublishState(input: unknown): DesktopPublishState {
       return {
         kind: 'running',
         ...object({ step: text, progress: optional(parseDesktopPublishProgress) })(value),
+        ...stepRefField(optionalRef(value, 'stepRef')),
       };
     case 'done':
       return { kind: 'done', ...object({ github: boolean, hosting: boolean })(value) };
@@ -149,8 +178,26 @@ export function parseDesktopPublishState(input: unknown): DesktopPublishState {
       return {
         kind: 'failed',
         ...object({ message: text, github: boolean, hosting: boolean })(value),
+        ...messageRefField(optionalRef(value, 'messageRef')),
       };
     default:
       throw new Error('Invalid publish status.');
   }
+}
+
+// A reference that crossed the wire is dropped when invalid: the English text beside it is always shown instead.
+function optionalRef(value: Readonly<Record<string, unknown>>, name: string): MessageRef | undefined {
+  const field = value[name];
+  if (field === undefined) {
+    return undefined;
+  }
+  const parsed = parseMessageRef(field);
+  return parsed.ok ? parsed.value : undefined;
+}
+
+function stepRefField(stepRef: MessageRef | undefined): { readonly stepRef?: MessageRef } {
+  return stepRef === undefined ? {} : { stepRef };
+}
+function messageRefField(messageRef: MessageRef | undefined): { readonly messageRef?: MessageRef } {
+  return messageRef === undefined ? {} : { messageRef };
 }

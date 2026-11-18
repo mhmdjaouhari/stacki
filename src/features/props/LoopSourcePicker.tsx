@@ -8,7 +8,10 @@
 // have and loops over it, so the items' fields are the loop item's fields.
 //
 // The tree is the data picker's own (DataPicker.tsx), fed with the project's
-// collections from the catalog and the page's lists from its data tree.
+// collections from the catalog and the page's lists from its data tree. Between
+// the two sits "Project data": the lists the project keeps outside the page, in
+// its data modules (loopProjectData.ts), whether the file imports them yet or
+// not. Picking one that is not imported writes its import with the loop.
 
 import { useCallback, useRef, useState } from 'react';
 import type { ReactNode, RefCallback } from 'react';
@@ -23,11 +26,16 @@ import { listsOnly } from '../../editor/dataSuggest';
 import { isGroqPath, type FieldList } from '../../editor/loopFieldList';
 import { toRecord } from '../../../shared/core/record';
 import type { LoopSource } from '../../editor/loopQuery';
+import type { ImportNeed } from '../../editor/dataSample';
+import { projectDataNames, projectDataRows } from './loopProjectData';
 import type { LoopCatalog } from './loopCatalog';
 import { componentNameOf } from './dataPickerModel';
 import { RowPopup } from './LoopRows';
 import { pickerPaths, useBindOverrideOnPress } from './bindOverride';
 import { OverrideNote } from '../../ui/OverrideNote';
+import { ENGLISH_TRANSLATE } from '../../../shared/properties/i18n/englishTranslator';
+import type { Translator } from '../../../shared/properties/i18n/messageRef';
+import { useTranslate } from '../../lib/i18n/useTranslate';
 
 /** The page's data, as the data picker reads it, for the Source picker. */
 export interface SourcePickerData {
@@ -40,6 +48,8 @@ export interface SourcePickerData {
   readonly frontmatter: string;
   /** The open file: a component's lists are headed by its name, and lead the tree. */
   readonly file: string | undefined;
+  /** The data file exports the file already imports, by local name, so they are listed with the project's data. */
+  readonly projectModules?: Readonly<Record<string, string>> | undefined;
 }
 
 /** What a pick in the Source picker means. */
@@ -48,7 +58,8 @@ export type SourcePick =
   | { readonly kind: 'list' }
   | { readonly kind: 'collection'; readonly source: LoopSource }
   | { readonly kind: 'field'; readonly list: FieldList }
-  | { readonly kind: 'value'; readonly data: string };
+  /** A list the page holds; from a project module the file does not import yet, with the import to write. */
+  | { readonly kind: 'value'; readonly data: string; readonly import?: ImportNeed | undefined };
 
 /** A List property the Source menu can make: the component it goes in, and what the form starts from. */
 export interface NewListOffer {
@@ -71,8 +82,11 @@ export function SourcePicker(props: {
   readonly loadSanitySample?: ((type: string) => Promise<unknown>) | undefined;
   /** In a component: "New List property", which makes one and loops over it. */
   readonly newList?: NewListOffer | undefined;
+  /** Whether the loop reads dynamic data (a property, a collection, a project list): the trigger is purple, as every value bound to data is. */
+  readonly bound?: boolean;
   readonly onPick: (pick: SourcePick) => void;
 }) {
+  const translate = useTranslate();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const newList = props.newList;
@@ -87,7 +101,7 @@ export function SourcePicker(props: {
   // A running app that answers `cms.bind` is asked first (docs/apps.md, "Overrides"); Alt-click skips it.
   const askApp = (): void =>
     override.ask(
-      { purpose: 'loop-source', current: props.current, paths: pickerPaths(sourceTree(props.catalog, props.data, sanity.samples)) },
+      { purpose: 'loop-source', current: props.current, paths: pickerPaths(sourceTree(props.catalog, props.data, sanity.samples, translate)) },
       {
         onPicked: (path) => {
           const pick = followed(pickOf(path), sanity.samples);
@@ -105,7 +119,7 @@ export function SourcePicker(props: {
       <button
         ref={attach}
         type="button"
-        className="dd-trigger loop-source-trigger"
+        className={`dd-trigger loop-source-trigger${props.bound === true ? ' is-bound' : ''}`}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={(event) => {
@@ -125,32 +139,32 @@ export function SourcePicker(props: {
       </button>
       <OverrideNote point="cms.bind" />
       {open && creating && newList !== undefined && (
-        <RowPopup anchor={anchor} heightPxMax={PICKER_HEIGHT_PX_MAX} label="New List property" onClose={() => setOpen(false)}>
+        <RowPopup anchor={anchor} heightPxMax={PICKER_HEIGHT_PX_MAX} label={translate('props.loop.source.newList')} onClose={() => setOpen(false)}>
           <NewPropForm host={newList.host} seed={newList.seed} onCancel={() => setCreating(false)} onCreated={() => setOpen(false)} />
         </RowPopup>
       )}
       {open && !creating && (
-        <RowPopup anchor={anchor} heightPxMax={PICKER_HEIGHT_PX_MAX} label="Source" onClose={() => setOpen(false)}>
+        <RowPopup anchor={anchor} heightPxMax={PICKER_HEIGHT_PX_MAX} label={translate('props.loop.source.title')} onClose={() => setOpen(false)}>
           <div className="loop-source-picker">
             <div className="loop-source-extras">
               {newList !== undefined && (
                 <button type="button" className="dp-new-prop" onClick={() => setCreating(true)}>
                   <PlusIcon size={11} />
-                  New List property
+                  {translate('props.loop.source.newList')}
                 </button>
               )}
               <button type="button" className="dp-row" onClick={() => choose({ kind: 'empty' })}>
                 <CloseIcon size={11} />
-                <span className="dp-key">None</span>
+                <span className="dp-key">{translate('props.loop.source.none')}</span>
               </button>
               <button type="button" className="dp-row" onClick={() => choose({ kind: 'list' })}>
                 <TextIcon size={11} />
-                <span className="dp-key">Custom list</span>
-                <span className="dp-preview">type the items</span>
+                <span className="dp-key">{translate('props.loop.source.customList')}</span>
+                <span className="dp-preview">{translate('props.loop.source.typeItems')}</span>
               </button>
             </div>
             <DataPicker
-              tree={sourceTree(props.catalog, props.data, sanity.samples)}
+              tree={sourceTree(props.catalog, props.data, sanity.samples, translate)}
               current={props.current}
               footer={false}
               sources="open"
@@ -164,10 +178,10 @@ export function SourcePicker(props: {
                   props.data?.onNeedSample?.(node.query.collection, index);
                 }
               }}
-              onPick={(path) => {
+              onPick={(path, need) => {
                 const pick = followed(pickOf(path), sanity.samples);
                 if (pick !== undefined) {
-                  choose(pick);
+                  choose(need?.kind === 'import' && pick.kind === 'value' ? { ...pick, import: need.import } : pick);
                 }
               }}
             />
@@ -250,11 +264,13 @@ export function sourceTree(
   catalog: LoopCatalog | undefined,
   data: SourcePickerData | undefined,
   sanitySamples: Readonly<Record<string, unknown>>,
+  translate: Translator = ENGLISH_TRANSLATE,
 ): readonly PickerNode[] {
   const collections: PickerNode[] = [];
   for (const collection of catalog?.collections ?? []) {
     const { source } = collection;
-    const preview = collection.count === undefined ? 'collection' : `${collection.count} items`;
+    const preview =
+      collection.count === undefined ? translate('props.loop.source.collection') : translate('props.loop.source.items', { count: collection.count });
     const path = sourcePath(source);
     const sample = source.kind === 'sanity' ? sanitySamples[source.collection] : data?.samples[source.collection];
     // An Astro entry keeps its fields under `data`; a Sanity document is its fields.
@@ -273,8 +289,12 @@ export function sourceTree(
     });
   }
   const inComponent = componentNameOf(data?.file) !== undefined;
-  const own = pageLists(data).map((node) => ({ ...node, section: inComponent ? 'loop-component' : 'loop-page' }));
-  const nodes = inComponent ? [...own, ...collections] : [...collections, ...own];
+  const modules = data?.projectModules ?? {};
+  const taken = data === undefined ? new Set<string>() : projectDataNames(data.tree, modules);
+  const project = data === undefined ? [] : projectDataRows(data.tree, modules);
+  const own = pageLists(data, taken).map((node) => ({ ...node, section: inComponent ? 'loop-component' : 'loop-page' }));
+  // Project data sits between the file's own lists and the collections, whichever leads.
+  const nodes = inComponent ? [...own, ...project, ...collections] : [...collections, ...project, ...own];
   assert(nodes.length <= LIMITS.treeNodesMax, 'The Source tree is bounded');
   return nodes;
 }
@@ -298,12 +318,12 @@ function listMarked(nodes: readonly TreeNode[] | undefined, depth: number): read
 
 // The page's own lists, without collections (above) or the functions a
 // page imports to call (`queryItems(…)`): a function is not a list.
-function pageLists(data: SourcePickerData | undefined): readonly PickerNode[] {
+function pageLists(data: SourcePickerData | undefined, projectData: ReadonlySet<string>): readonly PickerNode[] {
   if (data === undefined) {
     return [];
   }
   return listsOnly(data.tree).filter((node) => {
-    if (node.section === 'collections' || node.query !== undefined) {
+    if (node.section === 'collections' || node.query !== undefined || projectData.has(node.path)) {
       return false;
     }
     return !(node.kind === 'imported' && calledIn(data.frontmatter, node.key));

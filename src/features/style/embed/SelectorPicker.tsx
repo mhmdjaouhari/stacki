@@ -1,4 +1,7 @@
 import { centralIcon } from '../../../ui/central/CentralIcon';
+import { ENGLISH_TRANSLATE } from '../../../../shared/properties/i18n/englishTranslator';
+import type { Translator } from '../../../../shared/properties/i18n/messageRef';
+import { useTranslate } from '../../../lib/i18n/useTranslate';
 import { add as centralAdd } from '../../../ui/central/centralGeometry';
 import Popup from '../../../ui/Popup';
 // The selector well: the chips a selection is styled by, picking and adding
@@ -12,32 +15,22 @@ import { assert } from '../../../../shared/core/assert';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent } from 'react';
 import { useHoverTip } from '../components/CssPropertyTip';
-import { type SegmentedOption } from '../components/SegmentedControl';
+import { type SegmentedOption } from '../../../ui/SegmentedControl';
 import { CodeInline } from '../../../ui/CodeBlock';
 import { selectorKey, selectorsMatch } from '../model/resolved';
 import { SpinnerIcon } from './EditorBasics';
 import { InlineStyleChip } from './InlineStyleChip';
 import type { InlineChip } from './useInlineTarget';
-import { useHeldSelection } from './heldSelection';
+import { Skeleton } from '../../../ui/Skeleton';
 import { loneTypedClass, usePseudoTarget } from './editorModel';
-import {
-  CLASS_NAME_REFUSAL,
-  classRowMatch,
-  classRows,
-  classRowStep,
-  fuzzySegments,
-  isClassName,
-  rankFuzzy,
-  type ClassRow,
-  type ClassRowList,
-} from '../../../lib/fuzzyRank';
+import { classRowMatch, classRows, classRowStep, fuzzySegments, isClassName, rankFuzzy, type ClassRow, type ClassRowList } from '../../../lib/fuzzyRank';
 import { chipAtCaret, chipPart, createPressWatch, type PressWatch } from '../model/selectorCaret';
 import { PLACEMENT_END } from '../../../editor/classAttr';
 import {
   type SelectorSuggestion,
   useProjectClasses,
   PROJECT_CLASS_LIMIT,
-  SUGGESTION_KIND_LABEL,
+  SUGGESTION_KIND_LABEL_KEY,
   type ClassifiedSelector,
   classifySelector,
   selectorAccessibleLabel,
@@ -58,15 +51,15 @@ export function SelectorPicker({
   onVisibleSelectorsChange,
   inline,
 }: SelectorPickerProps) {
-  // Another element's chips land in stages; the well draws only the finished list,
-  // keeping the last one until then (heldSelection.ts).
-  const held = useHeldSelection({ selectors, activeSelector, activePicked }, { settled: settled ?? true });
-  const view = useSelectorView({
-    selectors: held.view.selectors,
-    activeSelector: held.view.activeSelector,
-    activePicked: held.view.activePicked,
-    onVisibleSelectorsChange,
-  });
+  const translate = useTranslate();
+  // Another element's chips land in stages (the model is blanked, the source-known
+  // selectors land, then the canvas's answer). Until its answer has settled the well
+  // draws a placeholder in the chips' shape: neither the stages nor the previous
+  // element's chips, which would be another element's selectors offered as this one's.
+  // An element seen before is settled at once (scanSnapshotCache.ts).
+  const pending = settled === false;
+  const view = useSelectorView({ selectors, activeSelector, activePicked, onVisibleSelectorsChange });
+  const removal = useChipRemoval({ shown: view.shownSelectors, activeSelector, onSelect, onDeselect });
   const field = useAddSelectorField({
     selectors,
     suggestions,
@@ -75,11 +68,12 @@ export function SelectorPicker({
     onSelect,
     onDeselect,
     onAdd,
-    shown: view.shownSelectors,
+    shown: removal.visible,
+    removeChip: removal.remove,
   });
   const { add, showInput } = field;
   const removeChip = (entry: ClassifiedSelector) => {
-    removeChipFromElement(entry, { activeSelector, onDeselect });
+    removal.remove(entry, 'chip');
   };
 
   return (
@@ -96,24 +90,23 @@ export function SelectorPicker({
             than "not counted yet". A spinner where the first chip will land says
             which one it is, and holds the box's height so nothing jumps when the
             chips arrive. */}
-          {loading && !view.shownSelectors.length ? (
+          {pending ? <SelectorChipsPlaceholder label={translate('styleModel.embed.picker.finding')} /> : undefined}
+          {!pending && loading && !removal.visible.length ? (
             <div className="embed-editor_selector-loading" aria-live="polite">
               <SpinnerIcon />
-              <span className="u-sr-only">Finding the selectors that style this element…</span>
+              <span className="u-sr-only">{translate('styleModel.embed.picker.finding')}</span>
             </div>
           ) : undefined}
-          {view.shownSelectors.length || showInput || inline !== undefined ? (
+          {!pending && (removal.visible.length || showInput || inline !== undefined) ? (
             <SelectorChips
-              entries={view.shownSelectors}
-              // The held chips are the previous element's; so would its inline chip be.
-              inline={held.holding ? undefined : inline}
-              activeSelector={held.view.activeSelector}
+              chipsRef={removal.chipsRef}
+              entries={removal.visible}
+              inline={inline}
+              activeSelector={activeSelector}
               busy={busy}
-              // The held chips are the previous element's: a click on one would
-              // pick its selector for the element now selected.
-              onSelect={held.holding ? ignoreHeldPick : onSelect}
-              onDeselect={held.holding ? ignoreHeldPick : onDeselect}
-              onRemove={held.holding ? ignoreHeldPick : removeChip}
+              onSelect={onSelect}
+              onDeselect={onDeselect}
+              onRemove={removeChip}
             >
               {showInput ? (
                 <SelectorAddField
@@ -131,13 +124,29 @@ export function SelectorPicker({
           ) : undefined}
         </div>
       </div>
-      <SelectorFilterToggles view={view} />
+      <SelectorFilterToggles view={view} pending={pending} />
+      <span className="u-sr-only" role="status" aria-live="polite">
+        {removal.announcement}
+      </span>
     </>
   );
 }
 
-// A pick on a held chip: the chip belongs to the previous element, so nothing happens.
-function ignoreHeldPick(): void {}
+// The chip widths a placeholder row draws: fixed, so the row never changes between renders.
+const PLACEHOLDER_CHIP_WIDTHS_REM = ['2.5rem', '4.5rem', '6rem'] as const;
+
+// The well while the selected element's chips are on their way: one row of chip-shaped
+// fills, a chip high, so the well keeps its height and nothing below it moves twice.
+function SelectorChipsPlaceholder({ label }: { readonly label: string }) {
+  return (
+    <div className="embed-editor_selector-chips is-placeholder" role="status" aria-busy="true">
+      {PLACEHOLDER_CHIP_WIDTHS_REM.map((width) => (
+        <Skeleton key={width} width={width} height="var(--embed-editor_chip-h)" />
+      ))}
+      <span className="u-sr-only">{label}</span>
+    </div>
+  );
+}
 
 // Keep the highlighted row visible while arrowing through a long list.
 export function useHighlightInView({ listRef, highlight, showList }: { listRef: React.RefObject<HTMLDivElement>; highlight: number; showList: boolean }) {
@@ -176,11 +185,12 @@ function onSelectorFocusRequest(listener: () => void): () => void {
 // decides whether that is safe; the host shows a refusal). A tag, a substring
 // match like `[class*="text-"]` or a compound is part of a selector, not a thing
 // written on the element, so Delete leaves it alone. Returns whether a removal
-// was asked for.
+// was asked for. `outcome.onRequested` runs before the host answers, so the chip
+// can go at once; `onRefused` puts it back.
 export function removeChipFromElement(
   entry: ClassifiedSelector,
   panel: { readonly activeSelector: string; readonly onDeselect: () => void },
-  onApplied: () => void = () => undefined,
+  outcome: ChipRemovalOutcome = {},
 ): boolean {
   const part = chipPart(entry.selector.text, loneTypedClass(entry.selector.text));
   const host = getHost();
@@ -189,17 +199,107 @@ export function removeChipFromElement(
     return false;
   }
   const wasActive = selectorsMatch(entry.selector.text, panel.activeSelector);
-  void request.then((outcome) => {
+  outcome.onRequested?.();
+  void request.then((answer) => {
     // The removed chip can't stay the edit target: nothing it names is left.
-    if (outcome.tag === 'refused') {
+    if (answer.tag === 'refused') {
+      outcome.onRefused?.();
       return;
     }
     if (wasActive) {
       panel.onDeselect();
     }
-    onApplied();
+    outcome.onApplied?.({ wasActive });
   });
   return true;
+}
+
+export interface ChipRemovalOutcome {
+  readonly onRequested?: () => void;
+  readonly onApplied?: (removed: { readonly wasActive: boolean }) => void;
+  readonly onRefused?: () => void;
+}
+
+// Chips taken off but not yet gone from the list the panel is given: the list
+// follows the source and the canvas, which answer after the write. Bounded: one
+// entry per Delete still in flight, and a person does not queue more than this.
+const HIDDEN_CHIPS_MAX = 64;
+
+// What Delete on a chip does around the removal: the chip goes at once (and comes
+// back if the host refuses), the neighbouring chip takes the focus and, when the
+// removed chip was the edit target, the selection, so the next Delete keeps going;
+// and the result is said aloud for a screen reader.
+export function useChipRemoval({
+  shown,
+  activeSelector,
+  onSelect,
+  onDeselect,
+}: {
+  readonly shown: readonly ClassifiedSelector[];
+  readonly activeSelector: string;
+  readonly onSelect: (selector: string) => void;
+  readonly onDeselect: () => void;
+}) {
+  const translate = useTranslate();
+  const [hidden, setHidden] = useState<ReadonlySet<string>>(() => new Set());
+  const [announcement, setAnnouncement] = useState('');
+  const chipsRef = useRef<HTMLDivElement>(null);
+  // A key the list no longer holds has landed: nothing is left to hide.
+  const shownKeys = shown.map((entry) => entry.selector.key).join('\n');
+  useEffect(() => {
+    const present = new Set(shownKeys.split('\n'));
+    setHidden((current) => {
+      const kept = [...current].filter((key) => present.has(key));
+      return kept.length === current.size ? current : new Set(kept);
+    });
+  }, [shownKeys]);
+  const visible = shown.filter((entry) => !hidden.has(entry.selector.key));
+  const remove = (entry: ClassifiedSelector, focus: 'chip' | 'stay') => {
+    const at = visible.findIndex((candidate) => candidate.selector.key === entry.selector.key);
+    const neighbour = at < 0 ? undefined : (visible[at + 1] ?? visible[at - 1]);
+    const key = entry.selector.key;
+    return removeChipFromElement(
+      entry,
+      { activeSelector, onDeselect },
+      {
+        onRequested: () => {
+          setHidden((current) => {
+            assert(current.size < HIDDEN_CHIPS_MAX, 'useChipRemoval: hidden chips are released as the list catches up');
+            return new Set([...current, key]);
+          });
+        },
+        onRefused: () => {
+          setHidden((current) => new Set([...current].filter((hiddenKey) => hiddenKey !== key)));
+        },
+        onApplied: ({ wasActive }) => {
+          setAnnouncement(translate('styleModel.embed.picker.chipRemoved', { name: entry.selector.display ?? entry.selector.text }));
+          if (neighbour === undefined) {
+            return;
+          }
+          if (wasActive) {
+            onSelect(neighbour.selector.text);
+          }
+          if (focus === 'chip') {
+            focusChip(chipsRef.current ?? undefined, neighbour.selector.key);
+          }
+        },
+      },
+    );
+  };
+  return { visible, remove, announcement, chipsRef };
+}
+
+// The chip for `key`, focused so the keyboard stays in the field after its neighbour went.
+function focusChip(container: HTMLElement | undefined, key: string): void {
+  if (container === undefined) {
+    return;
+  }
+  for (const chip of container.querySelectorAll<HTMLElement>('[data-selector-key]')) {
+    if (chip.dataset['selectorKey'] === key) {
+      chip.focus();
+      return;
+    }
+  }
 }
 
 // The add-selector field's state: the draft, the suggestion list and its highlight,
@@ -213,8 +313,11 @@ export function useAddSelectorField({
   onDeselect,
   onAdd,
   shown,
+  removeChip,
 }: Pick<SelectorPickerProps, 'selectors' | 'suggestions' | 'activeSelector' | 'busy' | 'onSelect' | 'onDeselect' | 'onAdd'> & {
   readonly shown: readonly ClassifiedSelector[];
+  /** Takes a chip off; `stay` keeps the focus where it is (the add field). */
+  readonly removeChip: (entry: ClassifiedSelector, focus: 'chip' | 'stay') => boolean;
 }) {
   const [draft, setDraft] = useState('');
   const [open, setOpen] = useState(false);
@@ -334,7 +437,7 @@ export function useAddSelectorField({
       return false;
     }
     assert(index === shown.length - 1, 'onCaretKey: Backspace takes the last chip');
-    return removeChipFromElement(entry, { activeSelector, onDeselect });
+    return removeChip(entry, 'stay');
   };
   const add = { draft, setDraft, open, setOpen, highlight, setHighlight, typed, list, refusal, setRefused, showList };
   return { add, showInput, listRef, inputRef, onWellMouseDown, apply, onFocus, onBlur, onCaretKey };
@@ -543,6 +646,7 @@ function withHits(suggestion: SelectorSuggestion, indexes: readonly number[]): R
 // The chips, with the add field (children) after the last one, on a row of its
 // own. It never stands between two chips: see SelectorPicker.
 export function SelectorChips({
+  chipsRef,
   entries,
   activeSelector,
   busy,
@@ -552,6 +656,8 @@ export function SelectorChips({
   inline,
   children,
 }: {
+  /** The row's element, where a removal finds the neighbouring chip to focus. */
+  chipsRef?: React.RefObject<HTMLDivElement> | undefined;
   entries: readonly ClassifiedSelector[];
   /** The style attribute's chip, after every selector: it outranks them all. */
   inline?: InlineChip | undefined;
@@ -567,7 +673,7 @@ export function SelectorChips({
   // deselect to offer.
   const deselectable = usePseudoTarget() === undefined;
   return (
-    <div className="embed-editor_selector-chips">
+    <div ref={chipsRef} className="embed-editor_selector-chips">
       {entries.map((entry) => (
         <SelectorChip
           key={entry.selector.key}
@@ -607,6 +713,7 @@ function SelectorChip({
   readonly onDeselect: () => void;
   readonly onRemove: ((entry: ClassifiedSelector) => void) | undefined;
 }) {
+  const translate = useTranslate();
   const selectorText = entry.selector;
   const active = selectorsMatch(selectorText.text, activeSelector);
   const state: ChipState = { active, dimmed: selectorText.inContext === false, deselectable };
@@ -614,13 +721,14 @@ function SelectorChip({
   // still uses the resolved selector (sel.text).
   const label = selectorText.display ?? selectorText.text;
   const [truncated, setTruncated] = useState(false);
-  const { ref, hoverProps, hide, tip } = useHoverTip<HTMLButtonElement>(<SelectorChipTip label={label} hint={chipHint(entry, state)} />);
+  const { ref, hoverProps, hide, tip } = useHoverTip<HTMLButtonElement>(<SelectorChipTip label={label} hint={chipHint(entry, state, translate)} />);
   return (
     <>
       <button
         ref={ref}
         type="button"
         className={chipClassName(entry, state)}
+        data-selector-key={entry.selector.key}
         disabled={busy}
         aria-pressed={active}
         aria-label={selectorAccessibleLabel(entry, label)}
@@ -652,9 +760,14 @@ function SelectorChip({
           // Kept from the app's Delete shortcut, which would delete the element.
           event.preventDefault();
           event.stopPropagation();
+          // A held key repeats: the first press removes this chip and moves the focus
+          // to its neighbour, which a repeat must not take as well.
+          if (event.repeat) {
+            return;
+          }
           onRemove?.(entry);
         }}
-        title={truncated ? undefined : chipTitle(label, entry, state)}
+        title={truncated ? undefined : chipTitle(label, entry, state, translate)}
       >
         {/* The chip cuts from the start, so chips sharing a long prefix differ where
             they can be read. The whole selector stays here as text; embedEditor.css says how. */}
@@ -696,7 +809,6 @@ export function chipClassName(entry: ClassifiedSelector, state: ChipState): stri
     state.active && 'is-active',
     entry.selector.pending && 'is-pending',
     entry.selector.inComponentMarkup === true && 'is-component',
-    entry.selector.provenancePending === true && 'is-provenance-pending',
     entry.selector.fromInstance === true && 'is-instance',
     entry.global && 'is-global',
     entry.inherited && 'is-inherited',
@@ -706,25 +818,25 @@ export function chipClassName(entry: ClassifiedSelector, state: ChipState): stri
     .join(' ');
 }
 
-export function chipTitle(label: string, entry: ClassifiedSelector, state: ChipState): string {
-  const hint = chipHint(entry, state);
+export function chipTitle(label: string, entry: ClassifiedSelector, state: ChipState, translate: Translator = ENGLISH_TRANSLATE): string {
+  const hint = chipHint(entry, state, translate);
   return hint === undefined ? label : `${label} — ${hint}`;
 }
 
 /** What a chip says beyond its selector: what a click does, or why it reads as it does. */
-export function chipHint(entry: ClassifiedSelector, state: ChipState): string | undefined {
+export function chipHint(entry: ClassifiedSelector, state: ChipState, translate: Translator = ENGLISH_TRANSLATE): string | undefined {
   if (state.active) {
-    return state.deselectable === false ? undefined : 'click to deselect';
+    return state.deselectable === false ? undefined : translate('styleModel.embed.picker.chipDeselect');
   }
   if (state.dimmed) {
-    return 'styled in another query';
+    return translate('styleModel.embed.picker.chipOtherQuery');
   }
   // A class the instance passed in says so: it is the page's class, and its rule
   // is written there rather than into the component (model/instanceClasses.ts).
   if (entry.selector.fromInstance === true) {
-    return entry.selector.pending ? 'from this instance, no styles yet' : 'from this instance';
+    return entry.selector.pending ? translate('styleModel.embed.picker.chipInstancePending') : translate('styleModel.embed.picker.chipInstance');
   }
-  return entry.selector.pending ? 'no styles yet' : undefined;
+  return entry.selector.pending ? translate('styleModel.embed.picker.chipPending') : undefined;
 }
 
 export interface AddSelectorState {
@@ -762,6 +874,7 @@ export function SelectorAddField({
   apply: (text: string) => void;
   onCaretKey?: (key: string) => boolean;
 }) {
+  const translate = useTranslate();
   const { draft, setHighlight, showList } = add;
   return (
     <div className="embed-editor_selector-field">
@@ -769,7 +882,7 @@ export function SelectorAddField({
         ref={inputRef}
         className="u-input embed-editor_selector-add"
         value={draft}
-        placeholder="Add a selector (e.g. .card:hover)"
+        placeholder={translate('styleModel.embed.picker.addPlaceholder', { example: '.card:hover' })}
         spellCheck={false}
         disabled={busy}
         role="combobox"
@@ -797,7 +910,7 @@ export function SelectorAddField({
           }
           selectorKeyDown(event, add, apply);
         }}
-        aria-label="Add a selector"
+        aria-label={translate('styleModel.embed.picker.addLabel')}
       />
       {showList ? <SelectorSuggestions add={add} listRef={listRef} apply={apply} /> : undefined}
     </div>
@@ -861,22 +974,40 @@ export function selectorKeyDown(event: ReactKeyboardEvent<HTMLInputElement>, add
 // row, so the panel rearranged itself under the pointer just as it became usable.
 // It is never disabled: the choice is remembered, so it can be set before there
 // is anything to hide, and greyed out it read as broken.
-export function SelectorFilterToggles({ view }: { view: SelectorView }) {
+//
+// While the chips are pending (`pending`), the counts are not known: a count from the
+// previous element would be a wrong number, so each label waits with a fill where its
+// count goes and the same label, counted, replaces it.
+export function SelectorFilterToggles({ view, pending = false }: { view: SelectorView; pending?: boolean }) {
+  const translate = useTranslate();
   const { globals, inherited } = view;
   return (
     <>
-      <label className="embed-editor_check embed-editor_selector-filter" title="Tags, universal selectors, and broad states can match many elements">
+      <label className="embed-editor_check embed-editor_selector-filter" title={translate('styleModel.embed.picker.hideGlobalsTip')}>
         <input type="checkbox" checked={view.filters.hideGlobals} onChange={(event) => view.setHideGlobals(event.target.checked)} />
-        <span>Hide global selectors ({globals.length})</span>
+        {pending ? (
+          <PendingCount label={translate('styleModel.embed.picker.hideGlobalsPending')} />
+        ) : (
+          <span>{translate('styleModel.embed.picker.hideGlobals', { count: globals.length })}</span>
+        )}
       </label>
-      <label
-        className="embed-editor_check embed-editor_selector-filter"
-        title="Selectors that apply because this element is inside a matching parent or ancestor"
-      >
+      <label className="embed-editor_check embed-editor_selector-filter" title={translate('styleModel.embed.picker.hideInheritedTip')}>
         <input type="checkbox" checked={view.filters.hideInherited} onChange={(event) => view.setHideInherited(event.target.checked)} />
-        <span>Hide inherited styles ({inherited.length})</span>
+        {pending ? (
+          <PendingCount label={translate('styleModel.embed.picker.hideInheritedPending')} />
+        ) : (
+          <span>{translate('styleModel.embed.picker.hideInherited', { count: inherited.length })}</span>
+        )}
       </label>
     </>
+  );
+}
+
+function PendingCount({ label }: { readonly label: string }) {
+  return (
+    <span className="embed-editor_selector-filter-pending">
+      {label} <Skeleton width="1.25rem" />
+    </span>
   );
 }
 
@@ -896,9 +1027,17 @@ export const ADD_QUERY = '\0add-query';
 
 export const PlusIcon = centralIcon(centralAdd, 12);
 
-export const QUERY_MODES: SegmentedOption<'wrap' | 'nest'>[] = [
-  { value: 'wrap', label: 'Wrap', tooltip: 'New block — @query { selector { … } }' },
-  { value: 'nest', label: 'Nest', tooltip: 'Inside the selector — selector { @query { … } }' },
+export const queryModes = (translate: Translator): SegmentedOption<'wrap' | 'nest'>[] => [
+  {
+    value: 'wrap',
+    label: translate('styleModel.embed.query.wrap'),
+    tooltip: translate('styleModel.embed.query.wrapTip', { code: '@query { selector { … } }' }),
+  },
+  {
+    value: 'nest',
+    label: translate('styleModel.embed.query.nest'),
+    tooltip: translate('styleModel.embed.query.nestTip', { code: 'selector { @query { … } }' }),
+  },
 ];
 
 export type QuerySuggestion = { query: string; kind: string };
@@ -951,6 +1090,7 @@ function SelectorSuggestions({
   readonly listRef: React.RefObject<HTMLDivElement>;
   readonly apply: (text: string) => void;
 }) {
+  const translate = useTranslate();
   const { list, highlight, setHighlight, refusal } = add;
   return (
     <Popup
@@ -960,7 +1100,7 @@ function SelectorSuggestions({
       className="embed-editor_selector-suggest"
       ref={listRef}
       role="listbox"
-      label="Selector suggestions"
+      label={translate('styleModel.embed.picker.suggestions')}
     >
       {list.rows.map((row, i) => (
         <button
@@ -980,7 +1120,7 @@ function SelectorSuggestions({
       {/* Last, so a row's place among the children stays its index in the list. */}
       {refusal ? (
         <div className="embed-editor_suggest-note" role="status">
-          {CLASS_NAME_REFUSAL}
+          {translate('styleModel.embed.picker.classRefusal')}
         </div>
       ) : undefined}
     </Popup>
@@ -993,11 +1133,12 @@ function selectorRowText(row: ClassRow<RankedSuggestion>): string {
 }
 
 function SelectorRowLabel({ row }: { readonly row: ClassRow<RankedSuggestion> }) {
+  const translate = useTranslate();
   if (row.kind === 'create') {
     return (
       <>
-        <span className="embed-editor_suggest-sel">Create {row.name}</span>
-        <span className="embed-editor_suggest-kind">{SUGGESTION_KIND_LABEL.class}</span>
+        <span className="embed-editor_suggest-sel">{translate('styleModel.embed.picker.create', { name: row.name })}</span>
+        <span className="embed-editor_suggest-kind">{translate(SUGGESTION_KIND_LABEL_KEY.class)}</span>
       </>
     );
   }
@@ -1015,7 +1156,7 @@ function SelectorRowLabel({ row }: { readonly row: ClassRow<RankedSuggestion> })
           ),
         )}
       </span>
-      <span className="embed-editor_suggest-kind">{SUGGESTION_KIND_LABEL[suggestion.kind]}</span>
+      <span className="embed-editor_suggest-kind">{translate(SUGGESTION_KIND_LABEL_KEY[suggestion.kind])}</span>
     </>
   );
 }

@@ -1,5 +1,6 @@
+import { useTranslate } from '../../../lib/i18n/useTranslate';
 import { centralIcon } from '../../../ui/central/CentralIcon';
-import { more as centralMore } from '../../../ui/central/centralGeometry';
+import { arrowRotateCounterClockwise as centralArrowRotateCounterClockwise } from '../../../ui/central/centralGeometry';
 import Popup from '../../../ui/Popup';
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import type { MouseEvent, ReactNode, RefObject } from 'react';
@@ -9,7 +10,7 @@ import { panelBounds } from '../model/panelBox';
 import { useHoverTip } from './CssPropertyTip';
 import type { ScrubHandlers } from './useScrub';
 
-const MoreGlyph = centralIcon(centralMore, 12);
+const ResetGlyph = centralIcon(centralArrowRotateCounterClockwise, 12);
 
 type Props = {
   children: ReactNode;
@@ -64,6 +65,7 @@ export default function FieldLabel(props: Props) {
 }
 
 function ClearableFieldLabel(props: Props) {
+  const translate = useTranslate();
   const { children, active, disabled = false, title, onMouseDown, scrubProps, tooltip } = props;
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -121,7 +123,7 @@ function ClearableFieldLabel(props: Props) {
           id={menuId}
           menuRef={menuRef}
           dropUp={dropUp}
-          resetLabel={props.resetLabel ?? 'Reset'}
+          resetLabel={props.resetLabel ?? translate('ui.reset')}
           menuNote={props.menuNote}
           onReset={reset}
           onClose={() => setOpen(false)}
@@ -234,6 +236,7 @@ function FieldLabelMenu({
   onReset: () => void;
   onClose: () => void;
 }) {
+  const translate = useTranslate();
   return (
     <Popup
       mode="popover"
@@ -254,9 +257,9 @@ function FieldLabelMenu({
           onReset();
         }}
       >
-        <MoreGlyph className="u-field-label-menu-icon" />
+        <ResetGlyph className="u-field-label-menu-icon" />
         <span>{resetLabel}</span>
-        <span className="u-field-label-menu-shortcut">Option + click</span>
+        <span className="u-field-label-menu-shortcut">{translate('styleModel.shared.optionClick')}</span>
       </button>
       {menuNote ? <div className="u-field-label-menu-note">{typeof menuNote === 'function' ? menuNote(onClose) : menuNote}</div> : undefined}
     </Popup>

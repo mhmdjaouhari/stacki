@@ -1,23 +1,29 @@
+import { useTranslate, useTranslateDescribed } from '../../lib/i18n/useTranslate';
 import { ErrorToast } from '../../ui/ErrorToast';
-import PropertyReadOnlyFields from './PropertyReadOnlyFields';
 import { PropertyConditions, PropertyDeclarationInfo } from './PropertyDeclarationInfo';
-import { TrashIcon } from '../../ui/Icons';
+import { fallbackEdit, optionListEdit, useVariantHost, useVariantRun, variantRoleOf } from './PropertyVariants';
+import type { VariantHost } from './PropertyVariants';
+import { PropertyTooltipField, PropertyVisibilityField } from './PropertyVisibility';
+import type { VariantDefault, VariantGroup } from '../../../shared/properties/variantRules';
+import { variantDefaultOf } from '../../../shared/properties/variantRules';
+import { CloseIcon, TrashIcon } from '../../ui/Icons';
 import { PropertyOptions } from './PropertyOptions';
 import { PropertyShareNotice, shareRenameFiles } from './PropertyShareNotice';
 import type { PropertyOptionChange } from './PropertyOptions';
 import { PropertyType, opensOnCode, type CodeMode } from './PropertyType';
 import { PropertyDefault, propertyDefaultText } from './PropertyDefault';
-import { PropertyDefaultNote, PropertyKindSettings, PropertyTooltip } from './PropertySettings';
+import { PropertyDefaultNote, PropertyKindSettings } from './PropertySettings';
 import { literalOptions } from '../../../shared/properties/propertyOptions';
 export { literalOptions };
 import { useRef, useState, type ReactNode } from 'react';
 import Popup from '../../ui/Popup';
 import { assert } from '../../../shared/core/assert';
-import type { ComponentProperties, ComponentProperty, PropertyChange, PropertyOptionRename } from '../../../shared/properties/propertyEditing';
+import type { ComponentProperty, PropertyChange, PropertyOptionRename } from '../../../shared/properties/propertyEditing';
 import { PROPERTY_LIMITS } from '../../../shared/properties/propertyEditing';
 import { listPropsOf, type ListProp } from '../../editor/listProps';
 import { SETTING_PROP_TYPES } from '../../editor/optionsBinding';
-import { fieldNameProblem, listFieldsOfType, listTypeText, type ItemFieldDeclaration } from '../../editor/listPropType';
+import { fieldsProblem, type ItemFieldDeclaration } from '../../editor/itemFields';
+import { listFieldsOfType, listTypeText } from '../../editor/listPropType';
 import { ItemFieldsEditor, ListDefaultField, PropertyFlagsFields, type EditPace } from '../props/propBindings';
 import { propertyProblem, usePropertyAutosave, type PropertySaveHost } from './propertyAutosave';
 import { propertyKind } from './propertyKinds';
@@ -26,7 +32,7 @@ interface PropertyEditorProps {
   readonly property: ComponentProperty;
   readonly originalName: string;
   readonly frontmatter: string;
-  readonly access: 'editable' | 'readonly' | 'saving';
+  readonly access: 'editable' | 'saving';
   readonly onClose: () => void;
   /**
    * Creates a new prop, or deletes this one, and says whether it was done. A
@@ -38,7 +44,13 @@ interface PropertyEditorProps {
   readonly saveHost: PropertySaveHost;
   /** Opens a project file, named project-relative: a shared prop's declaration and users. */
   readonly onOpenFile?: ((path: string) => void) | undefined;
+  /** The component's variant rules (PropertyVariants.tsx), as the panel last read them. */
+  readonly variantGroups?: readonly VariantGroup[] | undefined;
+  /** The component's computed defaults and its props, for a default set by conditions (PropertyDefault.tsx). */
+  readonly variantDefaults?: readonly VariantDefault[] | undefined;
+  readonly properties?: readonly ComponentProperty[] | undefined;
 }
+const NO_PROPERTIES: readonly ComponentProperty[] = [];
 // Types loose enough that a list setting's own type only says more.
 const LOOSE_TYPES = new Set(['', 'unknown', 'any', 'object', 'Record<string, unknown>']);
 
@@ -55,14 +67,12 @@ export function withListSettingType(property: ComponentProperty, listProps: Read
   return listProp === undefined ? property : { ...property, type: SETTING_PROP_TYPES[listProp.setting] };
 }
 
-/** Whether a property can be edited here, or only read: its declaration may be one only source can change. */
-export function propertyIsEditable(property: ComponentProperty, data: Pick<ComponentProperties, 'advanced'>): boolean {
-  return property.editing ? property.editing.kind !== 'restricted' : !data.advanced;
-}
-
 export function PropertyEditor(props: PropertyEditorProps) {
+  const translate = useTranslate();
+  const translateDescribed = useTranslateDescribed();
   const editorRef = useRef<HTMLDivElement>(null);
   const draft = usePropertyEditorDraft(props);
+  const variants = useVariantHost(props.variantGroups, { saveHost: props.saveHost, name: draft.savedName, rebase: draft.rebase });
   return (
     <Popup
       mode="popover"
@@ -83,38 +93,39 @@ export function PropertyEditor(props: PropertyEditorProps) {
         <>
           <header>
             <div className="property-editor-title">
-              <strong>{draft.exists ? 'Property settings' : 'New property'}</strong>
+              <strong>{draft.exists ? translate('componentProps.dialog.title') : translate('componentProps.editor.newProperty')}</strong>
               <PropertyDeclarationInfo property={props.property} />
             </div>
-            <button aria-label="Close property settings" disabled={props.access === 'saving'} onClick={close}>
-              ×
+            <button aria-label={translate('componentProps.dialog.close')} disabled={props.access === 'saving'} onClick={close}>
+              <CloseIcon size={12} />
             </button>
           </header>
-          <PropertyConditions property={props.property} />
+          {/* Variant rules are controls among the fields; a union with no controller keeps its conditions. */}
+          {variantRoleOf(variants?.groups, draft.exists ? draft.savedName : '').kind === 'none' && <PropertyConditions property={props.property} />}
           <PropertyShareNotice property={props.property} onOpenFile={props.onOpenFile} />
-          {props.property.editing?.kind === 'override' && <p className="property-help">{props.property.editing.reason}</p>}
-          {props.access === 'readonly' ? (
-            <PropertyReadOnlyFields property={draft.property} />
-          ) : (
-            <PropertyEditorFields
-              form={draft}
-              creating={!draft.exists}
-              frontmatter={props.frontmatter}
-              access={props.access}
-              projectPath={undefined}
-              actions={
-                <PropertyActions
-                  name={draft.exists ? draft.savedName : ''}
-                  // A shared prop is deleted from its type's file, in source.
-                  removable={props.property.editing?.kind !== 'override' && props.property.shared === undefined}
-                  onRemove={(name) => {
-                    draft.discard();
-                    void props.onSave({ kind: 'remove', name }, 'close');
-                  }}
-                />
-              }
-            />
+          {props.property.editing?.kind === 'override' && (
+            <p className="property-help">{translateDescribed({ message: props.property.editing.reason, messageRef: props.property.editing.reasonRef })}</p>
           )}
+          <PropertyEditorFields
+            form={draft}
+            creating={!draft.exists}
+            frontmatter={props.frontmatter}
+            access={props.access}
+            projectPath={undefined}
+            variants={draft.exists ? variants : undefined}
+            defaults={draft.exists ? { computed: props.variantDefaults, properties: props.properties ?? [] } : undefined}
+            actions={
+              <PropertyActions
+                name={draft.exists ? draft.savedName : ''}
+                // A shared prop is deleted from its type's file, in source.
+                removable={props.property.editing?.kind !== 'override' && props.property.shared === undefined}
+                onRemove={(name) => {
+                  draft.discard();
+                  void props.onSave({ kind: 'remove', name }, 'close');
+                }}
+              />
+            }
+          />
         </>
       )}
     </Popup>
@@ -130,15 +141,36 @@ export function PropertySettingsFields(props: {
   readonly frontmatter: string;
   readonly projectPath: string | undefined;
   readonly saveHost: PropertySaveHost;
+  /** The component's variant rules, and how to read them again after an edit (this host hands down no fresh copy). */
+  readonly variantGroups?: readonly VariantGroup[] | undefined;
+  readonly refreshVariantGroups?: () => Promise<readonly VariantGroup[] | undefined>;
+  readonly variantDefaults?: readonly VariantDefault[] | undefined;
+  readonly properties?: readonly ComponentProperty[] | undefined;
 }) {
   const { property, frontmatter, projectPath, saveHost } = props;
   const draft = usePropertyEditorDraft({ property, originalName: property.name, frontmatter, onSave: async () => false, saveHost });
+  const variants = useVariantHost(props.variantGroups, { saveHost, name: draft.savedName, rebase: draft.rebase }, props.refreshVariantGroups);
   // An existing prop has nothing to create.
   assert(property.name !== '', 'PropertySettingsFields: the prop exists');
-  return <PropertyEditorFields form={draft} creating={false} frontmatter={frontmatter} access="editable" projectPath={projectPath} actions={undefined} />;
+  return (
+    <>
+      {variantRoleOf(variants?.groups, draft.savedName).kind === 'none' && <PropertyConditions property={property} />}
+      <PropertyEditorFields
+        form={draft}
+        creating={false}
+        frontmatter={frontmatter}
+        access="editable"
+        projectPath={projectPath}
+        variants={variants}
+        defaults={{ computed: props.variantDefaults, properties: props.properties ?? [] }}
+        actions={undefined}
+      />
+    </>
+  );
 }
 
 function usePropertyEditorDraft(props: Pick<PropertyEditorProps, 'property' | 'originalName' | 'frontmatter' | 'onSave' | 'saveHost'>) {
+  const translate = useTranslate();
   // The list setting's own type is written with the first save, not on opening.
   const [initial] = useState(() => ({ property: withListSettingType(props.property, listPropsOf(props.frontmatter)), optionRenames: [] }));
   // A new prop saves nothing itself until it exists (submit, below).
@@ -161,13 +193,13 @@ function usePropertyEditorDraft(props: Pick<PropertyEditorProps, 'property' | 'o
   // There is no Save button.
   // Enter and the blur after it would both create it; the first one does.
   const creating = useRef<'new' | 'sending' | 'created'>(props.originalName === '' ? 'new' : 'created');
-  const ready = (): boolean => creating.current === 'new' && property.name.trim() !== '' && propertyProblem(property) === undefined;
+  const ready = (): boolean => creating.current === 'new' && property.name.trim() !== '' && propertyProblem(property, translate) === undefined;
   const submit = (after: 'edit' | 'close'): void => {
     assert(props.originalName === '', 'submit: only a new prop is created');
     if (creating.current !== 'new') {
       return;
     }
-    const problem = propertyProblem(property);
+    const problem = propertyProblem(property, translate);
     if (problem !== undefined) {
       report({ error: problem, notice: '' });
       return;
@@ -211,9 +243,18 @@ interface PropertyEditorFieldsProps {
   readonly projectPath: string | undefined;
   /** The host's buttons, closing the form. */
   readonly actions: ReactNode;
+  /** The component's variant rules, for an existing prop (PropertyVariants.tsx). */
+  readonly variants: VariantHost | undefined;
+  /** The component's computed defaults and props, for an existing prop's conditional default. */
+  readonly defaults: { readonly computed: readonly VariantDefault[] | undefined; readonly properties: readonly ComponentProperty[] } | undefined;
 }
-function PropertyEditorFields({ form, creating, frontmatter, access, projectPath, actions }: PropertyEditorFieldsProps) {
+function PropertyEditorFields({ form, creating, frontmatter, access, projectPath, actions, variants, defaults }: PropertyEditorFieldsProps) {
   const { property, update, error, notice } = form;
+  const role = variantRoleOf(variants?.groups, creating ? '' : form.savedName);
+  const report = (message: string): void => form.report({ error: message, notice: '' });
+  const variantRun = useVariantRun(variants, report);
+  // A controller's option being renamed, shown until its edit lands: the file holds the old name meanwhile.
+  const [optionDraft, setOptionDraft] = useState<string | undefined>(undefined);
   const inherited = property.editing?.kind === 'override';
   const listFields = usePropertyListFields(property, frontmatter);
   const code = usePropertyCodeMode(property);
@@ -225,6 +266,8 @@ function PropertyEditorFields({ form, creating, frontmatter, access, projectPath
         frontmatter={frontmatter}
         code={code.mode}
         optionsHoldCode={code.optionsHoldCode}
+        // A controller's kind is its options: a kind change would rewrite every member of the union.
+        locked={role.kind === 'controller'}
         onChange={(change, pace) => {
           // Picking the kind it already is changes nothing, and keeps pending option renames.
           if (change.type === property.type) {
@@ -234,25 +277,81 @@ function PropertyEditorFields({ form, creating, frontmatter, access, projectPath
           }
         }}
       />
-      {code.optionsHoldCode && (
+      {role.kind === 'controller' ? (
+        // The controller's options are the union's members: each list change is one option edit, never a new type.
         <PropertyOptions
-          type={property.type}
-          disabled={access === 'saving'}
+          type={optionDraft ?? property.type}
+          disabled={access === 'saving' || variantRun.pending || role.group.editing.kind !== 'editable'}
           code={code.mode}
-          onChange={form.changeOptions}
-          onTypeChange={(type) => form.change('typing', (current) => ({ property: { ...current.property, type }, optionRenames: [] }))}
+          onChange={() => undefined}
+          onTypeChange={() => undefined}
+          onListChange={(change, _options, next, commit) => {
+            const edit = optionListEdit(role.group.controller, literalOptions(property.type) ?? [], next, change, commit);
+            setOptionDraft(edit === undefined && commit === 'immediate' ? undefined : next.join(' | '));
+            if (edit !== undefined) {
+              void variantRun.run(edit).then(() => setOptionDraft(undefined));
+            }
+          }}
         />
+      ) : (
+        code.optionsHoldCode && (
+          <PropertyOptions
+            type={property.type}
+            disabled={access === 'saving'}
+            code={code.mode}
+            onChange={form.changeOptions}
+            onTypeChange={(type) => form.change('typing', (current) => ({ property: { ...current.property, type }, optionRenames: [] }))}
+          />
+        )
       )}
       <PropertyKindSettings key={`${property.type} settings`} property={property} onChange={(description) => update('description', description)} />
       {listFields !== undefined && <PropertyItemFields form={form} frontmatter={frontmatter} fields={listFields} />}
-      {/* The same Required the Settings panel's Property settings has (PropertySections.tsx); readonly is kept as read. */}
-      <PropertyFlagsFields
-        required={property.required}
-        readonly={property.readonly}
-        onChange={(flags) => form.edit('at-once', (current) => ({ ...current, ...flags }))}
-      />
+      {/* Visibility: Allowed or Required, or set by conditions on other props (written as unions). A controller's is its Default. */}
+      {role.kind !== 'controller' &&
+        (variants !== undefined && defaults !== undefined ? (
+          <PropertyVisibilityField
+            name={form.savedName}
+            property={property}
+            properties={defaults.properties}
+            groups={variants.groups}
+            pending={variantRun.pending}
+            onRequired={(required) => form.edit('at-once', (current) => ({ ...current, required }))}
+            run={variantRun.run}
+            onProblem={report}
+          />
+        ) : (
+          // A new prop has no conditions yet: the same Required the Settings panel's Property settings has (PropertySections.tsx).
+          <PropertyFlagsFields
+            required={property.required}
+            readonly={property.readonly}
+            onChange={(flags) => form.edit('at-once', (current) => ({ ...current, ...flags }))}
+          />
+        ))}
       {listFields === undefined ? (
-        <PropertyDefault key={property.type} property={property} frontmatter={frontmatter} onChange={(value, pace) => update('defaultValue', value, pace)} />
+        <PropertyDefault
+          key={property.type}
+          property={property}
+          frontmatter={frontmatter}
+          conditions={
+            defaults === undefined || role.kind === 'controller'
+              ? undefined
+              : {
+                  properties: defaults.properties,
+                  computed: variantDefaultOf(defaults.computed, form.savedName),
+                  onProblem: report,
+                  onTable: (table, entries) => void variantRun.run({ kind: 'setDefaultTable', controller: table.controller, prop: table.prop, entries }),
+                }
+          }
+          onChange={(value, pace) => {
+            // A controller's default is its fallback option: picking another moves it, with the destructure's default.
+            const fallback = role.kind === 'controller' ? fallbackEdit(role.group, value) : undefined;
+            if (fallback === undefined) {
+              update('defaultValue', value, pace);
+            } else {
+              void variantRun.run(fallback);
+            }
+          }}
+        />
       ) : (
         // A list's default items are edited in the field an instance edits the list in, with its `{}` toggle.
         <ListDefaultField
@@ -263,7 +362,16 @@ function PropertyEditorFields({ form, creating, frontmatter, access, projectPath
         />
       )}
       <PropertyDefaultNote property={property} />
-      <PropertyTooltip property={property} onChange={(description) => update('description', description)} />
+      {/* Every prop's Tooltip has its {} view; one a controller rules can also be set per option. */}
+      <PropertyTooltipField
+        name={form.savedName}
+        property={property}
+        properties={defaults?.properties ?? NO_PROPERTIES}
+        groups={variants !== undefined && defaults !== undefined ? variants.groups : undefined}
+        onChange={(description) => update('description', description)}
+        run={variantRun.run}
+        onProblem={report}
+      />
       {creating
         ? error && <ErrorToast message={error} />
         : error && (
@@ -301,12 +409,18 @@ function placeOf(type: string): 'kind' | 'options' {
 // Delete, for a prop that has one to lose. Nothing here saves: an existing prop
 // saves itself, and a new one is created when its name is committed.
 function PropertyActions({ name, removable, onRemove }: { readonly name: string; readonly removable: boolean; readonly onRemove: (name: string) => void }) {
+  const translate = useTranslate();
   if (name === '' || !removable) {
     return undefined;
   }
   return (
     <div className="property-actions">
-      <button className="danger" aria-label={`Delete ${name}`} title="Delete property" onClick={() => onRemove(name)}>
+      <button
+        className="danger"
+        aria-label={translate('componentProps.editor.deleteNamed', { name })}
+        title={translate('componentProps.editor.delete')}
+        onClick={() => onRemove(name)}
+      >
         <TrashIcon size={14} />
       </button>
     </div>
@@ -314,10 +428,11 @@ function PropertyActions({ name, removable, onRemove }: { readonly name: string;
 }
 
 function PropertyIdentity({ form, creating, inherited }: { readonly form: PropertyForm; readonly creating: boolean; readonly inherited: boolean }) {
+  const translate = useTranslate();
   return (
     <>
       <label>
-        Name
+        {translate('componentProps.editor.name')}
         <input
           value={form.nameText}
           maxLength={PROPERTY_LIMITS.nameCharsMax}
@@ -357,13 +472,14 @@ function commit(form: PropertyForm, { creating }: { readonly creating: boolean }
 
 // What a rename rewrites. A shared prop's reaches every file its type does, so they are listed before it is applied.
 function RenameHelp({ property }: { readonly property: ComponentProperty }) {
+  const translate = useTranslate();
   const share = property.shared;
   if (share === undefined) {
-    return <p className="property-help">Renaming updates this component’s prop, the variable that reads it, and its instances across the website.</p>;
+    return <p className="property-help">{translate('componentProps.editor.renameHelp')}</p>;
   }
   return (
     <div className="property-help" role="status">
-      Renaming rewrites {share.typeName} and every read of it, in these files:
+      {translate('componentProps.editor.renameShared', { typeName: share.typeName })}
       <ul className="property-rename-files">
         {shareRenameFiles(share).map((file) => (
           <li key={file}>{file}</li>
@@ -417,7 +533,7 @@ function PropertyItemFields({
       fields={fields.fields}
       itemsText={property.defaultValue.trim() === '' ? '[]' : property.defaultValue}
       onChange={(shape, pace) => {
-        const valid = shape.fields.every((field) => fieldNameProblem(field.name) === undefined);
+        const valid = fieldsProblem(shape.fields) === undefined;
         const type = valid ? listTypeText(frontmatter, shape.fields) : property.type;
         fields.set({ type, fields: shape.fields });
         form.hold(valid ? 'free' : 'held');

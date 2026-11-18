@@ -54,11 +54,18 @@ export function useTokenDefault(
   //
   // The primary class is what a class system is authored against; a combo is a
   // deliberate act, so it takes picking that chip.
-  useEffect(() => {
-    const identity = tokens.map((token) => token.name).join('|');
-    if (identity === tokenIdentityRef.current) {
-      return;
-    }
+  //
+  // Adjusted during render, not in an effect: an effect runs after the commit, so the
+  // render that first drew the new element's chips and fields drew them with no pick,
+  // and every label went from "nobody picked" to "picked" one frame later (the chips
+  // lost their highlight and the fields their colour for a frame on every switch).
+  // Setting state while rendering the same component makes React render again before
+  // anything is painted. The identity check makes it run once per element.
+  const identity = tokens.map((token) => token.name).join('|');
+  if (identity !== tokenIdentityRef.current) {
+    applyTokenDefault();
+  }
+  function applyTokenDefault(): void {
     tokenIdentityRef.current = identity;
     const typedClass = typedClassRef.current;
     if (typedClass !== undefined) {
@@ -82,17 +89,7 @@ export function useTokenDefault(
     // the user chose to add new styles. (It falls back to the first embed only if
     // that source isn't available for the new element — see effectiveSourceSel.)
     setNativeFallback(undefined);
-  }, [
-    tokens,
-    defaultTokensRef,
-    pendingDefaultRef,
-    setNativeFallback,
-    setSelectedSelectorText,
-    setSelectedTokens,
-    setStateKey,
-    tokenIdentityRef,
-    typedClassRef,
-  ]);
+  }
 
   // The element's identity (tag + classes + attrs) as a stable key — drives the
   // native-style read so it re-runs on selection or class changes, not on every
@@ -484,7 +481,7 @@ export function useRenameQuery(
     }
     const next = asQuery(to);
     if (!splitQuery(next)) {
-      setStatus('A query starts with @ — @media, @container or @supports.');
+      setStatus('A query starts with @ — @media, @container or @supports.'); // i18n-ignore: write-only status, never rendered.
       return;
     }
     if (next === from) {
@@ -492,7 +489,7 @@ export function useRenameQuery(
     }
     void (async () => {
       setBusyBoth(true);
-      setStatus('Renaming query…');
+      setStatus('Renaming query…'); // i18n-ignore: write-only status, never rendered.
       // try/finally so a throw mid-rename can't leave every button disabled.
       try {
         let count = 0;
@@ -500,7 +497,7 @@ export function useRenameQuery(
           count += renameAtRuleQuery(region, from, next);
         }
         if (!count) {
-          setStatus('That query isn’t in this file any more.');
+          setStatus('That query isn’t in this file any more.'); // i18n-ignore: write-only status, never rendered.
           return;
         }
         await refreshDerived();
@@ -513,7 +510,7 @@ export function useRenameQuery(
         const swap = (key: ContextKey) => renameQueryInContextKey(key, from, next);
         setTypedContexts((previous) => previous.map(swap));
         setContext((previous) => swap(previous));
-        setStatus(count === 1 ? `Renamed to ${next}.` : `Renamed ${count} blocks to ${next}.`);
+        setStatus(count === 1 ? `Renamed to ${next}.` : `Renamed ${count} blocks to ${next}.`); // i18n-ignore: write-only status, never rendered.
       } finally {
         setBusyBoth(false);
       }

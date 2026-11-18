@@ -6,13 +6,17 @@ import { assert } from '../../../shared/core/assert';
 import { APP_GITHUB_CHOICE_LIMITS, type AppRepository, type AppSummary } from '../../../shared/properties/apps';
 import {
   DEFAULT_APP_SHARE_VISIBILITY,
-  repositoryNameProblem,
+  repositoryNameProblemDescribed,
   type AppRepositoryOwnerKind,
   type AppShareVisibility,
   type AppVisibilityOutcome,
   type MarketplaceCheck,
 } from '../../../shared/properties/appPublish';
-import { LOAD_FROM_GITHUB_LABEL, chooserRows, type ChooserRow } from './repositoryChooser';
+import { marketplaceApp, type MarketplaceIndex } from '../../../shared/properties/appMarketplace';
+import { appListedInMarketplace } from '../../../shared/properties/appPlace';
+import { messageRef } from '../../../shared/properties/i18n/messageRef';
+import type { Translator, TypedMessageRef } from '../../../shared/properties/i18n/messageRef';
+import { chooserRows, type ChooserRow } from './repositoryChooser';
 
 /** A row of the publish chooser: the Load chooser's rows, plus apps uploaded to this project. */
 export type PublishRow = ChooserRow | { readonly kind: 'uploaded'; readonly key: string; readonly app: AppSummary };
@@ -20,9 +24,74 @@ export type PublishRow = ChooserRow | { readonly kind: 'uploaded'; readonly key:
 /** The rows Enter and the arrows move over. */
 export type PublishPickable = Extract<PublishRow, { readonly kind: 'use' | 'repository' | 'uploaded' }>;
 
-/** Apps installed from a file or added to the project folder: the ones a share puts on GitHub. */
-export function uploadedApps(apps: readonly AppSummary[]): readonly AppSummary[] {
-  const uploaded = apps.filter((app) => appShareable(app.lock.source));
+/**
+ * The GitHub repository an installed app is already published to, and whether the marketplace lists
+ * it. An app installed from a file or the project folder is "already shared" when the marketplace
+ * lists its id (the listing names the repository, so a copy of a published app is not shared a
+ * second time) or its manifest names the repository it updates from. A GitHub install is published
+ * to its own repository; a marketplace install is the listing's and has nothing to submit.
+ */
+export interface AppPublication {
+  readonly owner: string;
+  readonly repository: string;
+  /** The signed-in account that reads the repository, when the source names one. */
+  readonly account: string | undefined;
+  /** Whether the marketplace lists the app: it then follows the repository's releases by itself, so there is nothing to submit. */
+  readonly listed: boolean;
+}
+
+/**
+ * Where `app` is already published, or undefined when it lives only in this project (or is a
+ * marketplace install). `index` is the marketplace index the Marketplace tab reads, undefined where
+ * it could not be read or the role may not see it.
+ *
+ * Security: a listed id yields the listing's own repository, never the manifest's, so a manifest cannot
+ * steer a submission to another repository under a listed id. An unlisted app's manifest is checked
+ * by the publish checklist and the marketplace like any repository a person picks.
+ */
+export function appPublication(app: Pick<AppSummary, 'manifest' | 'lock'>, index: MarketplaceIndex | undefined): AppPublication | undefined {
+  const { source } = app.lock;
+  const { id } = app.manifest;
+  assert(id.length > 0, 'An installed app has an id');
+  switch (source.kind) {
+    case 'github': {
+      assert(source.owner.length > 0, 'A GitHub source names its owner');
+      const listed = index !== undefined && appListedInMarketplace(index, { id, source });
+      return { owner: source.owner, repository: source.repository, account: source.account, listed };
+    }
+    case 'file':
+    case 'local': {
+      const listing = index === undefined ? undefined : marketplaceApp(index, id);
+      if (listing !== undefined) {
+        assert(listing.source.owner.length > 0, 'A listing names its repository owner');
+        return { owner: listing.source.owner, repository: listing.source.repository, account: undefined, listed: true };
+      }
+      const named = app.manifest.source;
+      if (named !== undefined) {
+        return { owner: named.owner, repository: named.repository, account: named.account, listed: false };
+      }
+      return undefined;
+    }
+    case 'marketplace':
+      return undefined;
+    default: {
+      const exhaustive: never = source;
+      return exhaustive;
+    }
+  }
+}
+
+/** Whether Share to GitHub applies to this app now: it has no repository yet (appShareable) and is not already published. */
+export function appNeedsShare(source: AppSummary['lock']['source'], publication: AppPublication | undefined): boolean {
+  return appShareable(source) && publication === undefined;
+}
+
+/**
+ * Apps installed from a file or added to the project folder that no repository holds yet: the ones a
+ * share puts on GitHub. An app already published is reached through its repository instead.
+ */
+export function uploadedApps(apps: readonly AppSummary[], options: { readonly published: (app: AppSummary) => boolean }): readonly AppSummary[] {
+  const uploaded = apps.filter((app) => appShareable(app.lock.source) && !options.published(app));
   assert(uploaded.length <= apps.length, 'Uploaded apps are installed apps');
   return uploaded;
 }
@@ -49,29 +118,47 @@ export function appShareable(source: AppSummary['lock']['source']): boolean {
 }
 
 /**
- * Where an app's "Submit to marketplace" leads: a GitHub app straight to its
- * own repository's checklist; an uploaded one into Share first (the marketplace
+ * Where an app's "Submit to marketplace" leads: a GitHub app that is not listed yet straight to its
+ * own repository's checklist, as does an uploaded or folder app that is already
+ * published (appPublication); any other uploaded one into Share first (the marketplace
  * takes GitHub repositories only), when the role may share; otherwise nowhere,
- * and the item is hidden rather than offered as a dead end. A marketplace app is
- * already listed.
+ * and the item is hidden rather than offered as a dead end. An app the marketplace
+ * lists has nothing to submit, whatever its source: the marketplace follows the
+ * repository's releases (a new version is a new GitHub release, never a submission),
+ * so the item is hidden for it too.
  */
 export type MarketplaceSubmitRoute =
   | { readonly kind: 'publish'; readonly owner: string; readonly repository: string; readonly account: string | undefined }
   | { readonly kind: 'share-first' }
   | { readonly kind: 'none' };
 
-export function marketplaceSubmitRoute(source: AppSummary['lock']['source'], options: { readonly mayShare: boolean }): MarketplaceSubmitRoute {
+export function marketplaceSubmitRoute(
+  source: AppSummary['lock']['source'],
+  options: { readonly mayShare: boolean; readonly publication: AppPublication | undefined },
+): MarketplaceSubmitRoute {
   switch (source.kind) {
     case 'github':
       assert(source.owner.length > 0, 'A GitHub source names its owner');
       assert(source.repository.length > 0, 'A GitHub source names its repository');
+      if (options.publication?.listed === true) {
+        return { kind: 'none' };
+      }
       return { kind: 'publish', owner: source.owner, repository: source.repository, account: source.account };
     case 'file':
-    case 'local':
+    case 'local': {
+      const { publication } = options;
+      if (publication?.listed === true) {
+        return { kind: 'none' };
+      }
+      if (publication !== undefined) {
+        // Already on GitHub: the checklist opens on that repository, with no share in between.
+        return { kind: 'publish', owner: publication.owner, repository: publication.repository, account: publication.account };
+      }
       if (appShareable(source) && options.mayShare) {
         return { kind: 'share-first' };
       }
       return { kind: 'none' };
+    }
     case 'marketplace':
       return { kind: 'none' };
     default: {
@@ -91,14 +178,14 @@ export function publishChooserRows(input: {
   readonly repositories: readonly AppRepository[] | undefined;
   readonly uploaded: readonly AppSummary[];
 }): readonly PublishRow[] {
-  const github = chooserRows({ query: input.query, repositories: input.repositories }).map((row): PublishRow =>
-    row.kind === 'section' ? { ...row, label: 'Your GitHub apps' } : row,
+  const github = chooserRows({ query: input.query, repositories: input.repositories }).map(
+    (row): PublishRow => (row.kind === 'section' ? { ...row, label: 'Your GitHub apps', labelRef: messageRef('apps.chooser.sectionYours') } : row), // i18n-ignore: English identity of the section; the heading drawn is `labelRef` translated.
   );
   const needle = input.query.trim().toLowerCase();
   const uploaded = input.uploaded.filter((app) => needle === '' || `${app.manifest.name} ${app.manifest.id}`.toLowerCase().includes(needle));
   const rows: PublishRow[] = [...github];
   if (uploaded.length > 0) {
-    rows.push({ kind: 'section', key: 'section:uploaded', label: 'Uploaded to this project' });
+    rows.push({ kind: 'section', key: 'section:uploaded', label: 'Uploaded to this project', labelRef: messageRef('apps.chooser.sectionUploaded') }); // i18n-ignore: English identity of the section; the heading drawn is `labelRef` translated.
     rows.push(...uploaded.map((app): PublishRow => ({ kind: 'uploaded', key: `uploaded:${app.manifest.id}`, app })));
   }
   assert(rows.length <= github.length + uploaded.length + 1, 'Rows come from the two sources');
@@ -163,7 +250,7 @@ export type ShareListing =
 
 /** What the destination field says about the typed repository name. */
 export type RepositoryNameStatus =
-  | { readonly kind: 'invalid'; readonly message: string }
+  | { readonly kind: 'invalid'; readonly message: string; readonly messageRef?: TypedMessageRef | undefined }
   | { readonly kind: 'checking' }
   | { readonly kind: 'exists' }
   | { readonly kind: 'available' }
@@ -184,9 +271,9 @@ export function repositoryNameStatus(input: {
   readonly listing: ShareListing;
 }): RepositoryNameStatus {
   assert(input.owner.length > 0, 'A name is checked for an owner');
-  const problem = repositoryNameProblem(input.name);
+  const problem = repositoryNameProblemDescribed(input.name);
   if (problem !== undefined) {
-    return { kind: 'invalid', message: problem };
+    return { kind: 'invalid', ...problem };
   }
   const { listing } = input;
   switch (listing.kind) {
@@ -234,21 +321,23 @@ export function repositoryNameUsable(status: RepositoryNameStatus): boolean {
 export function visibilityChoices(
   owner: string,
   ownerKind: AppRepositoryOwnerKind,
+  translate: Translator,
 ): readonly { readonly visibility: AppShareVisibility; readonly title: string; readonly detail: string }[] {
   assert(owner.length > 0, 'A visibility describes an owner');
+  const action = translate('apps.loadFromGitHub');
   const choices = [
     {
       visibility: 'private' as const,
-      title: 'Private',
+      title: translate('apps.visibility.private'),
       detail:
         ownerKind === 'organization'
-          ? `People in ${owner} can install it with ${LOAD_FROM_GITHUB_LABEL}.`
-          : `Only you and people you invite can install it with ${LOAD_FROM_GITHUB_LABEL}.`,
+          ? translate('apps.visibility.privateOrganization', { owner, action })
+          : translate('apps.visibility.privateUser', { action }),
     },
     {
       visibility: 'public' as const,
-      title: 'Public',
-      detail: 'Anyone can install it. Adds an MIT license.',
+      title: translate('apps.visibility.public'),
+      detail: translate('apps.visibility.publicDetail'),
     },
   ];
   assert(choices[0]?.visibility === DEFAULT_APP_SHARE_VISIBILITY, 'The default visibility is offered first');
@@ -256,20 +345,29 @@ export function visibilityChoices(
 }
 
 /** What the confirmation before making a repository public says. */
-export function makePublicConfirmation(owner: string, repository: string): { readonly title: string; readonly body: string; readonly confirmLabel: string } {
+export function makePublicConfirmation(
+  owner: string,
+  repository: string,
+  translate: Translator,
+): { readonly title: string; readonly body: string; readonly confirmLabel: string } {
+  const name = `${owner}/${repository}`;
   return {
-    title: `Make ${owner}/${repository} public?`,
-    body: `Everyone on the internet will be able to see ${owner}/${repository}: all of its code and its whole history, not only the app's files. This cannot be undone from Stacki.`,
-    confirmLabel: 'Make public',
+    title: translate('apps.makePublic.title', { name }),
+    body: translate('apps.makePublic.body', { name }),
+    confirmLabel: translate('apps.makePublic.confirm'),
   };
 }
 
 /** What the confirmation before a public share says. */
-export function publicShareConfirmation(owner: string, name: string): { readonly title: string; readonly body: string; readonly confirmLabel: string } {
+export function publicShareConfirmation(
+  owner: string,
+  name: string,
+  translate: Translator,
+): { readonly title: string; readonly body: string; readonly confirmLabel: string } {
   return {
-    title: `Create the public repository ${owner}/${name}?`,
-    body: 'Everyone on the internet will be able to see the app’s files. Stacki adds an MIT license, so others may use and change them.',
-    confirmLabel: 'Create public repository',
+    title: translate('apps.publicShare.title', { name: `${owner}/${name}` }),
+    body: translate('apps.publicShare.body'),
+    confirmLabel: translate('apps.publicShare.confirm'),
   };
 }
 
@@ -279,32 +377,27 @@ export function licenseConfirmation(
   repository: string,
   holder: string,
   year: number,
+  translate: Translator,
 ): { readonly title: string; readonly body: string; readonly confirmLabel: string } {
   return {
-    title: `Add the MIT license to ${owner}/${repository}?`,
-    body: `Stacki commits a standard MIT LICENSE file, “Copyright (c) ${year} ${holder}”, to the default branch. Anyone may then use, change and share the app.`,
-    confirmLabel: 'Add MIT license',
+    title: translate('apps.license.title', { name: `${owner}/${repository}` }),
+    body: translate('apps.license.body', { year, holder }),
+    confirmLabel: translate('apps.license.confirm'),
   };
 }
 
 /** Why GitHub refused to make a repository public, and what to do about it. */
-export function visibilityRefusal(outcome: Extract<AppVisibilityOutcome, { readonly kind: 'forbidden' }>): { readonly title: string; readonly detail: string } {
+export function visibilityRefusal(
+  outcome: Extract<AppVisibilityOutcome, { readonly kind: 'forbidden' }>,
+  translate: Translator,
+): { readonly title: string; readonly detail: string } {
   switch (outcome.reason) {
     case 'scope':
-      return {
-        title: 'Your GitHub sign-in cannot change repositories',
-        detail: 'Sign in to GitHub again with the repo scope, or change the visibility in the repository’s settings.',
-      };
+      return { title: translate('apps.refusal.scope.title'), detail: translate('apps.refusal.scope.detail') };
     case 'admin':
-      return {
-        title: 'Only an admin of this repository can make it public',
-        detail: 'Ask an admin of the repository, or change the visibility yourself in its settings if you are one.',
-      };
+      return { title: translate('apps.refusal.admin.title'), detail: translate('apps.refusal.admin.detail') };
     case 'policy':
-      return {
-        title: 'The organization does not allow public repositories',
-        detail: 'An owner of the organization can allow them, or change the visibility in the repository’s settings.',
-      };
+      return { title: translate('apps.refusal.policy.title'), detail: translate('apps.refusal.policy.detail') };
     default: {
       const exhaustive: never = outcome.reason;
       return exhaustive;
@@ -313,18 +406,18 @@ export function visibilityRefusal(outcome: Extract<AppVisibilityOutcome, { reado
 }
 
 /** One checklist line before Submit. */
-export function marketplaceCheckLabel(check: MarketplaceCheck): string {
+export function marketplaceCheckLabel(check: MarketplaceCheck, translate: Translator): string {
   switch (check) {
     case 'public':
-      return 'The repository is public';
+      return translate('apps.check.public');
     case 'topic':
-      return 'It carries the stacki-app topic';
+      return translate('apps.check.topic');
     case 'release':
-      return 'It has a release with the app’s .zip';
+      return translate('apps.check.release');
     case 'license':
-      return 'It uses the MIT license';
+      return translate('apps.check.license');
     case 'scan':
-      return 'The secret scan is clean';
+      return translate('apps.check.scan');
     default: {
       const exhaustive: never = check;
       return exhaustive;

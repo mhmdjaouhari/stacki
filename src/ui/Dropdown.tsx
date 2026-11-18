@@ -4,8 +4,10 @@ import type { CSSProperties, KeyboardEvent, MutableRefObject, ReactNode, RefObje
 import { endDragNotes, hoverNote } from './sound';
 import { useSoundHere } from './soundScope';
 import { ChevronDownIcon, CheckIcon } from './Icons';
+import { SkeletonRows } from './Skeleton';
 import { assert } from '../../shared/core/assert';
 import { LIMITS } from '../../shared/core/limits';
+import { useTranslate } from '../lib/i18n/useTranslate';
 
 export const POPUP_GAP = 4;
 const POPUP_EDGE = 8;
@@ -32,6 +34,8 @@ export function popupBox(rectangle: Pick<DOMRect, 'top' | 'bottom'>, wanted: num
     maxHeight: wanted > room ? room : undefined,
   };
 }
+/** A row's colour family; absent is the default text colour. */
+export type DropdownOptionTone = 'collection';
 export interface DropdownOption<T = string> {
   readonly value: T;
   readonly label: string;
@@ -40,7 +44,14 @@ export interface DropdownOption<T = string> {
   /** A mark beside the group's heading (a CMS's logo); taken from the group's first option. */
   readonly groupIcon?: ReactNode;
   readonly description?: string;
+  /** The row's tooltip: more than its label says (what a computed value is computed from). */
+  readonly title?: string;
   readonly icon?: ReactNode;
+  /**
+   * `collection`: a page a CMS collection generates, purple as it is in the Pages panel (label, icon,
+   * and the group heading over it). The highlighted row keeps the highlight's white for contrast.
+   */
+  readonly tone?: DropdownOptionTone;
   readonly dim?: boolean;
   /** Listed but not choosable; its `description` says why. */
   readonly disabled?: boolean;
@@ -84,12 +95,21 @@ export interface DropdownProps<T = string> {
   readonly onHighlight?: (value: T | undefined) => void;
   readonly searchable?: boolean;
   readonly searchPlaceholder?: string;
+  /**
+   * The most rows the list draws. Past it the list ends with "N more, keep typing", so a search over
+   * thousands of options stays fast; typing narrows the matches before they are counted.
+   */
+  readonly rowsMax?: number;
+  /** More options are still arriving: the list ends with skeleton rows, and an empty list is not yet "nothing matches". */
+  readonly loading?: boolean;
 }
 interface Selection<T> {
   readonly open: boolean;
   readonly highlight: number;
   readonly query: string;
   readonly visible: readonly DropdownOption<T>[];
+  /** Matches left undrawn by `rowsMax`. */
+  readonly hiddenCount: number;
   readonly selected: DropdownOption<T> | undefined;
   readonly setOpen: (open: boolean) => void;
   readonly setHighlight: (highlight: number) => void;
@@ -146,6 +166,8 @@ export default function Dropdown<T>(props: DropdownProps<T>) {
         aria-expanded={state.open}
         ref={state.triggerRef}
         className={`dd-trigger ${props.className || ''}`}
+        // The chosen row's tooltip is the trigger's too: what it names is the same.
+        title={state.selected?.title}
         onMouseEnter={props.onPrepare}
         onFocus={props.onPrepare}
         onClick={() => (state.open ? actions.close() : actions.openPopup())}
@@ -176,15 +198,23 @@ function useDropdownSelection<T>(props: DropdownProps<T>): Selection<T> {
   const committed = useRef(props.value);
   const previewed = useRef<{ readonly value: T } | undefined>(undefined);
   const queryText = query.trim().toLowerCase();
-  const visible =
+  const matches =
     props.searchable && queryText
       ? props.options.filter(
           (option) =>
             option.pinned === true || `${option.label} ${option.hint || ''} ${option.group || ''} ${option.keywords || ''}`.toLowerCase().includes(queryText),
         )
       : props.options;
+  // A caller's cap draws at least one row; without one every match is drawn, and a list with no
+  // options (or a search that matches none) draws none rather than failing.
+  if (props.rowsMax !== undefined) {
+    assert(props.rowsMax >= 1, 'Dropdown rowsMax draws at least one row');
+  }
+  const rowsMax = props.rowsMax ?? matches.length;
+  const visible = matches.length > rowsMax ? matches.slice(0, rowsMax) : matches;
   return {
     open,
+    hiddenCount: matches.length - visible.length,
     setOpen,
     highlight,
     setHighlight,
@@ -259,7 +289,7 @@ function useDropdownActions<T>(props: DropdownProps<T>, state: Selection<T>): Ac
       cancelHover();
       onPrepare?.();
       initializeDropdown(state, value);
-      setHighlight(options.findIndex((option) => option.value === value));
+      setHighlight(options.slice(0, props.rowsMax ?? options.length).findIndex((option) => option.value === value));
       setOpen(true);
     },
     preview: (index) => {
@@ -508,6 +538,7 @@ function menuStyle(position: PopupPosition): CSSProperties {
 }
 
 function DropdownPopup<T>({ control, props, position, onKey }: PopupProps<T>) {
+  const translate = useTranslate();
   return (
     <Popup
       mode="popover"
@@ -523,7 +554,7 @@ function DropdownPopup<T>({ control, props, position, onKey }: PopupProps<T>) {
           ref={control.searchRef}
           className="dd-search"
           value={control.query}
-          placeholder={props.searchPlaceholder ?? 'Search…'}
+          placeholder={props.searchPlaceholder ?? translate('ui.search')}
           spellCheck={false}
           onChange={(event) => {
             control.setQuery(event.target.value);
@@ -536,7 +567,7 @@ function DropdownPopup<T>({ control, props, position, onKey }: PopupProps<T>) {
         {control.visible.map((option, index) => (
           <Fragment key={`${String(option.value)}-${index}`}>
             {option.group && option.group !== control.visible[index - 1]?.group && (
-              <div className="dd-group-label">
+              <div className={`dd-group-label ${option.tone === 'collection' ? 'collection' : ''}`}>
                 {option.groupIcon && <span className="dd-group-icon">{option.groupIcon}</span>}
                 {option.group}
               </div>
@@ -544,8 +575,16 @@ function DropdownPopup<T>({ control, props, position, onKey }: PopupProps<T>) {
             <DropdownRow option={option} index={index} control={control} />
           </Fragment>
         ))}
+        {control.hiddenCount > 0 && <div className="dd-more">{translate('ui.dropdown.more', { count: control.hiddenCount })}</div>}
+        {props.loading === true && (
+          <div className="dd-loading">
+            <SkeletonRows count={2} />
+          </div>
+        )}
         {/* A pinned row is not a match, so the list still says nothing matched beside it. */}
-        {!control.visible.some((option) => option.pinned !== true) && <div className="dd-empty">Nothing matches</div>}
+        {props.loading !== true && !control.visible.some((option) => option.pinned !== true) && (
+          <div className="dd-empty">{translate('ui.dropdown.noMatch')}</div>
+        )}
       </div>
     </Popup>
   );
@@ -555,8 +594,9 @@ function DropdownRow<T>({ option, index, control }: { readonly option: DropdownO
   const selected = option.value === control.committed.current && control.open ? 'selected' : '';
   return (
     <div
-      className={`dd-option ${highlight} ${selected} ${option.dim ? 'dim' : ''} ${option.disabled === true ? 'disabled' : ''}`}
+      className={`dd-option ${highlight} ${selected} ${option.dim ? 'dim' : ''} ${option.disabled === true ? 'disabled' : ''} ${option.tone === 'collection' ? 'collection' : ''}`}
       aria-disabled={option.disabled === true ? true : undefined}
+      title={option.title}
       onMouseEnter={() => control.hover(index)}
       onPointerDown={(event) => {
         if (event.pointerType === 'mouse' && event.button === 0) {

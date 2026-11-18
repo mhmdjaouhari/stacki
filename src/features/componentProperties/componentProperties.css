@@ -5,6 +5,7 @@
   gap: 12px;
   padding: 12px;
   overflow: auto;
+  scrollbar-gutter: stable;
   min-width: 0;
   height: 100%;
 }
@@ -71,7 +72,9 @@
   height: 24px;
   padding: 0;
   border-radius: 6px;
-  font-size: 18px;
+  /* No margin or offset: the mark sits in the box centre, nothing nudges it. */
+  margin: 0;
+  line-height: 0;
   background: transparent;
 }
 .property-editor header button:hover:not(:disabled) {
@@ -113,6 +116,7 @@
 }
 .property-readonly-code .code-block {
   overflow: auto;
+  scrollbar-gutter: stable;
   max-height: 120px;
   padding: 6px 8px;
   border-radius: 6px;
@@ -154,6 +158,7 @@
   /* Keep six rows visible while leaving the add button outside the scrolling region. */
   max-height: min(180px, 30vh);
   overflow-y: auto;
+  scrollbar-gutter: stable;
   overscroll-behavior-y: contain;
 }
 .property-settings-dialog .property-error {
@@ -207,6 +212,30 @@
 .property-type:hover .prop-expr-toggle:not(.on),
 .property-default:hover .prop-expr-toggle:not(.on) {
   color: var(--text-dim);
+}
+/* A setting that can be set by conditions has a prop field's + (PropertyFieldHead.tsx):
+   hidden until its field is hovered, then centred on the control's top-left corner,
+   6px under the title row as the fields' gap is, so the dot sits where a prop
+   field's does. Hovering the dot grows it into the +, which is the click. */
+.property-field-head {
+  position: relative;
+}
+.property-field-head > .bind-handle {
+  left: -6px;
+  bottom: -12px;
+}
+.property-field-head > .bind-handle:hover:not(:disabled),
+.property-field-head > .bind-handle.on {
+  left: -9px;
+  bottom: -15px;
+}
+.property-field:hover > .property-field-head > .bind-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Unset, the title sits as Kind's does, its {} 4px after the words; set, the blue fill keeps its padding. */
+.property-field-head > .prop-label:not(.set) {
+  padding-right: 0;
 }
 .property-type .dd-trigger,
 .property-default .dd-trigger {

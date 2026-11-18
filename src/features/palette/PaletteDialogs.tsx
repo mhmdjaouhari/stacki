@@ -1,11 +1,21 @@
+import { useTranslate, useTranslateDescribed, useTranslateRich } from '../../lib/i18n/useTranslate';
 import { CodeInline } from '../../ui/CodeBlock';
-import Dropdown, { type DropdownOption } from '../../ui/Dropdown';
+import InfoHint from '../../ui/InfoHint';
+import { SegmentedTabs, type SegmentedTab } from '../../ui/SegmentedTabs';
+import { assert } from '../../../shared/core/assert';
 import { ErrorToast } from '../../ui/ErrorToast';
 import Popup from '../../ui/Popup';
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { TypedMessageRef } from '../../../shared/properties/i18n/messageRef';
 import type { ExtractionPlan, ExtractionValue } from '../../editor/extractFrontmatter';
 import type { ComponentUsageFile } from './paletteModel';
-import { componentNameError, toComponentName } from './componentName';
+import { componentNameProblem, toComponentName } from './componentName';
+import { folderInput, type RenameCandidate } from './renameAvailability';
+import { detectFolderStyle, identifierOfFileName } from '../../../shared/properties/componentNaming';
+import { described, type Described } from '../../../shared/properties/i18n/messageRef';
+import { LIMITS } from '../../../shared/core/limits';
+import Dropdown from '../../ui/Dropdown';
+import './createComponent.css';
 import { prettyComponentName, usageFileLabel } from './paletteModel';
 import { CloseIcon, ElementComponentIcon, FileIcon, LayoutIcon } from '../../ui/Icons';
 
@@ -17,7 +27,7 @@ export type ComponentCreationSource =
       /** What creating would do with these values passed in as props and the rest moved. */
       readonly plan: (asProp: ReadonlySet<string>) => ExtractionPlan;
     }
-  | { readonly kind: 'unavailable'; readonly reason: string };
+  | { readonly kind: 'unavailable'; readonly reason: string; readonly reasonRef?: TypedMessageRef | undefined };
 
 export interface UsageAnchor {
   readonly left: number;
@@ -42,15 +52,25 @@ export type UsagePopup =
 
 interface CreateComponentModalProps {
   readonly source: Extract<ComponentCreationSource, { readonly kind: 'ready' }>;
-  readonly taken: readonly string[];
+  /** Every component's project-relative file and name: a name is taken only in the folder chosen, and warned about elsewhere. */
+  readonly components: readonly RenameCandidate[];
+  /** The components folder a new component goes in (`src/components`, the first configured folder); folders are chosen below it. */
+  readonly root: string;
   readonly onClose: () => void;
-  readonly onCreate: (name: string, options: { readonly asProp: readonly string[] }) => void;
+  /** `folder` is below `root`, `/`-separated, `''` for the root itself. */
+  readonly onCreate: (name: string, options: { readonly asProp: readonly string[]; readonly folder: string }) => void;
 }
+
+/** The folder choice that opens the typed field; NUL cannot be in a path, so it can never be a folder. */
+const NEW_FOLDER = '\u0000new-folder';
 
 export function CreateComponentModal(props: CreateComponentModalProps) {
   const [text, setText] = useState(props.source.name);
   // Empty is the default on purpose: every value moves unless the person says otherwise.
   const [asProp, setAsProp] = useState<ReadonlySet<string>>(new Set());
+  // The root, always: the last folder chosen is not remembered, so a new component lands where it always has unless picked otherwise.
+  const [folderChoice, setFolderChoice] = useState('');
+  const [newFolder, setNewFolder] = useState('');
   const { plan: planFor } = props.source;
   const plan = useMemo(() => planFor(asProp), [planFor, asProp]);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -58,36 +78,56 @@ export function CreateComponentModal(props: CreateComponentModalProps) {
     inputRef.current?.focus();
     inputRef.current?.select();
   }, []);
+  const translate = useTranslate();
+  const translateDescribed = useTranslateDescribed();
   const name = toComponentName(text);
-  const error = componentNameError(text, props.taken);
+  const target = useCreateTarget(props, name, folderChoice, newFolder);
+  const problem = componentNameProblem(text, []) ?? target.taken;
+  const blocked = problem !== undefined || target.folder === undefined;
+  const error = problem === undefined ? undefined : translateDescribed(problem);
   const shown = text.trim() ? error : undefined;
   const submit = (): void => {
-    if (!error) {
-      props.onCreate(name, { asProp: [...asProp] });
+    if (problem === undefined && target.folder !== undefined) {
+      props.onCreate(name, { asProp: [...asProp], folder: target.folder });
     }
   };
   return (
-    <Popup className="modal" onClose={props.onClose} dismissible={true}>
+    <Popup className="modal create-component" onClose={props.onClose} dismissible={true}>
       {({ close }) => (
         <>
-          <div className="modal-header">Create component</div>
+          <div className="modal-header">{translate('palette.create.title')}</div>
           <div className="modal-body">
             <ComponentNameField
               inputRef={inputRef}
               text={text}
               setText={setText}
               name={name}
+              file={target.file}
               error={shown}
               source={props.source}
+              submit={submit}
+              onClose={close}
+            />
+            {shown === undefined && target.twin !== undefined && (
+              <div className="create-folder-warning">{translate('palette.rename.sameNameElsewhere', { name, file: target.twin })}</div>
+            )}
+            <FolderField
+              root={props.root}
+              folders={target.folders}
+              choice={folderChoice}
+              newFolder={newFolder}
+              problem={target.folderProblem === undefined ? undefined : translateDescribed(target.folderProblem)}
+              setChoice={setFolderChoice}
+              setNewFolder={setNewFolder}
               submit={submit}
               onClose={close}
             />
             <ValueChoices values={plan.values} asProp={asProp} onChange={setAsProp} />
           </div>
           <div className="modal-footer">
-            <button onClick={close}>Cancel</button>
-            <button className="primary" disabled={Boolean(error)} onClick={submit}>
-              Create
+            <button onClick={close}>{translate('ui.cancel')}</button>
+            <button className="primary" disabled={blocked} onClick={submit}>
+              {translate('palette.create.submit')}
             </button>
           </div>
         </>
@@ -96,11 +136,70 @@ export function CreateComponentModal(props: CreateComponentModalProps) {
   );
 }
 
+/** Where the new component would be written, worked out from what is typed and chosen on every keystroke (no round trip). */
+interface CreateTarget {
+  /** Folders below the root that hold a component, and the folders between: the choices besides the root. */
+  readonly folders: readonly string[];
+  /** The folder below the root, or undefined while a typed new folder is empty or cannot be used. */
+  readonly folder: string | undefined;
+  readonly folderProblem: Described | undefined;
+  /** The file it would be saved as, for the hint: `…` stands for a folder not yet usable. */
+  readonly file: string;
+  /** A component already at that file, compared without case. */
+  readonly taken: Described | undefined;
+  /** Another component with the same name in another folder: allowed, but a page importing both needs an alias. */
+  readonly twin: string | undefined;
+}
+
+function useCreateTarget(props: CreateComponentModalProps, name: string, choice: string, newFolder: string): CreateTarget {
+  const folders = useMemo(() => subfoldersOf(props.root, props.components), [props.root, props.components]);
+  const style = useMemo(() => detectFolderStyle(folders.map((folder) => folder.slice(folder.lastIndexOf('/') + 1))), [folders]);
+  const typed = choice === NEW_FOLDER ? folderInput(newFolder, style, folders) : undefined;
+  const folderProblem = typed !== undefined && newFolder.trim() !== '' ? typed.problem : undefined;
+  const folder = typed === undefined ? choice : typed.problem === undefined ? typed.path : undefined;
+  const directory = folder === undefined ? `${props.root}/…` : folder === '' ? props.root : `${props.root}/${folder}`;
+  const file = `${directory}/${name || 'Name'}.astro`;
+  const clash = folder === undefined || name === '' ? undefined : props.components.find((other) => other.file.toLowerCase() === file.toLowerCase());
+  const twin =
+    name === ''
+      ? undefined
+      : props.components.find((other) => other.file !== clash?.file && identifierOfFileName(other.name).toLowerCase() === name.toLowerCase());
+  assert(folder === undefined || !folder.startsWith('/'), 'useCreateTarget: a folder is below the root');
+  assert(folder === undefined || !folder.endsWith('/'), 'useCreateTarget: a folder has no trailing slash');
+  return {
+    folders,
+    folder,
+    folderProblem,
+    file,
+    taken: clash === undefined ? undefined : described('palette.create.taken', { file: clash.file }),
+    twin: twin?.file,
+  };
+}
+
+/** Every folder below `root` that holds a component, and the folders between, sorted; never the root itself. */
+export function subfoldersOf(root: string, components: readonly RenameCandidate[]): readonly string[] {
+  assert(!root.endsWith('/'), 'subfoldersOf: the root has no trailing slash');
+  assert(components.length <= LIMITS.scanEntriesMax, 'subfoldersOf: the component list fits the scan limit');
+  const found = new Set<string>();
+  for (const component of components) {
+    const directory = component.file.slice(0, component.file.lastIndexOf('/'));
+    if (!directory.startsWith(`${root}/`)) {
+      continue;
+    }
+    const levels = directory.slice(root.length + 1).split('/');
+    for (let depth = 1; depth <= levels.length; depth += 1) {
+      found.add(levels.slice(0, depth).join('/'));
+    }
+  }
+  return [...found].sort((left, right) => left.localeCompare(right));
+}
+
 function ComponentNameField({
   inputRef,
   text,
   setText,
   name,
+  file,
   error,
   source,
   submit,
@@ -110,18 +209,22 @@ function ComponentNameField({
   readonly text: string;
   readonly setText: React.Dispatch<React.SetStateAction<string>>;
   readonly name: string;
+  readonly file: string;
   readonly error: string | undefined;
   readonly source: Extract<ComponentCreationSource, { readonly kind: 'ready' }>;
   readonly submit: () => void;
   readonly onClose: () => void;
 }) {
+  const translateRich = useTranslateRich();
+  const translate = useTranslate();
   return (
     <div>
-      <label>Name</label>
+      <label>{translate('palette.create.name')}</label>
       <input
         ref={inputRef}
         value={text}
         spellCheck={false}
+        // i18n-ignore: an example component identifier, not prose.
         placeholder="Card"
         onChange={(event) => setText(event.currentTarget.value)}
         onKeyDown={(event) => {
@@ -136,7 +239,63 @@ function ComponentNameField({
         <ErrorToast message={error} />
       ) : (
         <div className="hint-text component-name-hint">
-          {source.label} becomes <code>&lt;{name || 'Name'} /&gt;</code>, saved as <code>src/components/{name || 'Name'}.astro</code>
+          {translateRich('palette.create.hint', {
+            label: source.label,
+            tag: <code>&lt;{name || 'Name'} /&gt;</code>,
+            file: <code>{file}</code>,
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The folder under the components root: the root first and chosen, every folder that holds a component as its path, and a
+// last row that opens a field for a new one, nested with `/`. What is typed is checked as it is typed and the reason shown.
+function FolderField(props: {
+  readonly root: string;
+  readonly folders: readonly string[];
+  readonly choice: string;
+  readonly newFolder: string;
+  readonly problem: string | undefined;
+  readonly setChoice: (choice: string) => void;
+  readonly setNewFolder: (text: string) => void;
+  readonly submit: () => void;
+  readonly onClose: () => void;
+}) {
+  const translate = useTranslate();
+  const rootName = props.root.slice(props.root.lastIndexOf('/') + 1);
+  const options = [
+    { value: '', label: translate('palette.create.folderRoot', { folder: rootName }) },
+    ...props.folders.map((folder) => ({ value: folder, label: folder })),
+    { value: NEW_FOLDER, label: translate('palette.rename.newFolder') },
+  ];
+  return (
+    <div className="create-folder">
+      <label>{translate('palette.rename.folder')}</label>
+      <Dropdown value={props.choice} ariaLabel={translate('palette.rename.folder')} options={options} onChange={props.setChoice} />
+      {props.choice === NEW_FOLDER && (
+        <input
+          className="create-folder-input"
+          value={props.newFolder}
+          spellCheck={false}
+          autoFocus={true}
+          aria-label={translate('palette.rename.newFolderName')}
+          // i18n-ignore: an example folder path, not prose.
+          placeholder="Global/Layout"
+          onChange={(event) => props.setNewFolder(event.currentTarget.value)}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              props.submit();
+            } else if (event.key === 'Escape') {
+              props.onClose();
+            }
+          }}
+        />
+      )}
+      {props.problem !== undefined && (
+        <div className="create-folder-problem" role="status">
+          {props.problem}
         </div>
       )}
     </div>
@@ -144,15 +303,16 @@ function ComponentNameField({
 }
 
 type ValueChoice = 'move' | 'prop';
+/** The bulk control's state: one choice for every value that has one, or `mixed` when they differ. */
+type BulkChoice = ValueChoice | 'mixed';
 
-const VALUE_CHOICES: readonly DropdownOption<ValueChoice>[] = [
-  { value: 'move', label: 'Move into this component' },
-  { value: 'prop', label: 'Pass in as a prop' },
-];
+/** The most values a dialog lists; a piece reading more is a caller bug, not a list to draw. */
+const VALUE_ROWS_MAX = 256;
 
 // What the page does with each value the piece reads. Move leads because the
 // section and its data belong together; a value that can't move says why, in place
-// of a choice it doesn't have.
+// of a choice it doesn't have. The header summarises and sets every row at once; the
+// rows are one compact filled list that scrolls inside the dialog, so Create stays in view.
 function ValueChoices({
   values,
   asProp,
@@ -162,9 +322,12 @@ function ValueChoices({
   readonly asProp: ReadonlySet<string>;
   readonly onChange: (asProp: ReadonlySet<string>) => void;
 }) {
+  const translate = useTranslate();
   if (values.length === 0) {
     return undefined;
   }
+  assert(values.length <= VALUE_ROWS_MAX, 'ValueChoices: the values fit the list');
+  const choosable = values.filter((value) => value.kind !== 'locked');
   const choose = (name: string, choice: ValueChoice): void => {
     const next = new Set(asProp);
     if (choice === 'prop') {
@@ -174,37 +337,99 @@ function ValueChoices({
     }
     onChange(next);
   };
+  // A locked value is already a prop and has no choice, so the bulk control leaves it alone.
+  const chooseAll = (choice: ValueChoice): void => {
+    const next = new Set(asProp);
+    for (const value of choosable) {
+      if (choice === 'prop') {
+        next.add(value.name);
+      } else {
+        next.delete(value.name);
+      }
+    }
+    onChange(next);
+  };
+  const propCount = choosable.filter((value) => value.kind === 'prop').length;
+  const bulk: BulkChoice = propCount === 0 ? 'move' : propCount === choosable.length ? 'prop' : 'mixed';
+  const movedIn = values.filter((value) => value.kind === 'move').length;
+  const passed = values.length - movedIn;
+  const bulkTabs: readonly SegmentedTab<BulkChoice>[] = [
+    { value: 'move', label: translate('palette.create.value.bulkMove') },
+    { value: 'prop', label: translate('palette.create.value.bulkProp') },
+  ];
   return (
     <div className="extract-values">
-      <label>{values.length === 1 ? 'The value it reads' : 'The values it reads'}</label>
-      <div className="extract-value-list">
+      <div className="extract-values-head">
+        <label>{translate('palette.create.value.reads', { count: values.length })}</label>
+        {choosable.length > 1 ? (
+          <SegmentedTabs<BulkChoice>
+            tabs={bulkTabs}
+            value={bulk}
+            label={translate('palette.create.value.bulkAria')}
+            className={{ track: 'extract-bulk' }}
+            onPick={(choice) => chooseAll(choice === 'prop' ? 'prop' : 'move')}
+          />
+        ) : undefined}
+      </div>
+      <div className="extract-value-list" onKeyDown={moveBetweenRows}>
         {values.map((value) => (
           <ValueRow key={value.name} value={value} onChoose={choose} />
         ))}
       </div>
+      <div className="hint-text extract-values-foot">{translate('palette.create.value.counts', { moved: movedIn, props: passed })}</div>
     </div>
   );
 }
 
+// Up and Down walk the rows' choices, landing on each row's chosen segment, so a long list is
+// scanned from the keyboard without tabbing through every button.
+function moveBetweenRows(event: React.KeyboardEvent<HTMLDivElement>): void {
+  const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
+  if (step === 0) {
+    return;
+  }
+  const chosen = [...event.currentTarget.querySelectorAll<HTMLElement>('.extract-value [role="tab"][aria-selected="true"]')];
+  const row = event.target instanceof Element ? (event.target.closest('.extract-value') ?? undefined) : undefined;
+  const at = chosen.findIndex((element) => element.closest('.extract-value') === row);
+  const target = chosen[at + step];
+  if (at >= 0 && target !== undefined) {
+    event.preventDefault();
+    target.focus();
+    target.scrollIntoView?.({ block: 'nearest' });
+  }
+}
+
 function ValueRow({ value, onChoose }: { readonly value: ExtractionValue; readonly onChoose: (name: string, choice: ValueChoice) => void }) {
+  const translate = useTranslate();
   const note = valueNote(value);
+  const choices: readonly SegmentedTab<ValueChoice>[] = [
+    { value: 'move', label: translate('palette.create.value.move') },
+    { value: 'prop', label: translate('palette.create.value.prop') },
+  ];
   return (
     <div className="extract-value">
-      <div className="extract-value-row">
-        <CodeInline className="extract-value-name" text={value.name} language="typescript" />
-        {value.kind === 'locked' ? (
-          <span className="extract-value-fixed">Passed in as a prop</span>
-        ) : (
-          <Dropdown<ValueChoice>
-            ariaLabel={`What to do with ${value.name}`}
-            className="extract-value-choice"
-            value={value.kind}
-            options={VALUE_CHOICES}
-            onChange={(choice) => onChoose(value.name, choice)}
-          />
-        )}
-      </div>
-      {note === undefined ? undefined : <div className="hint-text extract-value-note">{note}</div>}
+      <CodeInline className="extract-value-name" text={value.name} language="typescript" />
+      {value.kind === 'move' && note !== undefined ? (
+        <span className="extract-value-tag">
+          {translate('palette.create.value.alsoUsed')}
+          <InfoHint text={note} />
+        </span>
+      ) : undefined}
+      {value.kind === 'locked' ? (
+        <span className="extract-value-fixed">
+          {translate('palette.create.value.passed')}
+          {note === undefined ? undefined : <InfoHint text={note} />}
+        </span>
+      ) : (
+        <SegmentedTabs<ValueChoice>
+          tabs={choices}
+          value={value.kind}
+          label={translate('palette.create.value.choiceAria', { name: value.name })}
+          layout="equal"
+          className={{ track: 'extract-value-choice' }}
+          onPick={(choice) => onChoose(value.name, choice)}
+        />
+      )}
     </div>
   );
 }
@@ -234,6 +459,7 @@ interface InstancesPopupProps {
 }
 
 export function InstancesPopup({ popupRef, usage, here, onClose, onOpen, onSelect }: InstancesPopupProps) {
+  const translate = useTranslate();
   const place = usePopupPlacement(usage, here.length, popupRef);
   return (
     <Popup
@@ -247,8 +473,8 @@ export function InstancesPopup({ popupRef, usage, here, onClose, onOpen, onSelec
       ref={popupRef}
     >
       <div className="instances-head">
-        <span>{prettyComponentName(usage.name)} instances</span>
-        <button className="ghost" aria-label="Close" onClick={onClose}>
+        <span>{translate('palette.instances.title', { name: prettyComponentName(usage.name) })}</span>
+        <button className="ghost" aria-label={translate('ui.close')} onClick={onClose}>
           <CloseIcon size={12} />
         </button>
       </div>
@@ -297,12 +523,13 @@ function CurrentInstances({
   readonly instances: readonly { readonly id: string }[];
   readonly onSelect: (id: string) => void;
 }) {
+  const translate = useTranslate();
   if (instances.length === 0) {
     return undefined;
   }
   return (
     <div className="instances-group">
-      <div className="instances-label">On this page</div>
+      <div className="instances-label">{translate('palette.instances.onPage')}</div>
       {instances.map((instance, index) => (
         <button key={instance.id} type="button" className="instances-row" onClick={() => onSelect(instance.id)}>
           <span className="icon">
@@ -326,15 +553,16 @@ function UsageFiles({
   readonly hasCurrent: boolean;
   readonly onOpen: (file: ComponentUsageFile) => void;
 }) {
+  const translate = useTranslate();
   return (
     <div className="instances-group">
-      <div className="instances-label">{hasCurrent ? 'Other files with instances' : 'Used in'}</div>
+      <div className="instances-label">{translate(hasCurrent ? 'palette.instances.otherFiles' : 'palette.instances.usedIn')}</div>
       {usage.kind === 'error' ? (
-        <ErrorToast message={`Couldn’t read the project — ${usage.message}`} />
+        <ErrorToast message={translate('palette.instances.readFailed', { message: usage.message })} />
       ) : usage.kind === 'loading' ? (
-        <div className="instances-empty">Looking…</div>
+        <div className="instances-empty">{translate('palette.instances.looking')}</div>
       ) : usage.files.length === 0 ? (
-        <div className="instances-empty">{hasCurrent ? 'Nowhere else.' : 'Not used anywhere yet.'}</div>
+        <div className="instances-empty">{translate(hasCurrent ? 'palette.instances.nowhereElse' : 'palette.instances.unused')}</div>
       ) : (
         usage.files.map((file) => <UsageFileRow key={file.rel} file={file} onOpen={onOpen} />)
       )}

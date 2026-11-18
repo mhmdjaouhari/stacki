@@ -6,6 +6,8 @@
 // so switching selector/context/state just re-derives — no re-scan.
 
 import { compareCascade } from './cascade';
+import type { LayerPosition } from './cascadeLayers';
+import type { LossKind } from './cascadeResolve';
 import type { MatchedRule, RuleModel } from './cascade';
 import { assert } from '../../../../shared/core/assert';
 import {
@@ -30,7 +32,7 @@ export type SourceKey = 'embed' | 'native';
 
 /** Where a contributed value comes from: a layer, or the element's own `style`
  *  attribute, which outranks every selector (model/inlineTarget.ts). */
-export type ContributorOrigin = SourceKey | 'inline';
+export type ContributorOrigin = SourceKey | 'inline' | 'browser';
 
 /** The selected element's inline declarations, folded in above every rule. */
 export type InlineResolveInput = {
@@ -155,6 +157,12 @@ export type Contributor = {
   winning: boolean;
   /** True when the selector can't be a token chip (combinator / :is / :has / …). */
   complexOnly: boolean;
+  /** The cascade layer the rule is written in, absent when unlayered (model/cascadeLayers.ts). */
+  layer?: LayerPosition | undefined;
+  /** True for the element's own `style` attribute, which the cascade ranks above every rule. */
+  inline?: boolean;
+  /** Why this declaration is not the one in use, once the page has been asked (model/cascadeTruth.ts). */
+  lossReason?: LossKind;
 };
 
 export type ResolvedProp = {
@@ -289,10 +297,6 @@ export type MatchedSelector = {
    *  written in the open component's markup (model/componentMarkup.ts): the chip is
    *  the component's, and green, wherever its CSS lives. */
   inComponentMarkup?: boolean;
-  /** True while whether inComponentMarkup holds is still being read (the selected
-   *  instance's component file is on its way): the chip is drawn neutral, never in a
-   *  colour it may lose a moment later. */
-  provenancePending?: boolean;
   /** True when the chip names a class the instance passed to the component open on
    *  the canvas (`column1Class="hero_copy"`): the page's class, not the component's
    *  (model/instanceClasses.ts). */
@@ -770,6 +774,7 @@ function foldEmbedRule(matched: MatchedRule, view: ResolveView): FoldedRule | un
       isSelected,
       winning: false,
       complexOnly: !winner.simple,
+      ...(matched.rule.layer === undefined ? {} : { layer: matched.rule.layer }),
     },
   }));
   return { isSelected, contributors };
@@ -853,6 +858,7 @@ function inlineContributors(inline: InlineResolveInput | undefined): ReadonlyMap
       isSelected: inline.selected,
       winning: false,
       complexOnly: false,
+      inline: true,
     });
   };
   for (const declaration of inline.declarations) {

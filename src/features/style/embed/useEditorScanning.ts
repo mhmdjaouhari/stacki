@@ -8,10 +8,24 @@ import { forgetComputedStyles } from '../model/computedStyle';
 import { forgetComputedColors } from '../model/computedColor';
 import { computeRuleModel } from '../model/cascade';
 import { type MatchTarget } from '../model/selectors';
-import { getHost, onHostChange } from '../model/host';
-import { buildSnapshot, onDocsReloaded, rebuildRules, primeDomMatches, scanHasElement, serializeElementId, scanPage, webflowApi } from '../model/webflow';
+import { getHost, onHostChange, type HostState } from '../model/host';
+import {
+  buildSnapshot,
+  onDocsReloaded,
+  rebuildRules,
+  primeDomMatches,
+  scanHasElement,
+  serializeElementId,
+  scanPage,
+  syncNodeDocuments,
+  webflowApi,
+} from '../model/webflow';
+import { elementSelectionKey } from '../model/webflowElement';
+import { assert } from '../../../../shared/core/assert';
+import { onCanvasRendered } from '../../../editor/canvasQuery';
 import type { ElementSnapshot } from '../model/styleTypes';
 import { EMPTY_RULE_MODEL, computePlaceholders } from './EditorBasics';
+import { readScanSnapshot, scanSnapshotKey } from './scanSnapshotCache';
 import {
   placeholdersFor,
   readDesignerState,
@@ -23,11 +37,38 @@ import {
   DESIGNER_SYNC_INTERVAL_MS,
   selectorKeyOf,
   snapshotSignature,
+  domMatchesChanged,
   nativeSignature,
   authoredClasses,
   contentForCurrentTree,
 } from './editorModel';
 import { useEditorRefs, useScanState, useSelectionState, useNativeState, useContentRebuild, useApplyResolve } from './useEditorFoundation';
+
+// How many times one background refresh reads again because what it read from moved while it
+// ran. An undo moves the history tick twice (once as it starts, once when it has landed) and the
+// page model once; a live write moves the model once. Past this the pass stops, stays marked
+// stale, and the next poll takes it up as an urgent refresh.
+const BACKGROUND_REFRESH_PASSES_MAX = 4;
+
+// What the panel's content is read from, by identity: the history tick the app moves on undo
+// and redo, and the page model, whose `<style>` blocks are read from its nodes (webflow.ts
+// readSource). A content read while either moved holds the CSS from before the move.
+interface SourceRevision {
+  readonly historyTick: number;
+  readonly nodes: HostState['nodes'];
+}
+
+function sourceRevision(): SourceRevision {
+  const host = getHost();
+  return { historyTick: host.historyTick, nodes: host.nodes };
+}
+
+function sameSourceRevision(left: SourceRevision, right: SourceRevision): boolean {
+  if (left.historyTick !== right.historyTick) {
+    return false;
+  }
+  return left.nodes === right.nodes;
+}
 
 // Rebuild content in the background, then re-resolve the selection.
 export function useBackgroundRefresh(
@@ -40,29 +81,64 @@ export function useBackgroundRefresh(
   const { setRefreshing } = scanState;
   const { rebuildAndStore } = contentRebuild;
   const { applyResolve } = applyResolveHook;
+  // An urgent refresh asked for while another ran or an edit was saving. It used to be
+  // dropped: an undo asks once as it starts (the page still holds the old CSS) and again once
+  // it has landed, and the second ask arrived while the first read was still out, so the panel
+  // kept the read from before the undo — one step behind the canvas and the file (SP-06).
+  const staleRef = useRef(false);
 
   // Rebuild content in the background (coalesced + throttled) to pick up embed
   // edits, then re-resolve the current selection — without blocking the UI.
   const backgroundRefresh = useCallback(
     async ({ now = false }: { now?: boolean } = {}) => {
       if (refreshingRef.current || busyRef.current) {
+        if (now) {
+          staleRef.current = true;
+        }
         return;
       }
       // `now` skips the throttle: something rewrote the files or the model out
       // from under the panel (an undo), and waiting out a polling interval to
-      // notice is what made the panel trail the canvas.
-      if (!now && Date.now() - lastScanAtRef.current < BG_REFRESH_THROTTLE_MS) {
+      // notice is what made the panel trail the canvas. A refused urgent ask is
+      // urgent still when the poll comes round.
+      const urgent = now || staleRef.current;
+      if (!urgent && Date.now() - lastScanAtRef.current < BG_REFRESH_THROTTLE_MS) {
         return;
       }
       refreshingRef.current = true;
-      // Failed network refreshes need the same backoff as successful scans.
-      lastScanAtRef.current = Date.now();
       setRefreshing(true);
       try {
-        const content = await rebuildAndStore();
-        const element = selectedRef.current;
-        if (element && scanHasElement(content.scan, element)) {
-          await applyResolve(element, content, seqRef.current, { silent: true });
+        let passes = 0;
+        for (; passes < BACKGROUND_REFRESH_PASSES_MAX; passes++) {
+          staleRef.current = false;
+          const revision = sourceRevision();
+          // Failed network refreshes need the same backoff as successful scans.
+          lastScanAtRef.current = Date.now();
+          const content = await rebuildAndStore();
+          // A read overtaken while it ran is not shown: resolving it costs a canvas round
+          // trip and would paint the step before for as long as the next read takes.
+          if (staleRef.current) {
+            continue;
+          }
+          if (!sameSourceRevision(revision, sourceRevision())) {
+            continue;
+          }
+          const element = selectedRef.current;
+          if (element && scanHasElement(content.scan, element)) {
+            await applyResolve(element, content, seqRef.current, { silent: true });
+          }
+          // Settled only when nothing it read from moved meanwhile: the model the panel
+          // shows is then the one for the document as it stands.
+          if (staleRef.current) {
+            continue;
+          }
+          if (sameSourceRevision(revision, sourceRevision())) {
+            break;
+          }
+        }
+        assert(passes <= BACKGROUND_REFRESH_PASSES_MAX, 'backgroundRefresh: the passes are bounded');
+        if (passes === BACKGROUND_REFRESH_PASSES_MAX) {
+          staleRef.current = true;
         }
       } catch {
         // Background failures are non-fatal — the cached view stays usable.
@@ -122,7 +198,7 @@ export function useDesignerSync(
   nativeState: ReturnType<typeof useNativeState>,
   rematch: ReturnType<typeof useRematch>,
 ) {
-  const { busyRef, contentRef, lastSnapSigRef, refreshingRef, selectedRef } = editorRefs;
+  const { busyRef, contentRef, lastSnapSigRef, refreshingRef, selectedRef, targetRef } = editorRefs;
   const { nativeModelRef, setNativeModel } = nativeState;
   const { rematchChanged } = rematch;
 
@@ -154,7 +230,11 @@ export function useDesignerSync(
     // flicker) 0–1500ms after every value edit or reset.
     const snapChanged = snapSig !== lastSnapSigRef.current;
     const nativeChanged = nativeSignature(native) !== nativeSignature(nativeModelRef.current);
-    if (!snapChanged && !nativeChanged) {
+    // The element itself is the same, but the page around it may have changed what its selectors
+    // match (a sibling deleted, a child inserted): the frame answers natively, so a differing
+    // answer is a change. The pick, scroll and open sections are not touched by a rematch.
+    const matchesChanged = domMatchesChanged(targetRef.current?.domMatched, asked);
+    if (!snapChanged && !nativeChanged && !matchesChanged) {
       return;
     }
     lastSnapSigRef.current = snapSig;
@@ -162,10 +242,10 @@ export function useDesignerSync(
       nativeModelRef.current = native;
       setNativeModel(native);
     }
-    if (snapChanged) {
+    if (snapChanged || matchesChanged) {
       await rematchChanged(element, content, { target, snap, asked });
     }
-  }, [rematchChanged, busyRef, contentRef, lastSnapSigRef, nativeModelRef, refreshingRef, selectedRef, setNativeModel]);
+  }, [rematchChanged, busyRef, contentRef, lastSnapSigRef, nativeModelRef, refreshingRef, selectedRef, setNativeModel, targetRef]);
   return { syncFromDesigner };
 }
 
@@ -176,7 +256,7 @@ export function useElementReset(
   selectionState: ReturnType<typeof useSelectionState>,
   nativeState: ReturnType<typeof useNativeState>,
 ) {
-  const { selectedElementKeyRef } = editorRefs;
+  const { classListRef, docsRef, primedRef, selectedElementKeyRef, settledElementKeyRef, targetRef } = editorRefs;
   const { setQuickSnapshot, setScan } = scanState;
   const { pendingDefaultRef, setSelectedSelectorText, setSelectedTokens, setStateKey, tokenIdentityRef } = selectionState;
   const { nativeIdentityRef, nativeModelRef, setNativeModel } = nativeState;
@@ -186,7 +266,7 @@ export function useElementReset(
   // can collide across elements), then the tokens effect re-defaults it.
   const resetForElement = useCallback(
     (element: unknown) => {
-      const elementKey = element ? serializeElementId(element) : '';
+      const elementKey = elementSelectionKey(element);
       if (elementKey === selectedElementKeyRef.current) {
         return;
       }
@@ -195,13 +275,29 @@ export function useElementReset(
       setSelectedTokens([]);
       setStateKey('');
       setQuickSnapshot(undefined); // drop the previous element's chips
-      // The chips are derived from these two models, and both are refilled by
-      // async reads. Left alone they keep listing the PREVIOUS element's
-      // selectors as if they were this one's. Blank them now and mark the scan
-      // unsettled: the well then keeps drawing its last settled list, inert,
-      // until the new one has landed whole (heldSelection.ts), so neither the
-      // blank nor the stages in between reach the screen.
-      setScan((previous) => (previous ? { ...previous, rootSnapshot: undefined, model: EMPTY_RULE_MODEL, settled: false } : previous));
+      // An element seen before, under the same CSS, is drawn from its last settled
+      // answer at once (scanSnapshotCache.ts); the canvas's fresh answer follows and
+      // replaces it only where it differs. Its match target goes with it, so an edit
+      // made before that answer lands is made against this element, not the last one.
+      const remembered = elementKey ? readScanSnapshot(scanSnapshotKey(elementKey, docsRef.current)) : undefined;
+      if (remembered !== undefined) {
+        settledElementKeyRef.current = elementKey;
+        targetRef.current = remembered.target;
+        classListRef.current = [...remembered.classList];
+        primedRef.current = remembered.primed;
+        setScan(remembered.scan);
+      } else {
+        settledElementKeyRef.current = '';
+        // The chips are derived from these two models, and both are refilled by
+        // async reads. Left alone they keep listing the PREVIOUS element's
+        // selectors as if they were this one's. Blank them now and mark the scan
+        // unsettled: the well and the sections draw placeholders in their shape
+        // until the new answer has landed whole, so neither the blank, the previous
+        // element's chips nor the stages in between reach the screen.
+        setScan((previous) =>
+          previous ? { ...previous, rootSnapshot: undefined, model: EMPTY_RULE_MODEL, settled: false, awaitingFirstAnswer: true } : previous,
+        );
+      }
       setNativeModel(undefined);
       nativeModelRef.current = undefined;
       nativeIdentityRef.current = '';
@@ -211,10 +307,15 @@ export function useElementReset(
       pendingDefaultRef.current = true;
     },
     [
+      classListRef,
+      docsRef,
       nativeIdentityRef,
       nativeModelRef,
       pendingDefaultRef,
+      primedRef,
       selectedElementKeyRef,
+      settledElementKeyRef,
+      targetRef,
       setNativeModel,
       setQuickSnapshot,
       setScan,
@@ -244,7 +345,7 @@ export function useScanWithoutSelection(
     async (seq: number, options: { force?: boolean }) => {
       setPhase('no-selection');
       setScan(undefined);
-      setStatus('No element selected — type a selector to style it directly.');
+      setStatus('No element selected — type a selector to style it directly.'); // i18n-ignore: write-only status, never rendered.
       const showContent = (content: Content) => {
         if (seq !== seqRef.current || selectedRef.current) {
           return;
@@ -317,7 +418,7 @@ export function useScanSelection(
       // First load, a context switch, or a forced rescan → rebuild content.
       // Stream: render page-level rules as soon as the page scan finishes.
       setPhase('scanning');
-      setStatus(cached ? 'Loading this view…' : 'Scanning embeds…');
+      setStatus(cached ? 'Loading this view…' : 'Scanning embeds…'); // i18n-ignore: write-only status, never rendered.
       try {
         const content = await rebuildAndStore({ rescanComponents: options.force }, (partial) => {
           if (seq === seqRef.current) {
@@ -454,7 +555,7 @@ export function useSelectionSubscriptions(
     const api = webflowApi();
     if (!api?.getSelectedElement) {
       setPhase('unsupported');
-      setStatus('The Webflow selection API is unavailable. Open this inside the Designer.');
+      setStatus('The Webflow selection API is unavailable. Open this inside the Designer.'); // i18n-ignore: write-only status, never rendered.
       return;
     }
     void api.getSelectedElement().then((element) => refresh(element));
@@ -520,6 +621,39 @@ export function useChangeSubscriptions(
     return onHostChange(onClasses);
   }, [syncFromDesigner]);
 
+  // The page around the element changed (a structural edit to its siblings, parent or
+  // children, its own attribute or text, an undo, or the rendering that confirms any of them):
+  // what its selectors match may have changed with it. One re-ask per frame however many signals
+  // arrive, and nothing is cleared meanwhile: the chips stay until the new answer replaces them.
+  const nodesRef = useRef(getHost().nodes);
+  useEffect(() => {
+    let frame: number | undefined;
+    const ask = () => {
+      if (frame !== undefined) {
+        return;
+      }
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        void syncFromDesigner();
+      });
+    };
+    const offHost = onHostChange(() => {
+      const nodes = getHost().nodes;
+      if (nodes !== nodesRef.current) {
+        nodesRef.current = nodes;
+        ask();
+      }
+    });
+    const offRender = onCanvasRendered(ask);
+    return () => {
+      offHost();
+      offRender();
+      if (frame !== undefined) {
+        window.cancelAnimationFrame(frame);
+      }
+    };
+  }, [syncFromDesigner]);
+
   // While an element is shown, poll for out-of-app edits and keep the panel in sync.
   useEffect(() => {
     if (phase !== 'ready') {
@@ -535,7 +669,7 @@ export function useChangeSubscriptions(
 
 // Rebuild the panel's model after an edit.
 export function useRefreshDerived(editorRefs: ReturnType<typeof useEditorRefs>, scanState: ReturnType<typeof useScanState>) {
-  const { classListRef, contentRef, docsRef, primedRef, targetRef } = editorRefs;
+  const { busyRef, classListRef, contentRef, docsRef, primedRef, targetRef } = editorRefs;
   const { setScan } = scanState;
 
   const refreshDerived = useCallback(async () => {
@@ -582,6 +716,29 @@ export function useRefreshDerived(editorRefs: ReturnType<typeof useEditorRefs>, 
         void refreshDerived();
       }),
     [refreshDerived],
+  );
+
+  // The page model moved (an undo or redo, a save's reply, a code edit): its `<style>` blocks
+  // are read again from the nodes in memory, at once, rather than waiting on a rescan of
+  // every stylesheet. While an edit saves, the edit refreshes from its own documents, and
+  // the background refresh's revision check catches anything that moved meanwhile.
+  const nodesRef = useRef(getHost().nodes);
+  useEffect(
+    () =>
+      onHostChange(() => {
+        const nodes = getHost().nodes;
+        if (nodes === nodesRef.current) {
+          return;
+        }
+        nodesRef.current = nodes;
+        if (busyRef.current) {
+          return;
+        }
+        if (syncNodeDocuments(docsRef.current) > 0) {
+          void refreshDerived();
+        }
+      }),
+    [busyRef, docsRef, refreshDerived],
   );
   return { refreshDerived };
 }

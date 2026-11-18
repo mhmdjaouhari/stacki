@@ -1,16 +1,22 @@
+import { useTranslate } from '../../lib/i18n/useTranslate';
 import { TreeDragRow, TreeDropGap, TreeDragHandle } from '../../ui/TreeDragDrop';
 import React, { useEffect, useRef } from 'react';
 import type { NavigatorNode, DropLocation, DropTarget } from './structureModel';
-import { canContainTag } from '../../editor/elementSchemas';
-import { isDataBound } from '../../editor/bindings';
-import { allowDragEffect, clearDrag, getDrag, setDrag } from '../../editor/dragState';
+import { allowDragEffect, clearDrag, setDrag } from '../../editor/dragState';
 import { hidesChildRows, noteText } from '../../editor/treeSelection';
-import { PseudoElementIcon, HideIcon, LayoutIcon, PointerEventsNoneIcon } from '../../ui/Icons';
-import { defaultCollapsed, navigatorChildren, navigatorHost } from './structureModel';
+import { PseudoElementIcon, LayoutIcon, VariableTextSizeIcon } from '../../ui/Icons';
+import DataChip from '../../ui/DataChip';
+import { pureBindingPath } from '../../editor/bindingPath';
+import NodeStatus from './NodeStatus';
+import { defaultCollapsed, navigatorChildren, navigatorFamily, navigatorHost } from './structureModel';
+import type { NavigatorFamily } from './structureModel';
 import { navigatorHostsDrop } from './navigatorDrop';
+import type { DropPlacement } from './dropPlacement';
 import { isFragmentNode } from '../../editor/liveClasses';
 import { labelsNode } from '../../../shared/page/leadingNote';
-import { describeNode, truncate } from '../../ui/navigatorLabel';
+import { assertPseudoLayerHost } from '../../../shared/page/pseudoElements';
+import { describeNode, truncate, type NodeDescription } from '../../ui/navigatorLabel';
+import type { Translator } from '../../../shared/properties/i18n/messageRef';
 
 export interface StructureTreeContext {
   readonly clientMode?: boolean;
@@ -32,6 +38,10 @@ export interface StructureTreeContext {
   readonly isCollapsed: (node: NavigatorNode) => boolean;
   readonly isDndPayload: (event: React.DragEvent<HTMLElement>) => boolean;
   readonly performDrop: (event: React.DragEvent<HTMLElement>, target: DropLocation) => void;
+  /** What the drag in flight may do at a place: the placement rule's answer (dropPlacement.ts). */
+  readonly placementFor: (location: DropLocation) => DropPlacement;
+  /** The note the Navigator shows about the drop in flight: why a target refuses, or where it will land instead. */
+  readonly noteDrop: (placement: DropPlacement) => void;
   readonly nodeById: (id: string) => NavigatorNode | undefined;
   readonly onSelect: (id: string) => void;
   readonly onHoverNode?: (id: string | undefined) => void;
@@ -100,8 +110,10 @@ function Gap(props: GapProps) {
   const active = dropTarget?.kind === 'gap' && dropTarget.parentId === parentId && dropTarget.index === index;
   const parent = parentId === undefined ? undefined : props.nodeById(parentId);
   // A gap is a drop inside its parent, so the parent's own rule decides it too.
-  const accepted = (parent === undefined || navigatorHostsDrop(parent)) && acceptsDrag(parent);
+  const hosted = parent === undefined || navigatorHostsDrop(parent);
   const location = { parentId, index };
+  // Read when the pointer moves, not when the row draws: the drag it asks about starts after the tree rendered.
+  const placementNow = (): DropPlacement => (hosted ? props.placementFor(location) : { kind: 'open' });
   if (props.editRootId && (!parentId || !props.canEdit(parentId))) {
     return undefined;
   }
@@ -110,28 +122,24 @@ function Gap(props: GapProps) {
   }
   return (
     <TreeDropGap
+      layout="overlay"
       depth={depth}
       parent={parentId}
       index={index}
       behavior={{
         active,
-        accepts: (event) => accepted && isDndPayload(event),
-        enter: () => setDropTarget({ kind: 'gap', ...location }),
+        accepts: (event) => hosted && placementNow().kind !== 'refused' && isDndPayload(event),
+        // A place that cannot take the drag but has a valid neighbour shows its indicator there, and the drop lands there.
+        enter: () => {
+          const placement = placementNow();
+          props.noteDrop(placement);
+          setDropTarget({ kind: 'gap', ...(placement.kind === 'snap' ? placement.to : location) });
+        },
         drop: (event) => performDrop(event, location),
+        refuse: () => props.noteDrop(placementNow()),
       }}
     />
   );
-}
-
-function acceptsDrag(parent: NavigatorNode | undefined): boolean {
-  const drag = getDrag();
-  if (!drag || drag.kind !== 'node' || drag.nodeKind !== 'element' || !drag.tag) {
-    return true;
-  }
-  if (!parent || parent.kind !== 'element') {
-    return true;
-  }
-  return canContainTag(parent.name, drag.tag);
 }
 
 interface TreeNodeProps extends StructureTreeContext {
@@ -140,14 +148,34 @@ interface TreeNodeProps extends StructureTreeContext {
   readonly depth: number;
 }
 
+// Brings a row into view inside the tree's own scroller and nothing else.
+// Why not `scrollIntoView`: it also scrolls every overflow ancestor, including
+// the clipped panel shell, which slid the "Navigator" header out of sight when
+// the selection moved. Only the `.panel-body` scroller moves here, and only
+// when the row is outside it.
+export function scrollRowIntoScroller(row: HTMLElement | undefined): void {
+  const scroller = row?.closest<HTMLElement>('.panel-body');
+  if (!row || !scroller) {
+    return;
+  }
+  const scrollerBounds = scroller.getBoundingClientRect();
+  const rowBounds = row.getBoundingClientRect();
+  if (rowBounds.top < scrollerBounds.top) {
+    scroller.scrollTop -= scrollerBounds.top - rowBounds.top;
+  } else if (rowBounds.bottom > scrollerBounds.bottom) {
+    scroller.scrollTop += rowBounds.bottom - scrollerBounds.bottom;
+  }
+}
+
 function TreeNode(props: TreeNodeProps) {
+  const translate = useTranslate();
   const { node, depth } = props;
   const context = treeContextFromRow(props);
   const rowRef = useRef<HTMLDivElement>(null);
   const selected = props.selectedId === node.id;
   useEffect(() => {
     if (selected) {
-      rowRef.current?.scrollIntoView({ block: 'nearest' });
+      scrollRowIntoScroller(rowRef.current ?? undefined);
     }
   }, [selected]);
   const children = navigatorChildren(node);
@@ -155,9 +183,9 @@ function TreeNode(props: TreeNodeProps) {
   const listsChildren = children.length > 0 && !hidesChildRows(node, children);
   // A ::before sits above an element's children and an ::after below them, as
   // the browser draws them: rows of their own, so an element with one opens.
-  const pseudos = pseudoKindsOf(node.id, props.pseudoNodeIds);
+  const pseudos = pseudoKindsOf(node, props.pseudoNodeIds);
   const showChildren = listsChildren || pseudos.length > 0;
-  const view = nodeView(props, { children, host, showChildren, selected });
+  const view = nodeView(props, { children, host, showChildren, selected }, translate);
   const pseudoRow = (pseudo: PseudoKind): React.ReactNode =>
     pseudos.includes(pseudo) ? (
       <PseudoRow
@@ -170,30 +198,42 @@ function TreeNode(props: TreeNodeProps) {
         onSelect={props.onSelectPseudo ?? ((id) => props.onSelect(id))}
       />
     ) : undefined;
+  const rowSelected = selected && props.selectedPseudo === undefined;
   return (
     <>
-      <TreeRow {...props} {...view} selected={selected && props.selectedPseudo === undefined} rowRef={rowRef} />
+      <TreeRow {...props} {...view} selected={rowSelected} rowRef={rowRef} />
       {showChildren && !view.collapsed && (
-        <>
+        // The selected row's subtree sits in a tinted block under the row, so the
+        // selection reads as one container. The tint follows the row's own colour.
+        <div className={subtreeClassName({ rowSelected, family: navigatorFamily(node, { componentRow: view.component }) })}>
+          {/* The guide drops from the parent's chevron; CSS shows it while the pointer is over the tree. */}
+          <span className="structure-guide" aria-hidden="true" style={{ left: navigatorGuideLeft(depth) }} />
           {pseudoRow('before')}
           {listsChildren && <NodeList {...context} nodes={children} parentId={host.id} depth={depth + 1} />}
           {pseudoRow('after')}
-        </>
+        </div>
       )}
     </>
   );
 }
 
-function pseudoKindsOf(id: string, pseudoNodeIds: PseudoNodeIds | undefined): readonly PseudoKind[] {
+// The ::before and ::after rows of `node`. Only an HTML element owns them: the
+// canvas filters its report (src/app/model/canvasNodeStates.ts) and this row
+// asserts it, so a loop, component or `img` that ever reached here would crash
+// loudly instead of drawing a row the page has no box for.
+function pseudoKindsOf(node: NavigatorNode, pseudoNodeIds: PseudoNodeIds | undefined): readonly PseudoKind[] {
   if (pseudoNodeIds === undefined) {
     return [];
   }
   const kinds: PseudoKind[] = [];
-  if (pseudoNodeIds.before.has(id)) {
+  if (pseudoNodeIds.before.has(node.id)) {
     kinds.push('before');
   }
-  if (pseudoNodeIds.after.has(id)) {
+  if (pseudoNodeIds.after.has(node.id)) {
     kinds.push('after');
+  }
+  for (const kind of kinds) {
+    assertPseudoLayerHost(node, kind, 'Navigator');
   }
   return kinds;
 }
@@ -214,7 +254,8 @@ function PseudoRow(props: {
       className={`structure-node is-pseudo${props.selected ? ' selected' : ''}`}
       data-pseudo-of={props.nodeId}
       data-pseudo={props.pseudo}
-      style={{ paddingLeft: 6 + props.depth * 16 }}
+      data-depth={props.depth}
+      style={{ paddingLeft: navigatorIndent(props.depth) }}
       onMouseEnter={() => props.onHover(props.nodeId, props.pseudo)}
       onMouseLeave={props.onLeave}
       onClick={(event) => {
@@ -222,7 +263,7 @@ function PseudoRow(props: {
         props.onSelect(props.nodeId, props.pseudo);
       }}
     >
-      <span className="drag-handle" />
+      <span className="drag-handle is-empty" aria-hidden="true" />
       <span className="icon">
         <PseudoElementIcon size={12} />
       </span>
@@ -250,6 +291,8 @@ function treeContextFromRow(props: TreeNodeProps): StructureTreeContext {
     isCollapsed: props.isCollapsed,
     isDndPayload: props.isDndPayload,
     performDrop: props.performDrop,
+    placementFor: props.placementFor,
+    noteDrop: props.noteDrop,
     nodeById: props.nodeById,
     onSelect: props.onSelect,
     ...(props.onHoverNode === undefined ? {} : { onHoverNode: props.onHoverNode }),
@@ -272,17 +315,17 @@ interface NodeView {
   readonly layout: boolean;
   readonly selected: boolean;
   readonly dropInto: boolean;
-  readonly description: { readonly icon: React.ReactNode; readonly label: string };
+  readonly description: NodeDescription;
   readonly hint: string | undefined;
 }
 
-function nodeView(props: TreeNodeProps, shape: Pick<NodeView, 'children' | 'host' | 'showChildren' | 'selected'>): NodeView {
+function nodeView(props: TreeNodeProps, shape: Pick<NodeView, 'children' | 'host' | 'showChildren' | 'selected'>, translate: Translator): NodeView {
   const { children, host, showChildren, selected } = shape;
   const { node } = props;
   const fragment = isFragmentNode(node);
   const layout = node.id === 'layout';
   const component = node.kind === 'component' && !node.dynamicTag && !fragment;
-  let description = describeNode(node, props.liveClassesById?.get(node.id));
+  let description = describeNode(node, props.liveClassesById?.get(node.id), translate);
   let hint: string | undefined;
   if (layout) {
     const label = node.kind === 'component' || node.kind === 'element' ? node.name : '';
@@ -310,7 +353,10 @@ interface TreeRowProps extends TreeNodeProps, NodeView {
 }
 
 function TreeRow(props: TreeRowProps) {
+  const translate = useTranslate();
   const { node, description } = props;
+  // A pure `{a.b}` is a data binding: its row is the purple chip, not braces.
+  const bindingPath = node.kind === 'expr' ? pureBindingPath(node.value) : undefined;
   const handlers = treeRowHandlers(props);
   return (
     <TreeDragRow
@@ -319,7 +365,8 @@ function TreeRow(props: TreeRowProps) {
       aria-disabled={!props.canEdit(node.id)}
       title={props.fragment ? fragmentTitle : undefined}
       className={rowClassName(props)}
-      style={{ paddingLeft: 6 + props.depth * 16 }}
+      data-depth={props.depth}
+      style={{ paddingLeft: navigatorIndent(props.depth) }}
       dropBehavior={treeRowDropBehavior(props)}
       draggable={
         props.canEdit(node.id) &&
@@ -331,14 +378,21 @@ function TreeRow(props: TreeRowProps) {
       {...handlers}
     >
       <TreeDragHandle {...(props.showChildren ? { expansion: { collapsed: props.collapsed, toggle: () => props.toggleCollapse(node) } } : {})} />
-      <span className="icon">{description.icon}</span>
-      <RowLabel node={node} label={description.label} note={props.note} />
+      <span className="icon">{bindingPath === undefined ? description.icon : <VariableTextSizeIcon size={12} />}</span>
+      <RowLabel
+        node={node}
+        label={description.label}
+        note={props.note}
+        {...(description.title === undefined ? {} : { title: description.title })}
+        {...(bindingPath === undefined ? {} : { bindingPath })}
+      />
       {props.hint && (
-        <span className="prop-preview" title={`Imported from ${props.hint}.astro`}>
+        <span className="prop-preview" title={translate('structure.row.imported', { file: `${props.hint}.astro` })}>
           {props.hint}
         </span>
       )}
       <NodeStatus
+        node={node}
         rendersNothing={props.emptyNodeIds?.has(node.id) ?? false}
         hidden={props.hiddenNodeIds?.has(node.id) ?? false}
         inert={props.inertNodeIds?.has(node.id) ?? false}
@@ -418,20 +472,39 @@ function openComponent(event: React.MouseEvent<HTMLDivElement>, props: TreeRowPr
 }
 
 function treeRowDropBehavior(props: TreeRowProps) {
+  const location = { parentId: props.host.id, index: props.children.length };
+  const hosted = props.canEdit(props.node.id) && props.canHostChildren;
+  const placementNow = (): DropPlacement => (hosted ? props.placementFor(location) : { kind: 'open' });
   return {
     active: props.dropInto,
-    accepts: (event: React.DragEvent<HTMLDivElement>) =>
-      props.canEdit(props.node.id) && props.canHostChildren && acceptsDrag(props.node) && props.isDndPayload(event),
-    enter: () => props.setDropTarget({ kind: 'into', intoId: props.node.id }),
-    drop: (event: React.DragEvent<HTMLDivElement>) => props.performDrop(event, { parentId: props.host.id, index: props.children.length }),
+    accepts: (event: React.DragEvent<HTMLDivElement>) => hosted && placementNow().kind !== 'refused' && props.isDndPayload(event),
+    enter: () => {
+      const placement = placementNow();
+      props.noteDrop(placement);
+      props.setDropTarget(placement.kind === 'snap' ? { kind: 'gap', ...placement.to } : { kind: 'into', intoId: props.node.id });
+    },
+    drop: (event: React.DragEvent<HTMLDivElement>) => props.performDrop(event, location),
+    refuse: () => props.noteDrop(placementNow()),
   };
 }
 
-function RowLabel({ node, label, note }: { readonly node: NavigatorNode; readonly label: string; readonly note: NavigatorNode | undefined }) {
+function RowLabel({
+  node,
+  label,
+  note,
+  bindingPath,
+  title,
+}: {
+  readonly node: NavigatorNode;
+  readonly label: string;
+  readonly title?: string;
+  readonly note: NavigatorNode | undefined;
+  readonly bindingPath?: string;
+}) {
   const noteValue = note?.kind === 'comment' ? note.value : undefined;
   return (
-    <span className="label" style={node.kind === 'text' ? { fontWeight: 400, fontStyle: 'italic' } : {}}>
-      {label}
+    <span className="label" title={title} style={node.kind === 'text' ? { fontWeight: 400, fontStyle: 'italic' } : {}}>
+      {bindingPath === undefined ? label : <DataChip path={bindingPath} />}
       {noteValue !== undefined && (
         <span className="node-note" title={noteValue.trim()}>
           {' / '}
@@ -442,52 +515,33 @@ function RowLabel({ node, label, note }: { readonly node: NavigatorNode; readonl
   );
 }
 
-function NodeStatus({ rendersNothing, hidden, inert }: { readonly rendersNothing: boolean; readonly hidden: boolean; readonly inert: boolean }) {
-  if (!rendersNothing && !hidden && !inert) {
-    return undefined;
-  }
-  return (
-    <span className="node-empty">
-      {rendersNothing && (
-        <span title="Renders nothing on the page with its current props">
-          <HideIcon size={13} />
-        </span>
-      )}
-      {hidden && !rendersNothing && (
-        <span title="display: none — on the page, not drawn">
-          <HideIcon size={13} />
-        </span>
-      )}
-      {inert && (
-        <span title="pointer-events: none — drawn, but takes no clicks">
-          <PointerEventsNoneIcon size={13} />
-        </span>
-      )}
-    </span>
-  );
-}
-
 function rowClassName(view: NodeView & { readonly node: NavigatorNode }): string {
-  const { node } = view;
-  const mapped = node.kind === 'map' || node.kind === 'cond' || node.kind === 'branch' || (nodeIsDataBound(node) && !view.component);
-  return [
-    'structure-node',
-    view.component ? 'is-component' : '',
-    mapped ? 'is-map' : '',
-    view.layout ? 'layout-node' : '',
-    view.selected ? 'selected' : '',
-  ].join(' ');
-}
-
-function nodeIsDataBound(node: NavigatorNode): boolean {
-  const props = 'props' in node ? node.props : undefined;
-  const children = 'children' in node ? node.children : undefined;
-  return isDataBound({
-    ...(props === undefined ? {} : { props }),
-    ...(children === undefined ? {} : { children }),
-  });
+  const family = navigatorFamily(view.node, { componentRow: view.component });
+  return ['structure-node', family === undefined ? '' : `is-${family}`, view.layout ? 'layout-node' : '', view.selected ? 'selected' : ''].join(' ');
 }
 
 const fragmentTitle = 'Inline group in this file. Expand it to edit its children; there is no separate file to open.';
 
 export { defaultCollapsed };
+
+// Only the selected row's subtree is tinted, in its row's own family (component green, loops and
+// conditions one flow purple); plain markup takes the accent. The class is `is-<family>`, the one the row carries.
+function subtreeClassName(row: { readonly rowSelected: boolean; readonly family: NavigatorFamily | undefined }): string {
+  if (row.rowSelected) {
+    // i18n-ignore: CSS class names, not text.
+    return row.family === undefined ? 'structure-children structure-subtree' : `structure-children structure-subtree is-${row.family}`;
+  }
+  return 'structure-children';
+}
+
+// The indent step lives in CSS (`--navigator-indent` in styles.css), so the
+// navigator's density is tuned in one stylesheet, not in TSX.
+function navigatorIndent(depth: number): string {
+  return `calc(var(--navigator-row-padding) + ${depth} * var(--navigator-indent))`;
+}
+
+// The guide runs under the centre of the parent row's chevron: the row's left
+// padding, its 1px border, then half the 18px handle less its -4px margin.
+function navigatorGuideLeft(depth: number): string {
+  return `calc(${navigatorIndent(depth)} + 6px)`;
+}

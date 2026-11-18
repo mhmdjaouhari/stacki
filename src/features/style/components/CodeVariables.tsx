@@ -1,9 +1,11 @@
+import { useTranslate } from '../../../lib/i18n/useTranslate';
 import { useRef, useState } from 'react';
 import type { MutableRefObject, ReactNode, RefObject } from 'react';
 import type { Extension } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { assert } from '../../../../shared/core/assert';
-import { type CodeTypedVariable, type CodeVariableScope } from '../model/codeVariableScope';
+import type { ValueSlot } from '../../../../shared/properties/valueSlot';
+import { codeSlotAt, type CodeTypedVariable, type CodeVariableScope } from '../model/codeVariableScope';
 import { useSharedVars } from '../sharedVars';
 import { ConnectDot } from '../VariableConnect';
 import { VariablePicker, type PickerNavigation } from '../VariablePicker';
@@ -36,6 +38,7 @@ const CLOSED: ChooserState = { kind: 'closed' };
 
 /** The variables of a code editor whose text is `scope`; nothing is offered while it is read-only. */
 export function useCodeVariables(scope: CodeVariableScope, access: { readonly readOnly: boolean }): CodeVariables {
+  const translate = useTranslate();
   const frameRef = useRef<HTMLDivElement>(null);
   const dotRef = useRef<HTMLButtonElement>(null);
   const viewRef = useRef<EditorView | undefined>(undefined);
@@ -75,7 +78,7 @@ export function useCodeVariables(scope: CodeVariableScope, access: { readonly re
         <ConnectDot
           dotRef={dotRef}
           disabled={false}
-          ariaLabel={`Connect ${scope.prop} to a variable`}
+          ariaLabel={translate('styleModel.shared.connectVariable', { label: scope.prop })}
           open={chooser.kind === 'bind'}
           onPress={() => undefined}
           onToggle={() => setChooser(chooserRef.current.kind === 'bind' ? CLOSED : { kind: 'bind' })}
@@ -87,6 +90,7 @@ export function useCodeVariables(scope: CodeVariableScope, access: { readonly re
           vars={vars}
           loading={loading}
           {...pickerProp(scope, chooser)}
+          {...pickerSlot(scope, chooser, viewRef.current)}
           {...(chooser.kind === 'typing' ? { typing: { query: chooser.typed.typed.query, navigationRef } } : bindSelection(viewRef.current))}
           onPick={chooser.kind === 'typing' ? pickTyped : pickBind}
           onClose={() => setChooser(CLOSED)}
@@ -187,4 +191,13 @@ function pickerProp(scope: CodeVariableScope, chooser: ChooserState): { readonly
 function bindSelection(view: EditorView | undefined): { readonly selectedBinding?: string } {
   const text = view?.state.doc.toString().trim() ?? '';
   return /^var\(\s*--[A-Za-z0-9_-]+[^)]*\)$/i.test(text) ? { selectedBinding: text } : {};
+}
+
+// Where the typed reference sits in the declaration's value, so the chooser judges each variable there.
+function pickerSlot(scope: CodeVariableScope, chooser: ChooserState, view: EditorView | undefined): { readonly slot?: ValueSlot } {
+  if (chooser.kind !== 'typing' || view === undefined) {
+    return {};
+  }
+  const slot = codeSlotAt(view.state.doc.toString(), chooser.typed, scope);
+  return slot === undefined ? {} : { slot };
 }

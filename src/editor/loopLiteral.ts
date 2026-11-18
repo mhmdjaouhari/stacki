@@ -35,7 +35,15 @@ export interface WrittenField {
  */
 export function writtenListFields(frontmatter: string, name: string): readonly WrittenField[] | undefined {
   const init = parseFrontmatter(frontmatter).declarations.get(name)?.init;
-  const list = init?.kind === 'await' ? init.value : init;
+  return fieldsOfList(init?.kind === 'await' ? init.value : init);
+}
+
+/** The fields of a list typed in place in the loop (`[{ title: "Pro" }]`): written-out fields, as for a constant. */
+export function literalListFields(code: string): readonly WrittenField[] | undefined {
+  return fieldsOfList(parseExpression(code.trim())?.expression);
+}
+
+function fieldsOfList(list: Js | undefined): readonly WrittenField[] | undefined {
   if (list?.kind !== 'array') {
     return undefined;
   }
@@ -104,6 +112,15 @@ function writtenKind(value: Js): LoopFieldKind {
 
 /** What a new custom list starts with, so the loop shows something at once. */
 export const STARTER_ITEMS: readonly string[] = ['Item 1', 'Item 2', 'Item 3'];
+
+/**
+ * Whether the data is an array literal of anything (`["a"]`, `[{ title: "a" }]`, `[]`): the shape a custom list's
+ * Items section can show, as rows when every item is a string and as code otherwise.
+ */
+export function isArrayLiteral(data: string): boolean {
+  const parsed = parseExpression(data.trim());
+  return parsed !== undefined && parsed.expression.kind === 'array';
+}
 
 /** The items of a typed list of strings, or undefined for any other code. */
 export function literalItems(data: string): readonly string[] | undefined {

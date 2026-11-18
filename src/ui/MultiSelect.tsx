@@ -1,6 +1,8 @@
 // A choice of several from a list, in one field: the chosen ones as chips
-// inside it, typing after them to filter the menu, a clear-all at the end and
-// the chevron that opens the menu. The menu is Dropdown's (dropdown.css): it
+// inside it, typing after them to filter the menu, and the chevron that opens
+// the menu, pinned to the end of the last line of chips (multiSelect.css), so
+// the field never grows a line that holds only the chevron. Each chip has its
+// own remove; there is no clear-all. The menu is Dropdown's (dropdown.css): it
 // lists every option, checks the chosen ones at the end of the row, and keeps
 // them chosen as more are picked. Backspace in an empty box takes the last
 // chip off; Enter picks the highlighted option, or, where the caller accepts
@@ -14,6 +16,7 @@ import { CheckIcon, ChevronDownIcon, CloseIcon } from './Icons';
 import { assert } from '../../shared/core/assert';
 import { LIMITS } from '../../shared/core/limits';
 import './multiSelect.css';
+import { useTranslate } from '../lib/i18n/useTranslate';
 
 const OPTION_HEIGHT_PX = 26;
 const MENU_HEIGHT_PX_MAX = 320;
@@ -35,6 +38,7 @@ export interface MultiSelectProps<T> {
 }
 
 export default function MultiSelect<T>(props: MultiSelectProps<T>) {
+  const translate = useTranslate();
   const { values, options, onChange } = props;
   assert(options.length <= LIMITS.scanEntriesMax, 'MultiSelect: option count exceeds limit');
   const [open, setOpen] = useState(false);
@@ -96,7 +100,7 @@ export default function MultiSelect<T>(props: MultiSelectProps<T>) {
   return (
     <div
       ref={fieldRef}
-      className={`multi-select${open ? ' is-open' : ''}`}
+      className={`multi-select${open ? ' is-open' : ''}${values.length > 0 ? ' has-values' : ''}${options.length > 0 ? ' has-chevron' : ''}`}
       role="combobox"
       aria-label={props.ariaLabel}
       aria-expanded={open}
@@ -112,7 +116,12 @@ export default function MultiSelect<T>(props: MultiSelectProps<T>) {
       {values.map((value, index) => (
         <span key={index} className="multi-select-chip">
           {labelOf(value)}
-          <button type="button" aria-label={`Remove ${labelOf(value)}`} tabIndex={-1} onClick={() => onChange(values.filter((_, at) => at !== index))}>
+          <button
+            type="button"
+            aria-label={translate('ui.multiSelect.remove', { label: labelOf(value) })}
+            tabIndex={-1}
+            onClick={() => onChange(values.filter((_, at) => at !== index))}
+          >
             <CloseIcon size={9} />
           </button>
         </span>
@@ -120,9 +129,9 @@ export default function MultiSelect<T>(props: MultiSelectProps<T>) {
       <input
         ref={inputRef}
         className="multi-select-input"
-        aria-label={`${props.ariaLabel}: type to filter`}
+        aria-label={translate('ui.multiSelect.typeToFilter', { label: props.ariaLabel })}
         value={query}
-        placeholder={values.length === 0 ? (props.placeholder ?? 'Choose…') : ''}
+        placeholder={values.length === 0 ? (props.placeholder ?? translate('ui.choose')) : ''}
         spellCheck={false}
         onChange={(event) => {
           setQuery(event.target.value);
@@ -142,16 +151,11 @@ export default function MultiSelect<T>(props: MultiSelectProps<T>) {
         }}
         onKeyDown={onKey}
       />
-      {values.length > 0 && (
-        <button type="button" className="multi-select-clear" aria-label="Clear all" title="Clear all" tabIndex={-1} onClick={() => onChange([])}>
-          <CloseIcon size={10} />
-        </button>
-      )}
       {options.length > 0 && (
         <button
           type="button"
           className="multi-select-chevron"
-          aria-label={open ? 'Close options' : 'Open options'}
+          aria-label={translate(open ? 'ui.multiSelect.closeOptions' : 'ui.multiSelect.openOptions')}
           tabIndex={-1}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => {
@@ -188,6 +192,7 @@ function MultiSelectMenu<T>(props: {
   readonly onToggle: (value: T) => void;
   readonly onClose: () => void;
 }) {
+  const translate = useTranslate();
   const [position, setPosition] = useState<{ readonly left: number; readonly minWidth: number } & ReturnType<typeof popupBox>>();
   const { anchor, options } = props;
   useLayoutEffect(() => {
@@ -211,7 +216,7 @@ function MultiSelectMenu<T>(props: {
       className="dd-popup multi-select-menu"
       style={{ ...position, width: 'max-content', maxWidth: window.innerWidth - position.left - POPUP_EDGE_PX }}
       role="listbox"
-      label="Options"
+      label={translate('ui.multiSelect.options')}
     >
       {options.map((option, index) => (
         <div

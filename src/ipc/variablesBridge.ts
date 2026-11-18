@@ -2,6 +2,8 @@ import type { Parser } from '../../shared/core/boundary';
 import type { Result } from '../../shared/core/result';
 import type { WireCell, WireColumn, WireVariableScope } from '../../shared/ipc/ipcResults';
 import { boolean, count, dictionary, object, optional, pathText, record, text } from '../../shared/core/boundary';
+import { parseOptionalMessageRef, type MessageRef } from '../../shared/core/i18n/messageReference';
+import { LIMITS } from '../../shared/core/limits';
 import { toArray } from '../../shared/core/record';
 import { readVariables } from './editorEnvironment';
 
@@ -44,13 +46,16 @@ export interface VariableFile {
   readonly name: string;
   readonly groups: readonly VariableGroup[];
   readonly error?: string;
+  /** The reference `error` is translated from; absent for text that is not ours. */
+  readonly errorRef?: MessageRef | undefined;
   readonly count?: number;
 }
 export interface VariablesSnapshot {
   readonly files: readonly VariableFile[];
   readonly values: Readonly<Record<string, string>>;
 }
-export const VARIABLES_LIMITS = { entriesMax: 100_000, fileCharsMax: 1_048_576 } as const;
+// A variables file is a project file of any length: its bounds are the platform's, shared with every other reader.
+export const VARIABLES_LIMITS = { entriesMax: LIMITS.scanEntriesMax, fileCharsMax: LIMITS.ipcFieldCharsMax } as const;
 const PRIVATE_VARIABLE_PREFIX = '--_';
 
 export function parseCSSVariables(input: unknown): Result<VariablesSnapshot, string> {
@@ -258,6 +263,8 @@ function variableFileParser(budget: VariablesBudget): Parser<VariableFile> {
     name: variableText,
     groups: budget.list(group),
     error: optional(variableText),
+    // JSON transports an absent reference as null; a malformed one is dropped and the English `error` shows.
+    errorRef: (input) => parseOptionalMessageRef(input ?? undefined),
     count: optional(count),
   });
 }

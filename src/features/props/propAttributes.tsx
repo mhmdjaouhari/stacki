@@ -16,9 +16,11 @@ import { BindField, BindHandle, FieldDataPicker, ValueCodeEditor } from './propB
 import { BracesIcon, PlusIcon, TrashIcon, ElementImageIcon, MaximizeIcon } from '../../ui/Icons';
 import { AttributesPropControl } from './AttributesPropBinding';
 import { CodeInline } from '../../ui/CodeBlock';
-import { ConditionalBadge, ConditionalEditor, ConditionalField, useConditionCatalog } from './ConditionalValue';
-import { classListOfAttr, conditionalOfAttr, startingConditional, valueLanguageOf } from './conditionalModel';
+import { ComputedField, ConditionalBadge, ConditionalEditor, ConditionalField, useConditionCatalog } from './ConditionalValue';
+import { useTranslate, useTranslateDescribed } from '../../lib/i18n/useTranslate';
+import { classListOfAttr, computedOfAttr, conditionalOfAttr, startingConditional, valueLanguageOf } from './conditionalModel';
 import { ClassListField } from './ClassListValue';
+import { CLASS_LIST_ATTRIBUTE, classListAppended, classListOfferOf, type ClassListOffer } from './classListProp';
 import { isReferencePath } from '../../editor/conditionalValue';
 import { readAttributesBinding } from '../../editor/attributesBinding';
 import { attributeNameNote, type AttributeNameContext } from '../../editor/htmlAttributes';
@@ -96,6 +98,8 @@ interface AttrEditorProps extends ContextProps {
   readonly onChangeValue: (value: string) => void;
   /** Writes a value made whole elsewhere (the Value conditions editor) at once, undefined leaving the attribute out: one undo step. */
   readonly onApplyValue: (value: Attr | undefined) => void;
+  /** A `class:list`'s picker offers "New Class list property" (classListProp.ts). */
+  readonly classList?: ClassListOffer | undefined;
   readonly onClose: () => void;
 }
 interface ObjectAttrsFieldProps extends ContextProps {
@@ -106,6 +110,7 @@ interface ObjectAttrsFieldProps extends ContextProps {
 }
 
 export function AttributesSection(props: AttributesSectionProps) {
+  const translate = useTranslate();
   const state = useAttributesSection(props);
   const { node, onSetProp, editor, setEditor, listRef, openEditor, tag, onReplaceProps, bindContext } = state;
   // Connected to the component's attributes prop: the defaults before the
@@ -125,7 +130,7 @@ export function AttributesSection(props: AttributesSectionProps) {
       <div className="props-label-row">
         <span className="prop-label">
           <BracesIcon size={12} className="prop-label-icon" />
-          Attributes
+          {translate('props.attributes.title')}
         </span>
         {tag !== undefined && onReplaceProps !== undefined && (
           <AttributesPropControl
@@ -136,7 +141,7 @@ export function AttributesSection(props: AttributesSectionProps) {
             onSetFrontmatter={state.onSetFrontmatter}
           />
         )}
-        <button className="ghost" title="Add attribute" data-attribute-editor-trigger onClick={() => openEditor(undefined)}>
+        <button className="ghost" title={translate('props.attributes.add')} data-attribute-editor-trigger onClick={() => openEditor(undefined)}>
           <PlusIcon size={12} />
         </button>
       </div>
@@ -160,7 +165,7 @@ export function AttributesSection(props: AttributesSectionProps) {
                 <AttributeRowValue name={name} value={value} />
                 <button
                   className="row-action"
-                  title="Delete attribute"
+                  title={translate('props.attributes.delete')}
                   onClick={(event) => {
                     event.stopPropagation();
                     if (editor?.attr === name) {
@@ -185,6 +190,7 @@ export function AttributesSection(props: AttributesSectionProps) {
 // A pair's value as its row previews it: a conditional or a class list as its
 // chip, anything else as written.
 function AttributeRowValue({ name, value }: { readonly name: string; readonly value: Attr | undefined }) {
+  const translate = useTranslate();
   if (conditionalOfAttr(value) !== undefined) {
     return (
       <span className="attr-value">
@@ -195,7 +201,14 @@ function AttributeRowValue({ name, value }: { readonly name: string; readonly va
   if (name === 'class:list' && classListOfAttr(value) !== undefined) {
     return (
       <span className="attr-value">
-        <ConditionalBadge label="Class list" />
+        <ConditionalBadge label={translate('props.classList.title')} />
+      </span>
+    );
+  }
+  if (computedOfAttr(value) !== undefined) {
+    return (
+      <span className="attr-value">
+        <ConditionalBadge label={translate('props.conditional.computed')} tone="computed" />
       </span>
     );
   }
@@ -207,12 +220,13 @@ function AttributeRowValue({ name, value }: { readonly name: string; readonly va
 // attributes beside it override it or are overridden. Removing it rewrites
 // the tag without it and leaves every other attribute where it was.
 function SpreadRow({ name, spread, state }: { readonly name: string; readonly spread: string; readonly state: AttributesState }) {
+  const translate = useTranslate();
   const { node, onReplaceAttributes, editor, openEditor } = state;
   assert(name.startsWith('...'), 'SpreadRow: a spread is keyed by its source');
   return (
     <div
       className={`attr-row spread ${editor?.attr === name ? 'editing' : ''}`}
-      title="Spread: passes every attribute this value holds"
+      title={translate('props.attributes.spreadTitle')}
       data-attribute-editor-trigger
       onClick={() => openEditor(name)}
     >
@@ -222,8 +236,8 @@ function SpreadRow({ name, spread, state }: { readonly name: string; readonly sp
       {onReplaceAttributes !== undefined && (
         <button
           className="row-action"
-          title="Delete spread"
-          aria-label={`Delete {...${spread}}`}
+          title={translate('props.attributes.deleteSpread')}
+          aria-label={translate('props.attributes.deleteSpreadNamed', { spread: `{...${spread}}` })}
           onClick={(event) => {
             event.stopPropagation();
             if (editor?.attr === name) {
@@ -330,6 +344,22 @@ function AttributesSectionPopup({ state }: { readonly state: AttributesState }) 
       name={spreadPath === undefined ? (editor.attr ?? '') : `{...${spreadPath}}`}
       value={spreadPath === undefined ? decodeAttr(value) : ''}
       spreadPath={spreadPath}
+      classList={
+        editor.attr === CLASS_LIST_ATTRIBUTE
+          ? classListOfferOf(
+              // An HTML element is the only kind of node the section is given a tag for.
+              { kind: state.tag === undefined ? 'component' : 'element', name: state.tag ?? '', props: node.props },
+              bindContext?.newProp,
+              onReplaceAttributes === undefined
+                ? undefined
+                : (props) => {
+                    // The editor's draft is the list as it was; the row shows the list as written.
+                    setEditor(undefined);
+                    onReplaceAttributes(props);
+                  },
+            )
+          : undefined
+      }
       onRenameSpread={
         onReplaceAttributes === undefined || editor.attr === undefined
           ? undefined
@@ -425,6 +455,7 @@ function attributesCommitMany(state: AttributesState, pairs: readonly AttributeP
 }
 
 function AttrEditor(props: AttrEditorProps) {
+  const translate = useTranslate();
   const state = useAttrEditor(props);
   const { ref, pos: position, isStyleValue, assetMode, setAssetMode, spreadName } = state;
 
@@ -439,7 +470,7 @@ function AttrEditor(props: AttrEditorProps) {
       )}
       {spreadName.kind === 'none' && state.spreadPath !== undefined && (
         <div className="attr-name-note" role="alert">
-          A spread’s Name is its code, such as {'{...rest}'}.
+          {translate('props.attributes.spreadName')}
         </div>
       )}
       {spreadName.kind !== 'none' && (
@@ -454,12 +485,12 @@ function AttrEditor(props: AttrEditorProps) {
           tall field. A spread has no value. */}
       {spreadName.kind === 'none' && state.spreadPath === undefined && (
         <div className={`attr-editor-row ${isStyleValue || assetMode ? 'top' : ''}`} ref={state.valueRowRef}>
-          <span>Value</span>
+          <span>{translate('props.attributes.value')}</span>
           <AttributeValue state={state} />
           <AttributePopups state={state} />
           <button
             className={`attr-asset-toggle ${assetMode ? 'on' : ''}`}
-            title={assetMode ? 'Edit as a plain value' : 'Choose a file from public/'}
+            title={assetMode ? translate('props.attributes.plainValue') : translate('props.attributes.chooseFile')}
             onClick={() => setAssetMode((previous) => !previous)}
           >
             <ElementImageIcon size={12} />
@@ -615,7 +646,8 @@ function useAttrEditorDismiss(ref: RefObject<HTMLElement>, triggerRootRef: RefOb
 // Advice under the Name, never a refusal: a name this tag does not take, or
 // one the component already means something by, still saves (htmlAttributes.ts).
 export function AttributeNameNote(props: { readonly name: string; readonly context: AttributeNameContext }) {
-  const note = attributeNameNote(props.name, props.context);
+  const translate = useTranslate();
+  const note = attributeNameNote(props.name, props.context, translate);
   return note === undefined ? undefined : (
     <div className="attr-name-note" role="note">
       {note}
@@ -625,28 +657,31 @@ export function AttributeNameNote(props: { readonly name: string; readonly conte
 // What a spread typed into the Name does, shown as it is typed: the code it
 // writes, highlighted, and what it passes; or why it cannot be written.
 function SpreadNameNote({ spread, available }: { readonly spread: Exclude<SpreadName, { readonly kind: 'none' }>; readonly available: boolean }) {
+  const translate = useTranslate();
+  const translateDescribed = useTranslateDescribed();
   if (spread.kind === 'invalid') {
     return (
       <div className="attr-name-note" role="alert">
-        {spread.message}
+        {translateDescribed(spread)}
       </div>
     );
   }
   if (!available) {
     return (
       <div className="attr-name-note" role="note">
-        A spread is added as a new attribute of an element.
+        {translate('props.attributes.spreadAdded')}
       </div>
     );
   }
   return (
     <div className="attr-name-note attr-spread-note" role="note">
       <CodeInline text={`{...${spread.path}}`} language="javascript" />
-      Spread: passes every property of {spread.path}
+      {translate('props.attributes.spreadPasses', { path: spread.path })}
     </div>
   );
 }
 function AttributeName({ state }: { readonly state: AttributeState }) {
+  const translate = useTranslate();
   const { isNew, draftName, setDraftName, setDraftValue, onCommitPair, onCommitMany, commitName } = state;
   const nameRef = useRef<HTMLDivElement>(null);
   const [picker, setPicker] = useState<FieldPosition | undefined>(undefined);
@@ -654,7 +689,7 @@ function AttributeName({ state }: { readonly state: AttributeState }) {
   const spreading = state.spreadPath !== undefined || state.spreadName.kind !== 'none';
   return (
     <div className="attr-editor-row">
-      <span>Name</span>
+      <span>{translate('props.attributes.name')}</span>
       <div className="attr-name-field" ref={nameRef}>
         <input
           autoFocus={isNew}
@@ -721,6 +756,9 @@ function AttributeValue({ state }: { readonly state: AttributeState }) {
   const conditional = conditionalOfAttr(encodeAttr(draftValue));
   // A `class:list` in the shape the class-list editor draws is drawn by it.
   const classList = state.draftName === 'class:list' ? classListOfAttr(encodeAttr(draftValue)) : undefined;
+  // Code that chooses between values but cannot be drawn is the Computed pill until its {} asks for the code.
+  const computed = computedOfAttr(encodeAttr(draftValue));
+  const [codeShown, setCodeShown] = useState(false);
   return isStyleValue ? (
     // A style attribute is CSS, so edit it as CSS — one declaration per
     // line, highlighted. An {expression} value stays a plain field:
@@ -749,7 +787,11 @@ function AttributeValue({ state }: { readonly state: AttributeState }) {
       />
     </div>
   ) : classList !== undefined ? (
-    <ClassListField model={classList} value={encodeAttr(draftValue)} bindContext={state.bindContext} onApply={(next) => applyValue(state, next)} />
+    // In a component the list has the purple dot too: data picked from it joins the list, and "New Class list property" is there.
+    <div className="attr-value-field">
+      <ClassListField model={classList} value={encodeAttr(draftValue)} bindContext={state.bindContext} onApply={(next) => applyValue(state, next)} />
+      {state.classList !== undefined && <ClassListHandle state={state} />}
+    </div>
   ) : conditional !== undefined ? (
     <ConditionalField
       model={conditional}
@@ -758,6 +800,8 @@ function AttributeValue({ state }: { readonly state: AttributeState }) {
       language={valueLanguageOf(state.draftName)}
       onApply={(next) => applyValue(state, next)}
     />
+  ) : computed !== undefined && !codeShown ? (
+    <ComputedField code={computed} onEditCode={() => setCodeShown(true)} />
   ) : (
     // The same field a schema-driven prop gets: text with data in it shown
     // as chips, and real code edited as code — JavaScript, highlighted. A
@@ -769,6 +813,7 @@ function AttributeValue({ state }: { readonly state: AttributeState }) {
   );
 }
 function AttributeBinding({ state }: { readonly state: AttributeState }) {
+  const translate = useTranslate();
   const allowCode = useCodeAccess();
   const { draftValue, setDraftValue, onChangeValue, bindContext, dataContext, bindApiRef, insertAt, setInsertAt, ref, setBigAt } = state;
   const valueRef = useRef<HTMLDivElement>(null);
@@ -781,9 +826,11 @@ function AttributeBinding({ state }: { readonly state: AttributeState }) {
           // "undefined". Empty text is an empty string here; encodeAttr still
           // stores it as bare on the way out.
           value={draftValue === '' ? { type: 'string', value: '' } : encodeAttr(draftValue)}
-          placeholder="Type, or insert data"
+          placeholder={translate('props.attributes.typeOrInsert')}
           bindContext={bindContext}
           dataContext={dataContext}
+          attributeName={state.draftName}
+          elementName={state.tag}
           wrapCode
           apiRef={bindApiRef}
           onChange={(next) => {
@@ -815,8 +862,8 @@ function AttributeBinding({ state }: { readonly state: AttributeState }) {
         <button
           type="button"
           className="attr-expand-toggle"
-          title="Expand value"
-          aria-label="Expand value"
+          title={translate('props.attributes.expand')}
+          aria-label={translate('props.attributes.expand')}
           onClick={() => openExpandedAttribute(valueRef.current ?? undefined, setBigAt)}
         >
           <MaximizeIcon size={12} />
@@ -851,6 +898,7 @@ function AttributePopups({ state }: { readonly state: AttributeState }) {
           value={encodeAttr(draftValue)}
           bindContext={bindContext}
           language={valueLanguageOf(draftName)}
+          shapes="rich"
           onApply={(next) => applyValue(state, next)}
           onClose={() => state.setConditionalOpen(false)}
         />
@@ -875,6 +923,7 @@ function AttributePopups({ state }: { readonly state: AttributeState }) {
           pos={insertAt}
           bindContext={bindContext}
           seed={{ fit: 'text', label: draftName || 'value', value: draftValue.startsWith('{') ? '' : draftValue }}
+          classList={draftName === CLASS_LIST_ATTRIBUTE ? state.classList : undefined}
           onBindNew={(path) => {
             setInsertAt(undefined);
             setDraftValue(`{${path}}`);
@@ -887,6 +936,12 @@ function AttributePopups({ state }: { readonly state: AttributeState }) {
             // connects the whole value (fieldFocus.ts).
             if (insertAt.focus.kind === 'focused' && bindApiRef.current?.insert) {
               bindApiRef.current.insert(path);
+              return;
+            }
+            // A class list takes the data as one more class, rather than as the whole list.
+            const appended = draftName === CLASS_LIST_ATTRIBUTE && draftValue !== '' ? classListAppended(encodeAttr(draftValue), path) : undefined;
+            if (appended !== undefined) {
+              applyValue(state, appended);
               return;
             }
             const text = `{${path}}`;
@@ -908,6 +963,26 @@ function AttributePopups({ state }: { readonly state: AttributeState }) {
   );
 }
 
+// The purple dot beside a class list the Class list editor draws, opening the same picker as a value's dot.
+function ClassListHandle({ state }: { readonly state: AttributeState }) {
+  const { insertAt, setInsertAt, ref } = state;
+  return (
+    <BindHandle
+      active={insertAt !== undefined}
+      onOpen={(host, focus) => {
+        if (insertAt !== undefined) {
+          setInsertAt(undefined);
+          return;
+        }
+        const rectangle = (host ?? ref.current)?.getBoundingClientRect();
+        if (rectangle !== undefined) {
+          setInsertAt({ ...dataPickerPosition(rectangle), focus });
+        }
+      }}
+    />
+  );
+}
+
 // A whole value from the Value conditions editor: shown at once, written at once.
 function applyValue(state: AttributeState, next: Attr | undefined): void {
   state.setDraftValue(decodeAttr(next));
@@ -915,6 +990,7 @@ function applyValue(state: AttributeState, next: Attr | undefined): void {
 }
 
 export function ObjectAttrsField(props: ObjectAttrsFieldProps) {
+  const translate = useTranslate();
   const state = useObjectAttrsField(props);
   const { pill, menu, entries, onCommit, editor, setEditor, listRef, openEditor } = state;
 
@@ -922,7 +998,7 @@ export function ObjectAttrsField(props: ObjectAttrsFieldProps) {
     <div className="props-field" ref={listRef}>
       <div className="props-label-row">
         {pill}
-        <button className="ghost" title="Add attribute" data-attribute-editor-trigger onClick={() => openEditor(undefined)}>
+        <button className="ghost" title={translate('props.attributes.add')} data-attribute-editor-trigger onClick={() => openEditor(undefined)}>
           <PlusIcon size={12} />
         </button>
         {menu}
@@ -942,7 +1018,7 @@ export function ObjectAttrsField(props: ObjectAttrsFieldProps) {
               <span className="attr-value">{decodeRaw(en.raw)}</span>
               <button
                 className="row-action"
-                title="Delete attribute"
+                title={translate('props.attributes.delete')}
                 onClick={(event) => {
                   event.stopPropagation();
                   if (editor?.index === i) {

@@ -48,11 +48,12 @@ export function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// One variable in the field, as it is drawn and as it is written back.
-export type Chip = { text: string; name: string; type: string };
+// One variable in the field, as it is drawn and as it is written back. `value` is
+// what the variable is declared as, when the catalog knows it: the chip's tooltip.
+export type Chip = { text: string; name: string; type: string; value?: string };
 
 // What the chips amount to, for the effects that redraw when they change.
-export const chipKey = (chips: Chip[]): string => chips.map((chip) => `${chip.text}|${chip.name}|${chip.type}`).join(',');
+export const chipKey = (chips: Chip[]): string => chips.map((chip) => `${chip.text}|${chip.name}|${chip.type}|${chip.value ?? ''}`).join(',');
 
 // The chip markup embedded in the contentEditable. `contenteditable="false"` makes it
 // atomic (a single backspace removes it); `data-chip` marks it for serialization, and
@@ -61,11 +62,20 @@ export const chipKey = (chips: Chip[]): string => chips.map((chip) => `${chip.te
 export function tokenChipHtml(chip: Chip): string {
   return (
     '<span class="embed-editor_varconnect-token" contenteditable="false" data-chip="1" ' +
-    `data-binding="${escapeHtml(chip.text)}">` +
+    `data-binding="${escapeHtml(chip.text)}"${chipTitle(chip)}>` +
     `<span class="embed-editor_varconnect-token-icon">${tokenGlyph(chip.type)}</span>` +
     `<span class="embed-editor_varconnect-token-name">${escapeHtml(chip.name)}</span>` +
     '</span>'
   );
+}
+
+// The chip's tooltip: the variable and what it resolves to, when that is known.
+function chipTitle(chip: Chip): string {
+  if (chip.value === undefined || chip.value === '') {
+    return '';
+  }
+  const quoted = (text: string): string => escapeHtml(text).replace(/"/g, '&quot;');
+  return ` data-value="${quoted(chip.value)}" title="${quoted(`${chip.name}: ${chip.value}`)}"`;
 }
 
 // Value → contentEditable HTML: literal text, the chip in place of the variable, more
@@ -136,7 +146,7 @@ export const CHIP_MARK = '\u0000';
 // How deep the field's markup is read. contentEditable nests typed text a level or
 // two inside the spans it inserts; pasted markup can nest further, and anything
 // nested past this bound is left unread rather than recursed into without end.
-export const TOKEN_FIELD_LIMITS = { nestingDepthMax: 64 } as const;
+export const TOKEN_FIELD_LIMITS = { nestingDepthMax: 64, chipsMax: 256 } as const;
 
 export function fieldText(root: HTMLElement): string {
   let out = '';
@@ -163,11 +173,15 @@ export function fieldText(root: HTMLElement): string {
 /** The chips the field is showing, in the order they appear — read back before a
  *  repaint so each mark in the text is redrawn as the chip it actually was. */
 export function chipsOf(root: HTMLElement): Chip[] {
-  return [...root.querySelectorAll<HTMLElement>('[data-chip]')].map((element) => ({
-    text: element.dataset['binding'] ?? '',
-    name: element.querySelector('.embed-editor_varconnect-token-name')?.textContent ?? '',
-    type: element.dataset['type'] ?? 'Size',
-  }));
+  return [...root.querySelectorAll<HTMLElement>('[data-chip]')].map((element) => {
+    const value = element.dataset['value'];
+    return {
+      text: element.dataset['binding'] ?? '',
+      name: element.querySelector('.embed-editor_varconnect-token-name')?.textContent ?? '',
+      type: element.dataset['type'] ?? 'Size', // i18n-ignore: a variable type id.
+      ...(value === undefined ? {} : { value }),
+    };
+  });
 }
 
 /** Re-draw the field from `text`, keeping its chips, and put the caret at `at`. */
@@ -226,7 +240,11 @@ export function serializeTokens(root: HTMLElement, bare: string, varForm: string
   // The lone form is for a field holding one variable and nothing else — that is
   // what a native binding reads back as. Anything else writes var(…) per chip.
   let at = 0;
-  return out
+  // A space typed at the end of the text is inserted by Chromium as a non-breaking space
+  // (U+00A0), so it shows while typing, and the repaint keeps it in its own `.cx-space`
+  // element, where the browser never turns it back. CSS does not read U+00A0 as whitespace
+  // (`span<U+00A0>3` is a span to a line named "\u00A03"), so the value is saved with a space.
+  const value = out
     .replace(/\u0000/g, () => {
       const binding = chips[at++];
       if (chips.length === 1 && !hasText) {
@@ -234,27 +252,30 @@ export function serializeTokens(root: HTMLElement, bare: string, varForm: string
       }
       return binding || varForm;
     })
-    .replace(/\u200B/g, '');
+    .replace(/\u200B/g, '')
+    .replace(/\u00A0/g, ' ');
+  assert(!value.includes('\u00A0'), 'serializeTokens: a saved value holds no non-breaking space');
+  return value;
 }
 
 // Move a collapsed caret across the atomic chip when it sits right at the chip's edge —
 // browsers otherwise stall there, so you can't arrow behind a lone variable to type
-// `!important`. Returns true when it handled the key (so the caller preventDefaults).
+// `!important`. Returns true when it handled the key (so the caller preventDefault).
+//
+// "Right at the edge" ignores zero-width spaces: buildTokenHtml leaves one as the caret
+// slot beside a chip at either end of the value, and a caret in front of that slot (the
+// far left of a field that opens on a chip) is visually against the chip. Treating the
+// slot as a character made the first ArrowRight a silent step over it, and the person
+// could not tell why the caret would not move past the chip to delete it. Every chip is
+// considered, not only the first: a value of two variables has two edges to step over.
 export function jumpCaretPastChip(root: HTMLElement, direction: 'left' | 'right'): boolean {
   const selection = window.getSelection();
   if (!selection || selection.rangeCount === 0 || !selection.isCollapsed) {
     return false;
   }
-  const chip = root.querySelector<HTMLElement>('[data-chip]');
-  if (!chip) {
-    return false;
-  }
+  const chips = [...root.querySelectorAll<HTMLElement>('[data-chip]')];
+  assert(chips.length <= TOKEN_FIELD_LIMITS.chipsMax, 'jumpCaretPastChip: the field holds a bounded number of chips');
   const { startContainer: node, startOffset: off } = selection.getRangeAt(0);
-  // The text a caret beside the chip sits in. A neighbour may be a coloured run, or
-  // the `.cx-space` element a gap is drawn in, whose text node holds the caret: the
-  // element itself never does.
-  const before = edgeTextNode(chip.previousSibling ?? undefined, 'end');
-  const after = edgeTextNode(chip.nextSibling ?? undefined, 'start');
   const place = (target: Node, offset: number) => {
     const range = document.createRange();
     range.setStart(target, offset);
@@ -262,18 +283,117 @@ export function jumpCaretPastChip(root: HTMLElement, direction: 'left' | 'right'
     selection.removeAllRanges();
     selection.addRange(range);
   };
-  // Caret is immediately before the chip (end of the preceding text node, or the root
-  // slot just before it) → drop it just after the chip, and vice-versa.
-  const beforeLength = before?.textContent?.length ?? 0;
-  const rightAdjacent = (node === before && off === beforeLength) || (node === root && root.childNodes[off] === chip);
-  const leftAdjacent = (node === after && off === 0) || (node === root && root.childNodes[off - 1] === chip);
-  if (direction === 'right' && rightAdjacent && after) {
-    place(after, 0);
-    return true;
+  for (const chip of chips) {
+    if (direction === 'right' && caretBesideChip(chip, node, off, 'before')) {
+      // Against the chip's far side, so Backspace there removes the chip.
+      place(slotBeside(chip, 'after'), 0);
+      return true;
+    }
+    if (direction === 'left' && caretBesideChip(chip, node, off, 'after')) {
+      const slot = slotBeside(chip, 'before');
+      place(slot, slot.length);
+      return true;
+    }
   }
-  if (direction === 'left' && leftAdjacent && before) {
-    place(before, beforeLength);
-    return true;
+  return false;
+}
+
+// Whether the field holds chips and nothing else: no text, only the zero-width caret slots.
+// Such a value has one place worth putting a caret, right behind the chip, where Backspace
+// takes the whole variable off in one press.
+export function fieldHoldsOnlyChips(root: HTMLElement): boolean {
+  const text = fieldText(root)
+    .replace(/\u200B/g, '')
+    .replace(/\s/g, '');
+  return text !== '' && text.replace(new RegExp(CHIP_MARK, 'g'), '') === '';
+}
+
+// Put the caret against the far side of the last chip of a chip-only field, replacing
+// whatever selection the browser or an opener gave it (the whole value selected on open
+// drew as a fat bar over the chip, with the caret nowhere). Returns whether it did.
+export function settleCaretAfterChips(root: HTMLElement): boolean {
+  if (!fieldHoldsOnlyChips(root)) {
+    return false;
+  }
+  const chips = [...root.querySelectorAll<HTMLElement>('[data-chip]')];
+  assert(chips.length <= TOKEN_FIELD_LIMITS.chipsMax, 'settleCaretAfterChips: the field holds a bounded number of chips');
+  const last = chips[chips.length - 1];
+  assert(last !== undefined, 'settleCaretAfterChips: a chip-only field has a chip');
+  const slot = slotBeside(last, 'after');
+  placeCaret(root, { kind: 'text', node: slot, offset: 0 });
+  return true;
+}
+
+// The chip Backspace (caret against its far side) or Delete (against its near side) would take,
+// if the caret is collapsed and right against one. The browser removes a chip too, but not the
+// same way every time: a caret one zero-width slot away from the chip spent its first Backspace
+// on the slot, so the field answers these keys itself, in one press.
+export function chipBesideCaret(root: HTMLElement, key: 'Backspace' | 'Delete'): HTMLElement | undefined {
+  const selection = root.ownerDocument.getSelection();
+  if (selection === null || selection.rangeCount === 0 || !selection.isCollapsed) {
+    return undefined;
+  }
+  const { startContainer: node, startOffset: offset } = selection.getRangeAt(0);
+  if (!root.contains(node)) {
+    return undefined;
+  }
+  const chips = [...root.querySelectorAll<HTMLElement>('[data-chip]')];
+  assert(chips.length <= TOKEN_FIELD_LIMITS.chipsMax, 'chipBesideCaret: the field holds a bounded number of chips');
+  const side = key === 'Backspace' ? 'after' : 'before';
+  return chips.find((chip) => caretBesideChip(chip, node, offset, side));
+}
+
+// Take one chip out whole; the caret stays where it was, in the text that ended before it.
+export function removeChip(root: HTMLElement, chip: HTMLElement): void {
+  assert(root.contains(chip), 'removeChip: the chip is in the field');
+  const before = root.querySelectorAll('[data-chip]').length;
+  const slot = slotBeside(chip, 'before');
+  chip.remove();
+  placeCaret(root, { kind: 'text', node: slot, offset: slot.length });
+  assert(root.querySelectorAll('[data-chip]').length === before - 1, 'removeChip: exactly one chip went');
+}
+
+// The text node a caret on `side` of `chip` sits in. A neighbour may be a coloured run, or
+// the `.cx-space` element a gap is drawn in, whose text node holds the caret: the element
+// itself never does. Where no text is there (a chip welded to another chip, or to the end
+// of the field) a zero-width slot is added, which the serializer strips; browsers will not
+// hold a typing caret beside a non-editable node without one.
+function slotBeside(chip: HTMLElement, side: 'before' | 'after'): Text {
+  const ownerDocument = chip.ownerDocument;
+  const sibling = (side === 'before' ? chip.previousSibling : chip.nextSibling) ?? undefined;
+  const weldedChip = sibling !== undefined && isHTMLElementInDocument(sibling, ownerDocument) && sibling.dataset['chip'] !== undefined;
+  const edge = sibling === undefined || weldedChip ? undefined : edgeTextNode(sibling, side === 'before' ? 'end' : 'start');
+  // Checked against the node's own window: nodes from another realm are not this realm's Text.
+  const TextConstructor = ownerDocument.defaultView?.Text;
+  assert(TextConstructor !== undefined, 'slotBeside: the field belongs to a window');
+  if (edge instanceof TextConstructor) {
+    return edge;
+  }
+  const parent = chip.parentNode;
+  assert(parent !== null, 'slotBeside: the chip is in the field');
+  const slot = ownerDocument.createTextNode('\u200B');
+  parent.insertBefore(slot, side === 'before' ? chip : chip.nextSibling);
+  return slot;
+}
+
+const isZeroWidth = (text: string): boolean => text.replace(/\u200B/g, '') === '';
+
+// Whether the caret at (`node`, `offset`) stands on `side` of `chip` with nothing visible
+// between. The caret is either in that
+// text with only zero-width spaces between it and the chip, or at the chip's parent with
+// only zero-width text nodes between its child slot and the chip.
+function caretBesideChip(chip: HTMLElement, node: Node, offset: number, side: 'before' | 'after'): boolean {
+  const own = side === 'before' ? edgeTextNode(chip.previousSibling ?? undefined, 'end') : edgeTextNode(chip.nextSibling ?? undefined, 'start');
+  if (own !== undefined && node === own) {
+    const text = own.textContent ?? '';
+    return isZeroWidth(side === 'before' ? text.slice(offset) : text.slice(0, offset));
+  }
+  if (node === chip.parentNode) {
+    const children = [...node.childNodes];
+    const chipIndex = children.indexOf(chip);
+    assert(chipIndex >= 0, 'caretBesideChip: the chip is among its parent’s children');
+    const between = side === 'before' ? children.slice(offset, chipIndex) : children.slice(chipIndex + 1, offset);
+    return offset <= children.length && between.every((child) => child.nodeType === 3 && isZeroWidth(child.textContent ?? ''));
   }
   return false;
 }
@@ -346,7 +466,11 @@ export function TokenField({
       aria-label={ariaLabel}
       data-placeholder={placeholder || undefined}
       spellCheck={false}
-      onFocus={onFocusField}
+      onFocus={(event) => {
+        // A chip-only value opens with the caret behind the chip, never in front of it or over it.
+        settleCaretAfterChips(event.currentTarget);
+        onFocusField();
+      }}
       onBlur={() => {
         const element = editorRef.current;
         onCommit(element ? serializeTokens(element, chipBare, chipVar) : '');
@@ -369,6 +493,16 @@ export function TokenField({
         paint(element, fieldText(element), caretOffset(element), chipsOf(element));
       }}
       onKeyDown={(event) => {
+        // A chip that is the target of Enter or Space (assistive technology, or a press-like
+        // activation) acts as a press on it; the field's own Enter would only commit.
+        if ((event.key === 'Enter' || event.key === ' ') && !disabled) {
+          const chip = pressedChip(event.currentTarget, event.target);
+          if (chip !== undefined) {
+            event.preventDefault();
+            onChipClick(chip);
+            return;
+          }
+        }
         const direction = historyKey(event);
         if (direction !== undefined) {
           // The field's own history, not the page's: the app's ⌘Z listener
@@ -378,12 +512,29 @@ export function TokenField({
           travel(event.currentTarget, direction);
           return;
         }
+        if ((event.key === 'Backspace' || event.key === 'Delete') && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && !disabled) {
+          const element = event.currentTarget;
+          // Recorded first, so the removal is a step ⌘Z takes back.
+          const beside = chipBesideCaret(element, event.key);
+          if (beside !== undefined) {
+            event.preventDefault();
+            record(element, `key:${event.key}`);
+            removeChip(element, beside);
+            if (code) {
+              paint(element, fieldText(element), caretOffset(element), chipsOf(element));
+            }
+            report(element);
+            return;
+          }
+        }
         tokenFieldKeyDown(event, { code: !!code, stepMin, report, record });
       }}
       onMouseDown={(event) => {
         const chip = pressedChip(event.currentTarget, event.target);
         if (chip !== undefined) {
           event.preventDefault();
+          // The press opens the chooser; the caret still ends up behind a lone chip.
+          settleCaretAfterChips(event.currentTarget);
           onChipClick(chip);
           return;
         }
@@ -606,20 +757,118 @@ export function codeKeyEdit(
 }
 
 const NUMBER_WITH_UNIT = /^[-+]?(?:\d+\.?\d*|\.\d+)[a-zA-Z%]*/;
+const IDENTIFIER = /^-{0,2}[A-Za-z_][\w-]*/;
+
+// How far a scan for a matching bracket looks. A value longer than this is not one typed by hand.
+const BRACKET_SCAN_MAX = 4_096;
+
+// The token right after the caret that a typed `(` wraps: a chip (one mark), a function call
+// (`var(--a)`, `min(1px, 2px)`: through its matching bracket), a number with its unit, or a bare
+// identifier. Empty when what follows is a space, an operator, a comma, a `)` or the end.
+function wrappedToken(rest: string): string {
+  if (rest.startsWith(CHIP_MARK)) {
+    return CHIP_MARK;
+  }
+  const word = IDENTIFIER.exec(rest)?.[0];
+  if (word !== undefined) {
+    if (rest[word.length] !== '(') {
+      return word;
+    }
+    // A call wraps whole, or not at all when its own bracket is still open.
+    const end = matchingBracket(rest, word.length);
+    return end === undefined ? '' : rest.slice(0, end + 1);
+  }
+  return NUMBER_WITH_UNIT.exec(rest)?.[0] ?? '';
+}
+
+// The index of the `)` that closes the `(` at `open`, or undefined when it is never closed.
+function matchingBracket(text: string, open: number): number | undefined {
+  assert(text[open] === '(', 'matchingBracket: starts at an open bracket');
+  let depth = 0;
+  const limit = Math.min(text.length, open + BRACKET_SCAN_MAX);
+  for (let index = open; index < limit; index++) {
+    if (text[index] === '(') {
+      depth += 1;
+    } else if (text[index] === ')') {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return undefined;
+}
+
+// Is `at` inside a string or a `url(` (where a bracket is text, not structure)?
+function insideLiteral(text: string, at: number): boolean {
+  let quote: string | undefined;
+  let url = false;
+  for (let index = Math.max(0, at - BRACKET_SCAN_MAX); index < at; index++) {
+    const ch = text[index];
+    if (quote !== undefined) {
+      if (ch === '\\') {
+        index += 1;
+      } else if (ch === quote) {
+        quote = undefined;
+      }
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (url) {
+      if (ch === ')') {
+        url = false;
+      }
+    } else if (ch === '(' && /url$/i.test(text.slice(Math.max(0, index - 3), index))) {
+      url = true;
+    }
+  }
+  return quote !== undefined || url;
+}
+
+// More `)` than `(` in the text: a closer is already waiting, so a new `(` must not bring its own.
+function hasSurplusCloser(text: string): boolean {
+  let balance = 0;
+  const limit = Math.min(text.length, BRACKET_SCAN_MAX);
+  for (let index = 0; index < limit; index++) {
+    if (text[index] === '(') {
+      balance += 1;
+    } else if (text[index] === ')') {
+      balance -= 1;
+    }
+  }
+  return balance < 0;
+}
 
 // The bracket pairing for one key at caret `at`, or undefined when it doesn't apply.
+//
+// A `(` typed in front of a token wraps it (`calc|32px` → `calc(32px)`, `calc|[chip]` →
+// `calc([chip])`) with the caret after the token, before the new `)`; anywhere else it brings an empty pair, the caret between. The
+// field's text stands a chip in as one mark, so the same rule serves chips and literal tokens.
 export function bracketEdit(text: string, at: number, key: string): { text: string; caret: number } | undefined {
   if (key === '(') {
-    // `calc|32px` is a value being wrapped, so the closing bracket goes after it.
-    const wrapped = NUMBER_WITH_UNIT.exec(text.slice(at))?.[0] ?? '';
+    if (insideLiteral(text, at)) {
+      return undefined;
+    }
+    if (hasSurplusCloser(text)) {
+      return { text: `${text.slice(0, at)}(${text.slice(at)}`, caret: at + 1 };
+    }
+    const wrapped = wrappedToken(text.slice(at));
     const closeAt = at + wrapped.length;
-    return { text: `${text.slice(0, at)}(${wrapped})${text.slice(closeAt)}`, caret: at + 1 };
+    // Around a token the caret ends after it, so what is typed next goes inside the pair; with
+    // nothing to wrap it stays between the two brackets.
+    return { text: `${text.slice(0, at)}(${wrapped})${text.slice(closeAt)}`, caret: at + 1 + wrapped.length };
   }
   if (key === ')' && text[at] === ')') {
     return { text, caret: at + 1 };
   }
   if (key === 'Backspace' && text[at - 1] === '(' && text[at] === ')') {
     return { text: text.slice(0, at - 1) + text.slice(at + 1), caret: at - 1 };
+  }
+  if (key === 'Backspace' && text[at - 1] === '(' && !insideLiteral(text, at - 1)) {
+    // The pair a `(` made around a token: taking the `(` takes its `)` too.
+    const wrapped = wrappedToken(text.slice(at));
+    if (wrapped !== '' && text[at + wrapped.length] === ')') {
+      return { text: text.slice(0, at - 1) + wrapped + text.slice(at + wrapped.length + 1), caret: at - 1 };
+    }
   }
   return undefined;
 }

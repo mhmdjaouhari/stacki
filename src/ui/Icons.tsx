@@ -2,6 +2,8 @@ import { centralIcon, centralIconSize } from './central/CentralIcon';
 import {
   add as centralAdd,
   arrowDown as centralArrowDown,
+  arrowRotateClockwise as centralArrowRotateClockwise,
+  asterisk as centralAsterisk,
   audio as centralAudio,
   braces as centralBraces,
   branch as centralBranch,
@@ -27,6 +29,10 @@ import {
   copy as centralCopy,
   corner as centralCorner,
   database as centralDatabase,
+  macbookAir as centralMacbookAir,
+  smartwatch1 as centralSmartwatch,
+  studioDisplayXdr as centralStudioDisplayXdr,
+  television as centralTelevision,
   studioDisplay as centralStudioDisplay,
   drag as centralDrag,
   droplet as centralDroplet,
@@ -48,6 +54,8 @@ import {
   image as centralImage,
   layers as centralLayers,
   layout as centralLayout,
+  lock as centralLock,
+  plug as centralPlug,
   barsThree as centralBarsThree,
   mail as centralMail,
   mapPin as centralMapPin,
@@ -61,11 +69,14 @@ import {
   phone as centralPhone,
   phoneCall as centralPhoneCall,
   pin as centralPin,
+  play as centralPlay,
   properties as centralProperties,
-  refresh as centralRefresh,
   repeat as centralRepeat,
   search as centralSearch,
+  moveFolder as centralMoveFolder,
+  roles as centralRoles,
   settings as centralSettings,
+  target as centralTarget,
   sort as centralSort,
   sparkle as centralSparkle,
   sync as centralSync,
@@ -74,7 +85,7 @@ import {
   text as centralText,
   textSize as centralTextSize,
   toggle as centralToggle,
-  trash as centralTrash,
+  trashCanSimple as centralTrashCanSimple,
   undo as centralUndo,
   unlink as centralUnlink,
   upload as centralUpload,
@@ -100,7 +111,6 @@ export {
   ElementHeading4Icon,
   ElementHeading5Icon,
   ElementHeading6Icon,
-  ElementParagraphIcon,
   ElementVideoIcon,
   ElementFormBlockIcon,
   ElementInputIcon,
@@ -129,6 +139,17 @@ export const SanityIcon = (props: IconProps) => (
 export const PayloadIcon = (props: IconProps) => (
   <I24 {...props}>
     <path fill="currentColor" d={paths.payloadIconPath} />
+  </I24>
+);
+
+// The EmDash mark, drawn on its own 118-unit grid and scaled into the 24-unit frame the other CMS marks share, so it
+// takes the same size and colour as Payload's and Sanity's.
+export const EmDashIcon = (props: IconProps) => (
+  <I24 {...props}>
+    <g fill="currentColor" transform={`scale(${24 / paths.EMDASH_GRID_UNITS})`}>
+      <path d={paths.emDashFramePath} />
+      <path d={paths.emDashDashPath} />
+    </g>
   </I24>
 );
 
@@ -234,7 +255,8 @@ export const ChevronDownIcon = centralIcon(centralChevronDown);
 
 export const PlusIcon = centralIcon(centralAdd);
 
-export const RefreshIcon = centralIcon(centralRefresh);
+// Central's clockwise rotate arrow: reload, refresh, rescan and update.
+export const RefreshIcon = centralIcon(centralArrowRotateClockwise);
 
 // Two arrows chasing each other: a field kept in step with another.
 export const SyncIcon = centralIcon(centralSync);
@@ -258,6 +280,13 @@ export const RepeatIcon = centralIcon(centralRepeat);
 
 export const PreviewIcon = centralIcon(centralEye);
 
+// A padlock: the Settings panel's Secrets tab, and the secret rows' hidden values.
+export const LockIcon = centralIcon(centralLock);
+export const PlugIcon = centralIcon(centralPlug);
+
+// A play triangle: the titlebar button runs the site, so it reads as "run" rather than "look".
+export const PlayIcon = centralIcon(centralPlay);
+
 export const FolderIcon = centralIcon(centralFolder);
 
 export const FolderDefaultIcon = centralIcon(centralFolder);
@@ -276,6 +305,9 @@ export const DragIcon = centralIcon(centralDrag);
 
 // An eye with a slash distinguishes hidden nodes in the Navigator.
 export const HideIcon = centralIcon(centralEyeOff);
+
+// The asterisk a required prop is marked with: a Visibility of Required.
+export const RequiredIcon = centralIcon(centralAsterisk);
 
 // The slash crosses the cursor with gaps so both shapes read at Navigator size.
 export const PointerEventsNoneIcon = (props: IconProps) => (
@@ -307,6 +339,18 @@ export const MaximizeIcon = centralIcon(centralExpand);
 export const MinimizeIcon = centralIcon(centralCollapse);
 
 export const DesktopIcon = centralIcon(centralStudioDisplay);
+
+// Central's macbook-air: the Laptop device in the preview bar and in Settings > Breakpoints.
+export const LaptopIcon = centralIcon(centralMacbookAir);
+
+// Central's studio-display (xdr, imac): the breakpoint just wider than Desktop.
+export const StudioDisplayXdrIcon = centralIcon(centralStudioDisplayXdr);
+
+// Central's smartwatch-1: a breakpoint narrower than the Phone.
+export const SmartwatchIcon = centralIcon(centralSmartwatch);
+
+// Central's television: each breakpoint wider than the first one past Desktop (Settings > Breakpoints, the preview bar).
+export const TelevisionIcon = centralIcon(centralTelevision);
 
 export const TabletIcon = centralIcon(centralTablet);
 
@@ -385,8 +429,13 @@ export const HelpCircleIcon = centralIcon(centralHelp);
 export const WarningTriangleIcon = centralIcon(centralWarning);
 
 export const GearIcon = centralIcon(centralSettings);
+// A crosshair: "Show instances" finds where a component sits. Two people: the Roles submenu, as on the Roles tab.
+// A folder with an arrow leaving it: "Move to folder…" (Figma move-folder).
+export const MoveFolderIcon = centralIcon(centralMoveFolder);
+export const TargetIcon = centralIcon(centralTarget);
+export const UsersIcon = centralIcon(centralRoles);
 
-export const TrashIcon = centralIcon(centralTrash);
+export const TrashIcon = centralIcon(centralTrashCanSimple);
 
 export const FolderOpenIcon = centralIcon(centralFolderOpen);
 

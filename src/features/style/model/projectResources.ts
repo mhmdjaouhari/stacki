@@ -1,3 +1,4 @@
+// i18n-ignore-file: the returned words are variable type ids (Color, Size, FontFamily, …) that pickers compare, never shown as text here.
 // The project's variables, fonts and image assets, as the style panel's
 // pickers offer them, and the two facts about a rule they are read by: its
 // selector and whether it is global (webflow.ts).
@@ -70,6 +71,8 @@ export const supports = (prop: string, value: string): boolean => {
 // whatever it's asked about first (Color). They're keywords — treat them as such.
 export const CSS_WIDE_RE = /^(inherit|initial|unset|revert|revert-layer)$/i;
 
+const PERCENTAGE_RE = /^[+-]?(?:\d+\.?\d*|\.\d+)%$/;
+
 export const varKind = (name: string, value: string): string => {
   const trimmed = value.trim();
   if (CSS_WIDE_RE.test(trimmed)) {
@@ -90,6 +93,11 @@ export const varKind = (name: string, value: string): string => {
   // number, so the wrapper alone is enough to call it a Size.
   if (/^(calc|clamp|min|max)\(/i.test(trimmed)) {
     return 'Size';
+  }
+  // A plain percentage (50%, -12.5%) is its own type so the pickers can draw it as one; a
+  // calc() or color-mix() holding a % returned above, and a bare number or a length falls through.
+  if (PERCENTAGE_RE.test(trimmed)) {
+    return 'Percentage';
   }
   if ((!unresolved && supports('width', trimmed)) || /^-?[\d.]+(px|rem|em|%|vw|vh|vmin|vmax|ch|ex|pt|cm|mm|in)$/i.test(trimmed)) {
     return 'Size';
