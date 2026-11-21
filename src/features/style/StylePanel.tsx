@@ -7,7 +7,7 @@ import type { ClassPlacement } from '../../editor/classAttr';
 import { styleableSelection } from './model/styleTarget';
 import { setHost } from './model/host';
 import { prefetchComponentSources } from './model/componentSourceCache';
-import { awaitComputedStyles, computedStylesSettled, prefetchComputedStyles } from './model/computedStyle';
+import { computedStylesSettled, prefetchComputedStyles } from './model/computedStyle';
 import { assert } from '../../../shared/core/assert';
 import { PX_LENGTHS, sameLengthUnit, type LengthUnit } from '../../../shared/properties/lengthUnit';
 import EmbedEditor from './EmbedEditor';
@@ -74,7 +74,12 @@ export default function StylePanel(rawProps: StylePanelProps) {
   const props = withStyleableNode(rawProps);
   const files = useStyleFiles(props.project?.path, undefined, readStyleFiles);
   const translate = useTranslate();
-  const astroFiles = useStyleFiles(props.project?.path, props.openFilePath, readAstroStyleFiles);
+  const pageComponentPaths = props.pageComponentPaths ?? NO_PATHS;
+  // The `.astro` files with a `<style>` are listed again when the page's components change, not only with the open
+  // file: Create component puts a new one on the page, possibly with a `<style>` of its own ("Move styles"), and undo
+  // takes it off. Without it, the new component's tag stays out of the list until the window next gets focus.
+  const astroFilesKey = [props.openFilePath ?? '', ...pageComponentPaths].join('\u0000');
+  const astroFiles = useStyleFiles(props.project?.path, astroFilesKey, readAstroStyleFiles);
   const lengthUnit = useStableLengthUnit(props.lengthUnit ?? PX_LENGTHS);
   const renderedClasses = useStableList(props.renderedClasses ?? NO_PATHS);
   const projectClasses = useStableList(props.projectClasses ?? NO_PATHS);
@@ -89,7 +94,6 @@ export default function StylePanel(rawProps: StylePanelProps) {
   setHost(host);
   useEffect(() => setHost(host), [host]);
   // Read with the page, not on the first instance picked: that pick then draws its settled colours.
-  const pageComponentPaths = props.pageComponentPaths ?? NO_PATHS;
   useEffect(() => prefetchComponentSources(pageComponentPaths), [pageComponentPaths]);
   const hostRef = useRef<HTMLDivElement>(null);
   useSwitchScrollAnchor(hostRef, selection.props.node?.id);
@@ -181,9 +185,9 @@ function selectionKeyOf(props: StylePanelProps): string {
  * held id looked up in the newly opened document's tree. Now the next element is shown at
  * once: an element seen before under the same CSS paints from its last settled answer, and
  * one that is not draws the chip-shaped placeholders until its answer lands whole
- * (useElementReset). Its fields wait in their placeholders for the page's computed values
- * rather than draw "Default" and empty inputs that the answer then replaces
- * (awaitComputedStyles), and those values are asked for in one batch.
+ * (useElementReset). The sections never draw placeholders: their real controls are in the
+ * first frame, from what the source already says, and the page's computed values are asked
+ * for in one batch so they land as soon as the canvas can answer.
  */
 function useSelectionShown(props: StylePanelProps, renderedClasses: string[]): ShownSelection {
   const key = selectionKeyOf(props);
@@ -198,7 +202,6 @@ function useSelectionShown(props: StylePanelProps, renderedClasses: string[]): S
       return;
     }
     if (!computedStylesSettled(targetId)) {
-      awaitComputedStyles(targetId);
       void prefetchComputedStyles(targetId);
     }
   }, [key, targetId]);

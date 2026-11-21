@@ -1,6 +1,9 @@
 import { TreeDragRow, useTreeDragCleanup } from '../../ui/TreeDragDrop';
 import { ErrorToast } from '../../ui/ErrorToast';
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { PanelSearch } from '../../ui/PanelSearch';
+import { isSearching } from '../../lib/searchText';
+import { buildNavigatorIndex, navigatorHighlightWords, searchNavigator } from './navigatorSearch';
 import type { NavigatorNode, StructurePageState, StructureProjection, DropLocation, DropTarget } from './structureModel';
 import type { PseudoKind, PseudoNodeIds, StructureTreeContext } from './StructureTree';
 import type { ContextPosition } from './StructureContextMenu';
@@ -20,9 +23,17 @@ import {
   structureProjection,
 } from './structureModel';
 import CodeEditor from '../../ui/CodeEditor';
-import { NodeList } from './StructureTree';
+import { NodeList, scrollRowIntoScroller } from './StructureTree';
+import {
+  dropReasonText,
+  selfRefusal,
+  navigatorDragView,
+  publishNavigatorDrop,
+  subscribeCanvasDrag,
+  type NavigatorDragView,
+} from '../../editor/canvasDragSession';
 import { clearDrag } from '../../editor/dragState';
-import { parseNavigatorDrop } from './navigatorDrop';
+import { navigatorDropOf, parseNavigatorDrop } from './navigatorDrop';
 import { dropPlacement, type DropPlacement } from './dropPlacement';
 import { documentOfPath, type PlacementEnvironment, type PlacementInsertable } from '../../editor/placementCheck';
 import { getDrag } from '../../editor/dragState';
@@ -30,6 +41,7 @@ import type { PlacementMessage } from '../../../shared/page/placement';
 import { type LiveValue } from '../../ui/liveValue';
 import { assert } from '../../../shared/core/assert';
 import { useTranslate, useTranslateRich } from '../../lib/i18n/useTranslate';
+import { PanelHeader } from '../../ui/PanelHeader';
 
 interface StructurePanelProps {
   readonly clientMode?: boolean;
@@ -109,9 +121,7 @@ function MissingPage({ currentPage }: Pick<StructurePanelProps, 'currentPage'>) 
   const injected = currentPage?.kind === 'route';
   return (
     <div className="panel-section grow">
-      <div className="panel-header">
-        <h2>{translate('rail.navigator')}</h2>
-      </div>
+      <PanelHeader title={translate('rail.navigator')} />
       <div className="props-empty">
         {injected
           ? translateRich('structure.missing.injected', {
@@ -136,9 +146,7 @@ function ParseErrorPage({
   const [diagnostic] = projection.diagnostics;
   return (
     <div className="panel-section grow">
-      <div className="panel-header">
-        <h2>{translate('rail.code')}</h2>
-      </div>
+      <PanelHeader title={translate('rail.code')} />
       <div className="code-editor">
         <ErrorToast
           message={
@@ -164,11 +172,16 @@ type EditableProps = StructurePanelProps & {
 
 function EditableStructurePanel(props: EditableProps) {
   const state = useTreeState(props);
-  const treeContext = treeContextOf(props, state);
+  // A drag on the canvas is drawn here too, from the same decision, in the same commit (canvasDragSession.ts).
+  const canvasDrag = useSyncExternalStore(subscribeCanvasDrag, navigatorDragView);
+  useCanvasDragReveal(state.bodyRef, canvasDrag?.revealId);
+  usePublishNavigatorDrop(props.pageState.model.nodes, canvasDrag === undefined ? state.dropTarget : undefined);
+  const treeContext = treeContextOf(props, state, canvasDrag);
   return (
-    <div className="panel-section grow navigator">
+    // A drag that starts in the tree ends the search first: the drop is a position in the page's own lists, which the filtered copy does not share.
+    <div className="panel-section grow navigator" onDragStartCapture={() => state.setQuery('')}>
       <NavigatorHeader state={state} nodes={props.pageState.model.nodes} />
-      <NavigatorBody props={props} state={state} treeContext={treeContext} />
+      <NavigatorBody props={props} state={state} treeContext={treeContext} canvasDrag={canvasDrag} />
       {state.contextMenu && (
         <ElementContextMenu {...props} nodes={props.pageState.model.nodes} position={state.contextMenu} onClose={() => state.setContextMenu(undefined)} />
       )}
@@ -189,6 +202,12 @@ interface TreeState {
   readonly setDropTarget: React.Dispatch<React.SetStateAction<DropTarget | undefined>>;
   readonly toggled: ReadonlyMap<string, boolean>;
   readonly setToggled: React.Dispatch<React.SetStateAction<ReadonlyMap<string, boolean>>>;
+  /** What the search box holds; never remembered. */
+  readonly query: string;
+  readonly setQuery: React.Dispatch<React.SetStateAction<string>>;
+  /** Counts the searches a selection ended, so the selected row is scrolled into view in the tree that comes back. */
+  readonly searchRevealTick: number;
+  readonly setSearchRevealTick: React.Dispatch<React.SetStateAction<number>>;
   readonly allExpanded: boolean;
   readonly setAllExpanded: React.Dispatch<React.SetStateAction<boolean>>;
   readonly contextMenu: ContextPosition | undefined;
@@ -209,6 +228,8 @@ function useTreeState(props: EditableProps): TreeState {
     selectionExpanded(initialCollapseMap(props.pageState.model.nodes), props.pageState.model.nodes, props.selectedId, props.selectedPseudo),
   );
   const [allExpanded, setAllExpanded] = useState(false);
+  const [query, setQuery] = useState('');
+  const [searchRevealTick, setSearchRevealTick] = useState(0);
   const [contextMenu, setContextMenu] = useState<ContextPosition | undefined>(undefined);
   const bodyRef = useRef<HTMLDivElement>(null);
   const tooltip = useHeaderTooltip();
@@ -217,9 +238,9 @@ function useTreeState(props: EditableProps): TreeState {
     setDropTarget(undefined);
     setDropNote(undefined);
   });
-  useArrowNavigation(props, toggled, setToggled);
+  useArrowNavigation(props, toggled, setToggled, { searching: isSearching(query) });
   useSelectionExpansion(props, setToggled);
-  useRevealRow(bodyRef, props.revealTick ?? 0, props.selectedId, props.selectedPseudo);
+  useRevealRow(bodyRef, (props.revealTick ?? 0) + searchRevealTick, props.selectedId, props.selectedPseudo);
   return {
     dropNote,
     setDropNote,
@@ -227,6 +248,10 @@ function useTreeState(props: EditableProps): TreeState {
     setDropTarget,
     toggled,
     setToggled,
+    query,
+    setQuery,
+    searchRevealTick,
+    setSearchRevealTick,
     allExpanded,
     setAllExpanded,
     contextMenu,
@@ -256,11 +281,13 @@ function useArrowNavigation(
   props: EditableProps,
   toggled: ReadonlyMap<string, boolean>,
   setToggled: React.Dispatch<React.SetStateAction<ReadonlyMap<string, boolean>>>,
+  { searching }: { readonly searching: boolean },
 ): void {
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const key = parseArrowKey(event);
-      if (!key || !props.selectedId) {
+      // The arrows walk the page's rows, which a search leaves out of sight.
+      if (!key || !props.selectedId || searching) {
         return;
       }
       const found = findVisibleNode(props.pageState.model.nodes, props.selectedId);
@@ -287,7 +314,7 @@ function useArrowNavigation(
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [props, setToggled, toggled]);
+  }, [props, searching, setToggled, toggled]);
 }
 
 // The children a node lists as rows: none where the tree folds them into it.
@@ -329,7 +356,9 @@ function parseArrowKey(event: KeyboardEvent): ArrowKey | undefined {
 }
 
 function useSelectionExpansion(props: EditableProps, setToggled: React.Dispatch<React.SetStateAction<ReadonlyMap<string, boolean>>>): void {
-  useEffect(() => {
+  // Before paint: a canvas drop ends the drag's opened rows and selects the moved node in one task, and with a
+  // passive effect the tree was painted folded for a few frames between the two (seen in the running app).
+  useLayoutEffect(() => {
     setToggled((previous) => selectionExpanded(previous, props.pageState.model.nodes, props.selectedId, props.selectedPseudo));
   }, [props.pageState.model.nodes, props.selectedId, props.selectedPseudo, setToggled]);
 }
@@ -409,8 +438,10 @@ function revealRow(bodyElement: HTMLDivElement | undefined, selectedId: string, 
   bodyElement.scrollTop += rowBounds.top - bodyBounds.top - (bodyBounds.height - rowBounds.height) / 2;
 }
 
-function treeContextOf(props: EditableProps, state: TreeState): StructureTreeContext {
-  const isCollapsed = (node: NavigatorNode): boolean => collapsedState(node, state.toggled);
+function treeContextOf(props: EditableProps, state: TreeState, canvasDrag: NavigatorDragView | undefined): StructureTreeContext {
+  // A canvas drag opens the rows its mark sits in for as long as it lasts, without touching what the person
+  // opened or closed: when the drag ends the set is empty and every row is as it was.
+  const isCollapsed = (node: NavigatorNode): boolean => (canvasDrag?.expand.has(node.id) === true ? false : collapsedState(node, state.toggled));
   return {
     clientMode: props.clientMode === true,
     selectedId: props.selectedId,
@@ -424,8 +455,9 @@ function treeContextOf(props: EditableProps, state: TreeState): StructureTreeCon
     ...(props.onSelectPseudo === undefined ? {} : { onSelectPseudo: props.onSelectPseudo }),
     ...(props.liveClassesById === undefined ? {} : { liveClassesById: props.liveClassesById }),
     currentLayoutName: props.currentLayoutName,
-    dropTarget: state.dropTarget,
+    dropTarget: canvasDrag === undefined ? state.dropTarget : canvasDrag.navigator,
     setDropTarget: state.setDropTarget,
+    movingId: canvasDrag === undefined || canvasDrag.subject.kind === 'new' ? undefined : canvasDrag.subject.id,
     isCollapsed,
     isDndPayload,
     performDrop: (event, target) => dropOnTree(event, target, props, state),
@@ -435,6 +467,7 @@ function treeContextOf(props: EditableProps, state: TreeState): StructureTreeCon
     onSelect: (id) => {
       if (canEditNode(props, id)) {
         props.onSelect(id);
+        endSearch(props, state, id);
       }
     },
     ...(props.onHoverNode === undefined ? {} : { onHoverNode: props.onHoverNode }),
@@ -452,6 +485,16 @@ function treeContextOf(props: EditableProps, state: TreeState): StructureTreeCon
       state.setContextMenu({ left, top, nodeId });
     },
   };
+}
+
+// Choosing a row ends the search: the box empties, the whole page comes back with the chosen row's ancestors
+// open (the opening stays; every other fold is the person's own, untouched), and the row is scrolled into view.
+function endSearch(props: EditableProps, state: TreeState, selectedId: string): void {
+  if (isSearching(state.query)) {
+    state.setToggled((previous) => selectionExpanded(previous, props.pageState.model.nodes, selectedId, undefined));
+    state.setQuery('');
+    state.setSearchRevealTick((tick) => tick + 1);
+  }
 }
 
 function isDndPayload(event: React.DragEvent<HTMLElement>): boolean {
@@ -504,7 +547,8 @@ function noteOf(placement: DropPlacement, previous: DropNote | undefined): DropN
   let next: DropNote | undefined = undefined;
   switch (placement.kind) {
     case 'refused':
-      next = { tone: 'refused', reason: placement.reason };
+      // A row over itself or its own rows: no mark, the not-allowed cursor, and no words (they only state the obvious).
+      next = placement.reason.reason === 'self-drop' ? undefined : { tone: 'refused', reason: placement.reason };
       break;
     case 'snap':
       next = { tone: 'snapped', reason: placement.reason };
@@ -543,26 +587,34 @@ function NavigatorHeader({ state, nodes }: { readonly state: TreeState; readonly
   };
   return (
     <>
-      <div className="panel-header">
-        <h2>{translate('rail.navigator')}</h2>
-        <button
-          className="ghost"
-          aria-label={state.allExpanded ? translate('structure.collapseAll') : translate('structure.expandAll')}
-          onMouseEnter={state.showTooltip}
-          onMouseLeave={state.hideTooltip}
-          onClick={() => {
-            state.hideTooltip();
-            toggleAll();
-          }}
-        >
-          {state.allExpanded ? <CollapseVerticalIcon size={14} /> : <ExpandVerticalIcon size={14} />}
-        </button>
-      </div>
+      <PanelHeader
+        title={translate('rail.navigator')}
+        actions={
+          <button
+            className="ghost"
+            aria-label={state.allExpanded ? translate('structure.collapseAll') : translate('structure.expandAll')}
+            onMouseEnter={state.showTooltip}
+            onMouseLeave={state.hideTooltip}
+            onClick={() => {
+              state.hideTooltip();
+              toggleAll();
+            }}
+          >
+            {state.allExpanded ? <CollapseVerticalIcon size={14} /> : <ExpandVerticalIcon size={14} />}
+          </button>
+        }
+      />
       {state.tooltip && (
         <div className="rail-tooltip below" style={state.tooltip}>
           {state.allExpanded ? translate('structure.collapseAll') : translate('structure.expandAll')}
         </div>
       )}
+      <PanelSearch
+        value={state.query}
+        placeholder={translate('structure.search.placeholder')}
+        hint={translate('structure.search.hint')}
+        onChange={state.setQuery}
+      />
     </>
   );
 }
@@ -571,16 +623,23 @@ function NavigatorBody({
   props,
   state,
   treeContext,
+  canvasDrag,
 }: {
   readonly props: EditableProps;
   readonly state: TreeState;
   readonly treeContext: StructureTreeContext;
+  readonly canvasDrag: NavigatorDragView | undefined;
 }) {
+  const translate = useTranslate();
   const nodes = props.pageState.model.nodes;
   // Drop gaps overlap the row edges instead of taking room between rows, so
   // they catch the pointer only while a drag is over the navigator. Otherwise
   // a click on a row's edge would land on a gap and select nothing.
   const [bodyDrag, setBodyDrag] = useState<BodyDrag>('idle');
+  const search = useNavigatorSearch(nodes, state.query, { idle: canvasDrag === undefined && bodyDrag === 'idle' });
+  // Searched, the tree is a copy holding the matches, drawn open so no match hides in a folded row; the user's own folds are untouched.
+  useClearWhenSelectionHidden(props.selectedId, search, state);
+  const context = search.filtering ? { ...treeContext, isCollapsed: () => false, highlightWords: search.words, searchSnippets: search.snippets } : treeContext;
   return (
     <div
       className={bodyDrag === 'dragging' ? 'panel-body is-drag-over' : 'panel-body'}
@@ -602,13 +661,96 @@ function NavigatorBody({
       {/* One box as wide as the widest row: every row, and the tinted block under a selected one, fill it, so a
           selected row and its subtree share both edges however long a label runs (styles.css, .structure-tree). */}
       <div className="structure-tree">
-        {!props.clientMode && !props.editRootId && <FrontmatterRow props={props} />}
-        <NodeList nodes={nodes} parentId={undefined} depth={0} {...treeContext} />
+        {!props.clientMode && !props.editRootId && !search.filtering && <FrontmatterRow props={props} />}
+        <NodeList nodes={search.filtering ? search.nodes : nodes} parentId={undefined} depth={0} {...context} />
       </div>
       {!props.clientMode && nodes.length === 0 && <EmptyDropTarget props={props} state={state} />}
-      <DropNoteChip note={state.dropNote} />
+      {search.filtering && search.nodes.length === 0 && <div className="props-empty">{translate('structure.search.noMatch')}</div>}
+      {search.filtering && search.capped && <div className="props-empty">{translate('structure.search.capped', { count: search.matchCount })}</div>}
+      {canvasDrag === undefined ? <DropNoteChip note={state.dropNote} /> : <CanvasDropNote view={canvasDrag} />}
     </div>
   );
+}
+
+// A selection that arrives from elsewhere (the canvas) and lands on a row the filter hides ends the search, so the
+// selected row is never out of sight. Only a change of selection counts: typing a query that leaves the current
+// selection out of the results does not clear it.
+function useClearWhenSelectionHidden(selectedId: string | undefined, search: NavigatorSearch, state: TreeState): void {
+  const lastSelected = useRef(selectedId);
+  useEffect(() => {
+    if (lastSelected.current === selectedId) {
+      return;
+    }
+    lastSelected.current = selectedId;
+    if (search.filtering && selectedId !== undefined && selectedId !== 'frontmatter' && findNavigatorNode(search.nodes, selectedId) === undefined) {
+      state.setQuery('');
+      state.setSearchRevealTick((tick) => tick + 1);
+    }
+  }, [selectedId, search, state]);
+}
+
+interface NavigatorSearch {
+  /** True when the tree drawn is the search's copy: a query is typed and nothing is being dragged. */
+  readonly filtering: boolean;
+  readonly nodes: readonly NavigatorNode[];
+  readonly words: readonly string[];
+  readonly matchCount: number;
+  readonly capped: boolean;
+  readonly snippets: ReadonlyMap<string, string>;
+}
+
+// The index is built once per tree and only once a query exists; each keystroke is then one walk of it.
+const NO_SNIPPETS: ReadonlyMap<string, string> = new Map();
+
+function useNavigatorSearch(nodes: readonly NavigatorNode[], query: string, { idle }: { readonly idle: boolean }): NavigatorSearch {
+  const searching = isSearching(query);
+  const index = useMemo(() => (searching ? buildNavigatorIndex(nodes) : undefined), [nodes, searching]);
+  const filtering = searching && idle;
+  const result = useMemo(() => (filtering && index !== undefined ? searchNavigator(nodes, index, query) : undefined), [filtering, index, nodes, query]);
+  const words = useMemo(() => navigatorHighlightWords(query), [query]);
+  return {
+    filtering: filtering && result !== undefined,
+    nodes: result?.nodes ?? [],
+    words,
+    matchCount: result?.matchCount ?? 0,
+    capped: result?.capped ?? false,
+    snippets: result?.snippets ?? NO_SNIPPETS,
+  };
+}
+
+// The canvas drag's note, in the words the canvas shows beside the pointer.
+function CanvasDropNote({ view }: { readonly view: NavigatorDragView }) {
+  const translate = useTranslate();
+  // Over itself the drop is obviously nowhere: the Navigator shows no mark and says nothing (the canvas chip still does).
+  const text = selfRefusal(view.verdict) ? undefined : dropReasonText(view, translate);
+  if (text === undefined) {
+    return undefined;
+  }
+  return (
+    <div className="navigator-drop-note" role="status" data-tone={view.verdict.kind === 'refused' ? 'refused' : 'warning'}>
+      {text}
+    </div>
+  );
+}
+
+// A drag over the Navigator tells the canvas where its mark is, so the canvas draws the same line
+// (CanvasDropOverlay.tsx NavigatorDropLine). Published before paint, with the mark itself.
+function usePublishNavigatorDrop(nodes: readonly NavigatorNode[], target: DropTarget | undefined): void {
+  useLayoutEffect(() => {
+    publishNavigatorDrop(target === undefined ? undefined : navigatorDropOf(nodes, target));
+  }, [nodes, target]);
+  useEffect(() => () => publishNavigatorDrop(undefined), []);
+}
+
+// Keeps the row a canvas drag points at in view, before the frame paints: the mark moves and the tree follows.
+function useCanvasDragReveal(bodyRef: React.RefObject<HTMLDivElement>, revealId: string | undefined): void {
+  useLayoutEffect(() => {
+    if (revealId === undefined) {
+      return;
+    }
+    const row = bodyRef.current?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(revealId)}"]`) ?? undefined;
+    scrollRowIntoScroller(row);
+  }, [bodyRef, revealId]);
 }
 
 type BodyDrag = 'idle' | 'dragging';

@@ -14,13 +14,23 @@ export const messages = {
   'rail.components': 'Composants',
   'rail.editorPanels': 'Panneaux de l’éditeur',
   'rail.history': 'Git', // same
-  'rail.instructions': 'Instructions', // same
   'rail.more': 'Plus',
+  'rail.moveToBottom': 'Déplacer vers le groupe du bas',
+  'rail.moveToTop': 'Déplacer vers le groupe du haut',
+  'rail.movedBottom': '{label} : groupe du bas, position {position} sur {count}',
+  'rail.movedTop': '{label} : groupe du haut, position {position} sur {count}',
   'rail.navigator': 'Navigateur',
+  'rail.orderMenu': 'Ordre de la barre',
   'rail.pages': 'Pages', // same
   'rail.properties': 'Propriétés',
+  'rail.reset': "Réinitialiser l'ordre de la barre",
+  'rail.resetDone': 'Ordre de la barre réinitialisé',
   'rail.selectors': 'Sélecteurs de style',
   'rail.settings': 'Réglages',
+  'rail.settingsOrder.description': 'Faites glisser les icônes de la barre latérale pour les réorganiser. Rétablissez l’ordre par défaut.',
+  'rail.settingsOrder.done': 'Ordre de la barre latérale rétabli',
+  'rail.settingsOrder.label': 'Ordre des icônes de la barre latérale',
+  'rail.settingsOrder.reset': 'Rétablir par défaut',
   'rail.variables': 'Variables', // same
   'rail.withShortcut': '{label} ({shortcut})', // same
 } as const satisfies CatalogOf<MessageKey>;

@@ -295,8 +295,10 @@
 .ai-chip:disabled {
   opacity: 0.55;
 }
-.ai-chip.is-danger {
-  color: #ff9b9b;
+/* A mode that asks for nothing reads as quietly as any other; the warning colour shows only under the pointer, and the tooltip says why. */
+.ai-chip.is-danger:hover:not(:disabled),
+.ai-chip.is-danger.is-open {
+  color: color-mix(in srgb, var(--red), #fff 30%);
 }
 .ai-chip-logo {
   display: inline-flex;

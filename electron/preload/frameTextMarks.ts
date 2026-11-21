@@ -1,7 +1,8 @@
 // Text a page hands to a component instance — its slot content, or one of its
 // props — marked on the canvas with a dashed outline while that instance is
 // selected, so it reads as editable before anything is clicked. A double
-// click types in it (frameText.ts).
+// click types in it (frameText.ts). Its hover needs no selection: pointing at
+// the words of any instance outlines them and names them at once.
 //
 // Under the pointer it behaves like an element: the app draws its hover
 // outline, and once clicked its selection outline, with the instance's own
@@ -15,8 +16,10 @@
 
 import type { CanvasTextCatalog, CanvasTextTarget } from '../../shared/properties/canvasText';
 import { assert } from '../../shared/core/assert';
-import { elementsWithPath, pathsOf } from './frameRegions';
-import { matchCanvasText } from './frameTextMatch';
+import { elementsWithPath, pathsOf, runsOf } from './frameRegions';
+import { inlineTextRuns } from './inlineText';
+import { ownClasses } from './frameMeasure';
+import { elementsAt, matchCanvasText } from './frameTextMatch';
 
 // Matches made at most per question; a page with more marked text marks the first ones.
 const MATCHES_MAX = 200;
@@ -42,8 +45,14 @@ export function installTextMarks(source: MarkSource): () => void {
   layer.style.cssText = 'position:fixed;inset:0;pointer-events:none;z-index:2147483646;contain:strict;';
   let frame = 0;
   let pointer: { readonly x: number; readonly y: number } | undefined;
+  // A button held while the pointer moves is a drag or a resize in flight: nothing is hovered until it ends. (The interaction
+  // module's own drag flag stays set after a click's pointer has moved on, so it cannot say whether a drag is going on now.)
+  let held = false;
   // The text clicked while its instance stays selected, by catalog key.
   let picked: string | undefined;
+  // A click on prop text whose instance is not yet the selection: the click selects the instance and picks the words at once, but
+  // the app's selection arrives a message later, so the pick waits for it instead of being dropped by the next frame.
+  let awaiting: { readonly key: string; readonly scope: string } | undefined;
   let reported = '';
   const draw = () => {
     frame = 0;
@@ -51,16 +60,27 @@ export function installTextMarks(source: MarkSource): () => void {
     // The text being typed in is the picked one for as long as the editor is
     // open: the app draws it and its parent in their editing look.
     const editing = source.editing();
-    const typing = shown.some(({ target }) => target.key === editing);
-    picked = typing ? editing : shown.some(({ target }) => target.key === picked) ? picked : undefined;
-    const at = pointer;
-    const hover = at ? shown.find(({ element }) => holds(element, at)) : undefined;
-    const chosen = shown.find(({ target }) => target.key === picked);
+    const typing = shown.some(({ target }) => sameKey(target.key, editing));
+    if (awaiting !== undefined && source.focus().has(awaiting.scope)) {
+      awaiting = undefined; // The selection arrived: the words are among the instance's marked ones now.
+    }
+    picked = typing
+      ? shown.find(({ target }) => sameKey(target.key, editing))?.target.key
+      : shown.some(({ target }) => target.key === picked) || awaiting?.key === picked
+        ? picked
+        : undefined;
+    const at = held ? undefined : pointer;
+    // The selected instance's marked words first; otherwise any prop text under the pointer, selected or not.
+    const hover = at ? (shown.find(({ element }) => holds(element, at)) ?? hoverBeforeSelect(source, at)) : undefined;
+    const chosen =
+      shown.find(({ target }) => target.key === picked) ??
+      (awaiting === undefined ? undefined : matchesWhere(source.catalog(), (target) => target.key === awaiting?.key)[0]);
     if (!layer.isConnected) {
       document.documentElement.appendChild(layer);
     }
     layer.replaceChildren(...shown.filter((match) => match !== hover && match !== chosen).map(({ element }) => dashedMark(element.getBoundingClientRect())));
-    const message = { type: 'avb:text-marks', hover: report(hover), picked: report(chosen) };
+    const refused = at && hover === undefined ? (refusedAt(source, at) ?? inertTextAt(source, at)) : undefined;
+    const message = { type: 'avb:text-marks', hover: refused ?? report(hover), picked: report(chosen) };
     const text = JSON.stringify(message);
     if (text !== reported) {
       reported = text;
@@ -74,6 +94,7 @@ export function installTextMarks(source: MarkSource): () => void {
   };
   window.addEventListener('pointermove', (event) => {
     pointer = { x: event.clientX, y: event.clientY };
+    held = event.buttons !== 0;
     schedule();
   });
   // The preload installs this before the page has a root element, so leaving
@@ -88,7 +109,10 @@ export function installTextMarks(source: MarkSource): () => void {
     'click',
     (event) => {
       const at = { x: event.clientX, y: event.clientY };
-      picked = markedNow(source).find(({ element }) => holds(element, at))?.target.key;
+      const hit = markedNow(source).find(({ element }) => holds(element, at)) ?? hoverBeforeSelect(source, at);
+      picked = hit?.target.key;
+      const scope = hit?.target.scope;
+      awaiting = hit !== undefined && scope !== undefined && !source.focus().has(scope) ? { key: hit.target.key, scope } : undefined;
       schedule();
     },
     true,
@@ -109,13 +133,122 @@ function markedNow(source: MarkSource): TextMatchAt[] {
   // own element rather than by matching what the catalog says it reads.
   const editing = source.editing();
   const element = source.editingElement();
-  const typed = source.catalog()?.targets.find((target) => target.key === editing);
-  const typing = typed && element && marked(typed, focus) ? [{ target: typed, element }] : [];
-  const others = matchesWhere(source.catalog(), (target) => marked(target, focus) && target.key !== editing);
+  const typed = source.catalog()?.targets.find((target) => sameKey(target.key, editing));
+  // Whether its instance is the selection yet or not (the app's selection can arrive after the editor opens), the words being typed in are picked.
+  const typing = typed && element ? [{ target: typed, element }] : [];
+  const others = matchesWhere(source.catalog(), (target) => marked(target, focus) && !sameKey(target.key, editing));
   // Text whose element is the instance's own root — a Heading's words in its
   // <h2> — is the selection itself, not something inside it: no second
   // outline or tag is drawn over the selection's.
-  return [...typing, ...others].filter((match) => !pathsOf(match.element).includes(match.target.scope ?? ''));
+  return [...typing, ...others].filter((match) => !isInstanceRoot(match.element, match.target.scope));
+}
+
+// Prop or slot text under the pointer (a prop's words, or the words the page writes inside the instance), whether or not its instance is selected: the words a double click would edit once the component is
+// the selection. Only targets whose instance and element are on the pointer's own ancestor chain are matched, so a catalog of
+// thousands costs a set lookup each and a match for the few that are near the pointer.
+function hoverBeforeSelect(source: MarkSource, at: { readonly x: number; readonly y: number }): TextMatchAt | undefined {
+  const catalog = source.catalog();
+  if (!catalog || !source.visible()) {
+    return undefined;
+  }
+  const ancestors = ancestorPaths(at);
+  if (ancestors.size === 0) {
+    return undefined;
+  }
+  let best: TextMatchAt | undefined;
+  for (const target of catalog.targets) {
+    if (target.from === undefined || target.scope === undefined || !ancestors.has(target.scope) || !ancestors.has(target.parent)) {
+      continue;
+    }
+    for (const match of matchesWhere(catalog, (candidate) => candidate === target)) {
+      if (pathsOf(match.element).includes(target.scope) || !holds(match.element, at)) {
+        continue;
+      }
+      // Nested words: the innermost box under the pointer is the one named.
+      if (best === undefined || best.element.contains(match.element)) {
+        best = match;
+      }
+    }
+  }
+  return best;
+}
+
+// Text a prop prints from code that leads to no one string: muted, named as refused, never as something to edit.
+function refusedAt(source: MarkSource, at: { readonly x: number; readonly y: number }) {
+  const catalog = source.catalog();
+  if (!catalog?.blocked || !source.visible()) {
+    return undefined;
+  }
+  for (const entry of catalog.blocked.filter((blocked) => /(^|:)prop:/.test(blocked.key))) {
+    const runs = [...(runsOf(entry.path) ?? []), ...inlineTextRuns(entry.path)];
+    for (const run of runs) {
+      const element = run[0]?.parentElement;
+      if (element && element.getBoundingClientRect().width > 0 && holds(element, at) && run.every((node) => node.parentElement === element)) {
+        const box = element.getBoundingClientRect();
+        return { x: box.left, y: box.top, w: box.width, h: box.height, label: labelOf(element).label, kind: 'refused' };
+      }
+    }
+  }
+  return undefined;
+}
+
+// Words a component draws that no target covers (a label computed from a variant table, a footer's links, a count the component
+// formats): muted and named as refused, so the canvas says why nothing edits instead of staying silent. A component's own root
+// that is only its words is the component itself (its hover), and an element outside every component is the page's own.
+function inertTextAt(source: MarkSource, at: { readonly x: number; readonly y: number }) {
+  if (!source.catalog() || !source.visible()) {
+    return undefined;
+  }
+  const element = document.elementFromPoint(at.x, at.y);
+  if (!element || !Array.from(element.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').trim() !== '')) {
+    return undefined;
+  }
+  const paths = pathsOf(element);
+  const drawn = paths.some((path) => path.includes('|'));
+  const instanceRoot = paths.some((path) => !path.includes('|'));
+  if (!drawn || instanceRoot || !hasBox(element)) {
+    return undefined;
+  }
+  const box = element.getBoundingClientRect();
+  return { x: box.left, y: box.top, w: box.width, h: box.height, label: labelOf(element).label, kind: 'refused' };
+}
+
+// The paths of the element under a point and of everything around it.
+function ancestorPaths(at: { readonly x: number; readonly y: number }): Set<string> {
+  const paths = new Set<string>();
+  for (const start of elementsAt(at.x, at.y)) {
+    let element: Element | undefined = start;
+    for (let depth = 0; element && depth < 64; depth++) {
+      for (const path of pathsOf(element)) {
+        paths.add(path);
+      }
+      element = element.parentElement ?? undefined;
+    }
+  }
+  return paths;
+}
+
+// The editor's key for the words and the catalog's can differ by the refresh counter a content scan prefixes (`cms:2:`), so a catalog
+// republished while the editor opens still names the words being typed in.
+function sameKey(left: string, right: string | undefined): boolean {
+  const bare = (key: string) => key.replace(/^cms:\d+:/, '');
+  return right !== undefined && bare(left) === bare(right);
+}
+
+// Whether an element is the instance's own root, the outermost element carrying its path. The path can also sit on an element
+// inside it (a Card's stretched link carries the Card's path), and words in that element are still words inside the instance.
+function isInstanceRoot(element: Element, scope: string | undefined): boolean {
+  if (scope === undefined || !pathsOf(element).includes(scope)) {
+    return false;
+  }
+  let ancestor = element.parentElement;
+  for (let depth = 0; ancestor && depth < 64; depth++) {
+    if (pathsOf(ancestor).includes(scope)) {
+      return false;
+    }
+    ancestor = ancestor.parentElement;
+  }
+  return true;
 }
 
 function dashedMark(box: DOMRect): HTMLElement {
@@ -134,24 +267,33 @@ function report(match: TextMatchAt | undefined) {
     return undefined;
   }
   const box = match.element.getBoundingClientRect();
-  return { x: box.left, y: box.top, w: box.width, h: box.height, ...labelOf(match.element) };
+  // `scope` names the page instance the words belong to, so the app can draw that instance (and no other) as their owner.
+  return {
+    x: box.left,
+    y: box.top,
+    w: box.width,
+    h: box.height,
+    ...labelOf(match.element),
+    ...(match.target.scope === undefined ? {} : { scope: match.target.scope }),
+  };
 }
 
 function labelOf(element: Element): { readonly label: string; readonly kind: string } {
   // An element tagged from two files is a component's root, rendered by that
   // component and placed by the file that uses it: `Heading.astro|0` and
-  // `Slider.astro|0.1` on one <h2>. The first is the component's own.
-  const files = pathsOf(element).flatMap((path) => {
-    const at = path.lastIndexOf('|');
-    return at > 0 ? [path.slice(0, at)] : [];
-  });
-  const owner = files[0];
-  if (owner !== undefined && new Set(files).size > 1) {
-    const name = owner.slice(owner.lastIndexOf('/') + 1).replace(/\.astro$/, '');
-    return { label: name, kind: 'component' };
+  // `Slider.astro|0.1` on one <h2>. The component's own is the file whose path
+  // is a root (`|0`, no dots after the bar). A plain element a component's
+  // template wrote deeper (`HomeHero.astro|0.2`) is no component's root, even
+  // when another file tags it too: it is named by its class or, with none, its tag.
+  const paths = pathsOf(element).filter((path) => path.lastIndexOf('|') > 0);
+  const files = new Set(paths.map((path) => path.slice(0, path.lastIndexOf('|'))));
+  const rootPath = paths.find((path) => /^\d+$/.test(path.slice(path.lastIndexOf('|') + 1)));
+  if (rootPath !== undefined && files.size > 1) {
+    const owner = rootPath.slice(0, rootPath.lastIndexOf('|'));
+    return { label: owner.slice(owner.lastIndexOf('/') + 1).replace(/\.astro$/, ''), kind: 'component' };
   }
   // A class keeps its dot, as the canvas tag and the navigator spell it.
-  const firstClass = element.classList[0];
+  const firstClass = ownClasses(element).find((name) => !name.startsWith('astro-'));
   return { label: firstClass === undefined ? element.localName : `.${firstClass}`, kind: 'text' };
 }
 

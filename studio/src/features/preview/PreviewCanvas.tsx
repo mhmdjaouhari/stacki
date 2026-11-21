@@ -8,6 +8,7 @@ import { CanvasTextSourceCue } from '../../../vendor/stacki/src/app/shell/Canvas
 import { useCanvasInteraction } from '../../../vendor/stacki/src/features/preview/useCanvasInteraction';
 import './previewToolbar.css';
 import { PreviewLoading, usePreviewLoading } from './PreviewLoading';
+import { useStartupView } from '../startup/useStartupView';
 import { CollaboratorOutlines } from '../collaboration/CollaboratorOutlines';
 import { useCursorChatShortcut, useCursorScale } from '../collaboration/cursorChat';
 import type { Peer } from '../collaboration/presence';
@@ -25,6 +26,7 @@ import { useProjectBreakpoints } from '../../../vendor/stacki/src/ipc/useProject
 import { usePreviewSizing } from '../../../vendor/stacki/src/features/preview/usePreviewSizing';
 import type { usePreviewDimensions } from '../../../vendor/stacki/src/features/preview/usePreviewSizing';
 import '../../../vendor/stacki/src/features/preview/previewViewport.css';
+import { SizedFrame } from '../../../vendor/stacki/src/features/preview/SizedFrame';
 import { CollectionEditor } from '../collections/CollectionEditor';
 import type { SharedDocument } from '../collaboration/useDocument';
 import { nodeId, type ParserNode } from '../source/source';
@@ -70,8 +72,8 @@ export function PreviewCanvas(props: Props) {
     offSite: { clearOverlays: props.preview.clearOverlays },
     pages: props.sitePages,
   });
-  const { resolved: breakpoints } = useProjectBreakpoints(props.projectName);
-  const sizing = usePreviewSizing(props.device, props.dimensions, breakpoints, props.onDevice);
+  const { resolved: breakpoints, desktopFramePx } = useProjectBreakpoints(props.projectName);
+  const sizing = usePreviewSizing(props.device, props.dimensions, breakpoints, { deviceShortcuts: true, desktopFramePx }, props.onDevice);
   useCursorScale(props.preview, sizing.viewport.scale);
   useCursorChatShortcut({
     preview: props.preview,
@@ -172,6 +174,8 @@ function PreviewSurface({
 }) {
   const loading = usePreviewLoading(props.preview.url, sizing.wrapRef, props.device === 'canvas', props.preview.retry);
   const { resolved: breakpoints, desktopFramePx } = useProjectBreakpoints(props.projectName);
+  // A page that is already ready costs no request: the first read waits long enough for it to arrive.
+  const startup = useStartupView(!loading.ready, 1500);
   return (
     <div className="preview-frame-wrap" ref={sizing.wrapRef} data-preview-loading={!loading.ready} aria-busy={!loading.ready}>
       {props.preview.url &&
@@ -186,7 +190,7 @@ function PreviewSurface({
         ) : (
           <DesignFrame key={loading.attempt} interactive={interactive ?? false} props={props} sizing={sizing} shownGuide={shownGuide} />
         ))}
-      {!loading.ready && <PreviewLoading slow={loading.slow} retry={loading.retry} />}
+      {!loading.ready && <PreviewLoading slow={loading.slow} wait={loading.wait} frameError={loading.frameError} retry={loading.retry} startup={startup} />}
     </div>
   );
 }
@@ -206,45 +210,20 @@ function DesignFrame({
   const frameAddress = useFrameAddress(props.preview.frame, props.preview.url);
   return (
     <>
-      <div
-        ref={sizing.frameRef}
-        className={`frame-sized ${sizing.width ? '' : 'full'} ${sizing.resizing || sizing.panelSettling ? 'resizing' : ''}`}
-        // A fluid frame fills the canvas by CSS, so it follows a side-panel drag each frame
-        // without a render (usePreviewSizing puts off its measure until release).
-        style={
-          sizing.width
-            ? {
-                width: sizing.viewport.width,
-                height: sizing.viewport.height,
-                bottom: 'auto',
-                transform: `translateX(-50%) scale(${sizing.viewport.scale})`,
-              }
-            : { width: '100%', height: '100%', bottom: 'auto', transform: 'translateX(-50%)' }
-        }
-      >
-        <div className="frame-clip">
-          <iframe
-            ref={props.preview.frame}
-            title={translate('preview.pane.title')}
-            src={frameAddress}
-            onLoad={() => {
-              props.preview.loaded({ preserveNavigation: interactive ?? false });
-              // Interact mode selects too, so the frame needs its scope, labels and selection.
-              props.restoreSelection();
-              // The render subscription catches edits made during navigation. A load-time
-              // pull races that render and repeats work for every page switch.
-            }}
-          />
-        </div>
-        {(['w', 'e', 's'] as const).map((edge) => (
-          <div key={edge} className={`rz-handle rz-${edge}`} onPointerDown={sizing.startResize(edge)} />
-        ))}
-        {sizing.resizing && (
-          <div className="rz-readout">
-            {Math.round(sizing.viewport.width)} × {Math.round(sizing.viewport.height)}
-          </div>
-        )}
-      </div>
+      <SizedFrame sizing={sizing}>
+        <iframe
+          ref={props.preview.frame}
+          title={translate('preview.pane.title')}
+          src={frameAddress}
+          onLoad={() => {
+            props.preview.loaded({ preserveNavigation: interactive ?? false });
+            // Interact mode selects too, so the frame needs its scope, labels and selection.
+            props.restoreSelection();
+            // The render subscription catches edits made during navigation. A load-time
+            // pull races that render and repeats work for every page switch.
+          }}
+        />
+      </SizedFrame>
       <CanvasOverlays props={props} sizing={sizing} shownGuide={shownGuide} />
     </>
   );
@@ -263,11 +242,11 @@ function CanvasOverlays({
     ? {
         width: sizing.viewport.width * sizing.viewport.scale,
         height: sizing.viewport.height * sizing.viewport.scale,
-        borderRadius: 10 * sizing.viewport.scale,
+        borderRadius: sizing.fit === 'framed' ? 10 * sizing.viewport.scale : 0,
       }
     : { width: '100%', height: '100%', borderRadius: 0 };
   return (
-    <div className={`preview-overlay-layer ${sizing.width ? '' : 'full'}`} style={style}>
+    <div className={`preview-overlay-layer ${sizing.width && sizing.fit === 'framed' ? '' : 'full'}`} style={style}>
       {/* First in the layer, so the outlines and spacing bands paint over it. */}
       {shownGuide && <GuideOverlay {...shownGuide} scale={sizing.viewport.scale} />}
       <CollaboratorOutlines

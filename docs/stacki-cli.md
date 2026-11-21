@@ -4,6 +4,16 @@
 without breaking the rules the app enforces. `stacki mcp` serves the same commands to AI agents over the Model
 Context Protocol. This page is the design, the safety rules, the command reference and how to extend it.
 
+## Setting up Studio's sign-in (`npm create stacki`)
+
+`npm create stacki@latest` installs Studio and asks "How should people sign in to Studio?": GitHub (default), Cloudflare
+Access, Google, SSO (OpenID Connect) or Passkeys. For scripts and CI, `--auth github|access|google|oidc|passkey` chooses
+without asking, with non-secret value flags: `--auth-client-id`, `--auth-issuer`, `--auth-name`, `--auth-allowed-domains`,
+`--auth-allowed-emails`, `--auth-team-domain`, `--auth-aud`, `--auth-custom-domain` and `--auth-admin` (the first admin's
+email, or a handle for passkeys). `--yes` without `--auth` keeps GitHub. Invalid or missing values fail before any file is
+changed. The command never accepts a client secret: it prints the `wrangler secret put` command instead. See
+`studio/docs/cloudflare.md`, "Choosing a sign-in type".
+
 ## Where it lives and why
 
 | Piece | Path |
@@ -198,7 +208,7 @@ every effect already applied and puts back every file already written.
 | `.stacki/folders.json` | version, folders, cms | folders add/remove/reset | `settings:folders` |
 | `.stacki/pages.json` | version, entries | config | `panel:pages` |
 | `.stacki/publish.json` | version, defaultTarget, githubAccount, hosting, buildScript, beforePublish, afterPublish, githubWorkflow, publishedSite | config | `publish` |
-| `.stacki/styles.json` | version, keep, lockedStylesheets, newStyleTag (`version` 2, `attributes`, `content`; version 1 `isGlobal` is read) | config | `panel:selectors` |
+| `.stacki/styles.json` | version, keep, lockedStylesheets, newStyleTag (`version` 2, `attributes`, `content`; version 1 `isGlobal` is read), newStyleLocations (`page` and `component`, each `use` tag or file, `file`, `tag`) | config | `panel:selectors` |
 | `.stacki/variables.json` | version, hiddenFromSuggestions | config | `panel:style` |
 | `.stacki/audits.json` | version, ignored, ignoredPages, checks, tokens, placeholders | config | `panel:audits` |
 | `.stacki/instructions.json` | version, hidden | config | `instructions:edit` |

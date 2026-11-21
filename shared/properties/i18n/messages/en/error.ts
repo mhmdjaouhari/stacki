@@ -28,6 +28,9 @@ export const messages = {
   'error.component.tooLarge': 'This folder is too big to copy or delete in one step.',
   'error.component.unknownUndo': 'That deletion can no longer be undone.',
   'error.component.writeFailed': 'Could not write {file}: {reason}',
+  'error.componentRemoval.changedSince': '{file} changed since. Nothing was changed; try again.',
+  'error.componentRemoval.needsReview': { one: 'Change {count} place first: {place}.', other: 'Change {count} places first, starting with {place}.' },
+  'error.componentRemoval.wouldBreak': '{file} would not parse after the change, so nothing was deleted.',
   'error.componentRename.defaultsTaken': 'The new location already has component defaults in .stacki/components.json. Remove them first.',
   'error.componentRename.destinationAppeared': 'Something appeared at the new location, so nothing was renamed.',
   'error.componentRename.exists': '{file} already exists.',
@@ -112,6 +115,8 @@ export const messages = {
   'error.publish.sourceFileLimit': 'Git inspection exceeds the 100,000-file limit.',
   'error.publish.sourceSizeLimit': 'Git inspection exceeds the 8 GiB source limit.',
   'error.selectors.stylesInvalid': '.stacki/styles.json is invalid: {reason}',
+  'error.studio.authNotInstalled': 'Studio is not installed in this project.',
+  'error.studio.authWrite': 'The sign-in settings could not be written to studio/cloudflare/wrangler.jsonc.',
   'error.studio.devBundleMissing': 'Build the development Studio bundle with npm run studio:release, then retry.',
   'error.studio.devVersionMismatch': 'Development Studio version does not match Stacki. Run npm run studio:release.',
   'error.studio.downloadFailed':

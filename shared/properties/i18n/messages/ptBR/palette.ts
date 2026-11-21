@@ -15,6 +15,15 @@ export const messages = {
   'palette.create.taken': '{file} já existe.',
   'palette.create.hint': '{label} vira {tag}, salvo como {file}',
   'palette.create.name': 'Nome',
+  'palette.create.styles.alsoUsed': 'Também usada em outro lugar', // review
+  'palette.create.styles.checkAria': 'Mover os estilos de .{name}', // review
+  'palette.create.styles.failed': 'Não foi possível ler os estilos, então nenhum será movido.', // review
+  'palette.create.styles.foot': 'Os estilos marcados vão para uma nova tag style do componente. Não edite estes arquivos em outro app até terminar.', // review
+  'palette.create.styles.inFiles': 'Também usada em {files}.', // review
+  'palette.create.styles.loading': 'Procurando os estilos desta marcação…', // review
+  'palette.create.styles.onPage': 'Outro elemento desta página a usa.', // review
+  'palette.create.styles.page': 'Esta página', // review
+  'palette.create.styles.title': 'Mover estilos', // review
   'palette.create.submit': 'Criar',
   'palette.create.title': 'Criar componente',
   'palette.create.value.alsoUsed': 'Também usado aqui',
@@ -45,12 +54,6 @@ export const messages = {
   'palette.instances.title': 'Instâncias de {name}',
   'palette.instances.unused': 'Ainda não é usado em lugar nenhum.',
   'palette.instances.usedIn': 'Usado em',
-  'palette.manage.deleteBodyComponent':
-    '{name} não é usado em nenhuma página. Ele vai para a lixeira e suas entradas nas configurações do projeto são removidas. Desfazer o traz de volta.',
-  'palette.manage.deleteBodyFolder': {
-    one: 'Esta pasta e seu {count} componente vão para a lixeira, e suas entradas nas configurações do projeto são removidas. Desfazer os traz de volta.',
-    other: 'Esta pasta e seus {count} componentes vão para a lixeira, e suas entradas nas configurações do projeto são removidas. Desfazer os traz de volta.',
-  },
   'palette.manage.deleteConfirm': 'Excluir',
   'palette.manage.deleteDone': '{name} excluído',
   'palette.manage.deleteTitle': 'Excluir {name}?',
@@ -62,10 +65,31 @@ export const messages = {
   'palette.manage.labelDuplicate': 'Duplicar {name}',
   'palette.manage.undoMetadataKept':
     'Os arquivos foram restaurados. As configurações do projeto mudaram desde então, então suas entradas foram deixadas como estão.',
+  'palette.remove.blocked': 'Estes lugares o usam de um jeito que o Stacki não consegue reescrever. Altere-os primeiro; nada foi excluído.',
+  'palette.remove.blockedTitle': '{name} ainda não pode ser excluído',
+  'palette.remove.files': { one: '{name} vai para a lixeira.', other: '{name} e seus {count} componentes vão para a lixeira.' },
+  'palette.remove.imports': { one: '{count} importação é removida:', other: '{count} importações são removidas:' },
+  'palette.remove.instances': {
+    one: '{count} instância é removida, com tudo o que há dentro:',
+    other: '{count} instâncias são removidas, com tudo o que há dentro:',
+  },
+  'palette.remove.more': { one: 'e mais {count} arquivo', other: 'e mais {count} arquivos' },
+  'palette.remove.place': '{path}: {count}', // same
+  'palette.remove.reason.content': 'uma instância em Markdown',
+  'palette.remove.reason.dynamicImport': 'uma importação dinâmica',
+  'palette.remove.reason.expression': 'uma instância dentro de uma expressão',
+  'palette.remove.reason.glob': 'um glob que o inclui',
+  'palette.remove.reason.layout': 'um layout de Markdown',
+  'palette.remove.reason.reExport': 'uma reexportação',
+  'palette.remove.reason.unreadable': 'um arquivo que não pode ser lido',
+  'palette.remove.reason.value': 'usado como valor',
+  'palette.remove.reviewLine': '{path}:{line}, {reason}', // same
+  'palette.remove.settings': 'Suas entradas em {files} são removidas.',
+  'palette.remove.undo': 'Um único Desfazer traz tudo de volta.',
+  'palette.remove.unused': 'Nada o usa.',
   'palette.menu.delete': 'Excluir',
   'palette.menu.duplicate': 'Duplicar',
   'palette.menu.editSettings': 'Editar configurações',
-  'palette.menu.usedIn': { one: 'Usado em {count} lugar', other: 'Usado em {count} lugares' },
   'palette.name.empty': 'Dê um nome ao componente.',
   'palette.name.lettersOnly': 'Use apenas letras e números.',
   'palette.name.noLetters': 'Use letras ou números para o nome.',

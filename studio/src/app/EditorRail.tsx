@@ -28,7 +28,10 @@ const panels = [
   { id: 'history', labelKey: 'rail.history', shortcut: '⌥H', Icon: FEATURE_ICONS['panel:history'] },
   { id: 'apps', labelKey: 'rail.apps', shortcut: 'E', Icon: FEATURE_ICONS['panel:apps'] },
 ] as const satisfies readonly { readonly id: string; readonly labelKey: MessageKey; readonly shortcut: string; readonly Icon: unknown }[];
-export type Panel = (typeof panels)[number]['id'] | 'ai';
+// Upstream's Settings panel (Secrets and MCP notices, Stacki's own Roles) is not shown in this fork: emdash-stacki's
+// roles come from EmDash, and the other views only point at Desktop. Only its id stays, in the panel type.
+const SETTINGS_PANEL = { id: 'projectSettings', labelKey: 'rail.settings', shortcut: '⌥S', Icon: FEATURE_ICONS['panel:projectSettings'] } as const;
+export type Panel = (typeof panels)[number]['id'] | 'ai' | typeof SETTINGS_PANEL.id;
 interface Props {
   readonly componentOpen: boolean;
   readonly panel: Panel | undefined;

@@ -221,6 +221,9 @@ export function usePropEdits(splitForEditHook: ReturnType<typeof useSplitForEdit
         }),
       );
       settlePreviews(saving, preview === undefined ? [] : [{ preview, edit }]);
+      // Settles once the save and the model refresh behind it are done: the panel holds the
+      // committed look until then (useOptimisticEdits.ts).
+      return saving;
     },
     [applyEdit, previewEdit, splitForEdit],
   );
@@ -255,7 +258,7 @@ export function usePropEdits(splitForEditHook: ReturnType<typeof useSplitForEdit
         previews.filter((preview) => preview !== undefined).map((preview) => ({ preview, edit: removed })),
       );
       // Settles once the save and the model refresh behind it are done: the panel holds
-      // the cleared look until then (useOptimisticClear.ts).
+      // the cleared look until then (useOptimisticEdits.ts).
       return saving;
     },
     [applyEdit, previewEdit, splitForEdit],

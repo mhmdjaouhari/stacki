@@ -2,6 +2,7 @@ import { centralIcon, centralIconSize } from './central/CentralIcon';
 import {
   add as centralAdd,
   arrowDown as centralArrowDown,
+  arrowLeftRight as centralArrowLeftRight,
   arrowRotateClockwise as centralArrowRotateClockwise,
   asterisk as centralAsterisk,
   audio as centralAudio,
@@ -78,6 +79,9 @@ import {
   settings as centralSettings,
   target as centralTarget,
   sort as centralSort,
+  layoutGridTwo as centralLayoutGridTwo,
+  listMenu as centralListMenu,
+  textBlock as centralTextBlock,
   sparkle as centralSparkle,
   sync as centralSync,
   tablet as centralTablet,
@@ -451,6 +455,11 @@ export const FilterIcon = centralIcon(centralFilter);
 // A list's sort: an up-and-down arrow beside the lines it orders.
 export const SortIcon = centralIcon(centralSort);
 
+// The Assets panel's views: tiles in a grid, rows with a thumbnail and two lines, and compact rows.
+export const GridViewIcon = centralIcon(centralLayoutGridTwo);
+export const ListViewIcon = centralIcon(centralTextBlock);
+export const CompactListViewIcon = centralIcon(centralListMenu);
+
 // Disconnecting a setting from a property: a chain link broken in two.
 // A link broken in two: what disconnecting a value from what it was bound to does.
 export const UnlinkIcon = centralIcon(centralUnlink);
@@ -458,14 +467,19 @@ export const UnlinkIcon = centralIcon(centralUnlink);
 export const TerminalIcon = centralIcon(centralTerminal);
 
 export const ArrowDownIcon = centralIcon(centralArrowDown);
+/** Replace: Central's arrow-left-right (Figma 5579:2309), the file's swap glyph; it has no dedicated replace icon. */
+export const ReplaceIcon = centralIcon(centralArrowLeftRight);
 
 const AstroImageIcon = centralIcon(centralImage);
 const AstroPictureIcon = centralIcon(centralLayers);
 
-// Astro's accent distinguishes optimized images from plain HTML images.
-export function astroAssetIcon(name: unknown, size = 16, className?: string) {
+// Astro's accent distinguishes optimized images from plain HTML images in the
+// palette, props and navigator. `tint: 'inherit'` keeps currentColor for a
+// surface that colours its own icons (the canvas tag, whose text and outline
+// are one colour; an orange glyph there read as an error).
+export function astroAssetIcon(name: unknown, size = 16, className?: string, tint: 'astro' | 'inherit' = 'astro') {
   const Icon = name === 'Picture' ? AstroPictureIcon : AstroImageIcon;
-  return <Icon size={size} className={className} style={{ color: ASTRO_ASSET_ACCENT }} />;
+  return <Icon size={size} className={className} style={tint === 'astro' ? { color: ASTRO_ASSET_ACCENT } : undefined} />;
 }
 
 // Boolean prop — a switch, matching the True/False control the field renders.

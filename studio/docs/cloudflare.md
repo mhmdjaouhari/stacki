@@ -9,7 +9,7 @@ source distribution does not create resources or claim that an account is config
 ### Cost controls
 
 - Website dependencies are installed into the deployment image and reused when the repository lockfile matches. Changed lockfiles use a cached install fallback. Ordinary cold starts restore drafts and start Astro without reinstalling packages.
-- One shared standard-2 Container (1 vCPU, 6 GiB RAM, 12 GB disk); three-minute sleep timeout after connections close.
+- One shared standard-2 Container (1 vCPU, 6 GiB RAM, 12 GB disk); ten-minute sleep timeout after connections close (a return within ten minutes finds it warm; see [startup timing](../../docs/studio-startup-timing.md)).
 - The editor pauses when its tab is hidden, or after five minutes without interaction,
   once saves and requests finish. Pausing removes preview iframes and closes collaboration
   connections before background tabs can freeze their timers. Resume reconnects the draft
@@ -81,11 +81,35 @@ Edit `cloudflare/wrangler.jsonc`:
 - For temporary open testing, set `EDITOR_ACCESS` to `github`. Anyone who completes GitHub sign-in can edit and publish the shared site without a repository invitation. Signed sessions are still required for the editor, API, preview, and collaboration connections. The supplied template defaults to `repository` mode.
 - To end open testing, change `EDITOR_ACCESS` back to `repository` and redeploy the CMS Worker. Existing tester sessions are checked against repository permissions on their next request; open collaboration connections are checked on their next authorization renewal (normally within five minutes). Testing access is never stored in a session or permission cache.
 - For a manually managed studio allowlist instead, omit `EDITOR_ACCESS` and set `EDITOR_GITHUB_IDS` to comma-separated numeric GitHub IDs.
+- To sign people in with something other than GitHub (Google, email codes, SSO, passkeys), add your own provider in `cloudflare/auth-provider.ts`; it survives Studio updates. GitHub stays the default and nothing changes without that file. This interface is **experimental and may change in minor versions**; see [authentication providers](auth-providers.md). With another provider, `EDITOR_ACCESS` can also be `authenticated` (any person the provider verifies); `github` and `repository` apply to GitHub sign-in only.
 - Choose a private R2 bucket name and create it. This bucket stores shared draft state and draft assets; it is not the default published-content database.
 - Route `example.com/studio*` to this Worker while retaining the existing website's normal routing. Route the preview hostname to this Worker for all paths. Configure these routes/custom domains in your Cloudflare zone according to the website's existing Pages/Workers hosting setup.
-- Keep one Container instance for the shared project. The supplied `standard-2` instance and three-minute sleep timeout are starting values to measure with your site's dependencies.
-- Opening the authenticated Studio page starts preview restoration and homepage compilation while the editor assets download. Drafts and uploaded assets restore in batches of four. The canvas shows a loading state and retry control while waiting, then appears when its editing bridge is ready without waiting for every image. Sleeping containers still incur a cold start.
-- Studio startup shows an animated progress bar, the current loading stage, and elapsed time after ten seconds. Workspace requests retry up to three times with a twenty-second limit per attempt; a visible Retry control recovers from stalled or failed startup without reloading the whole site.
+- Keep one Container instance for the shared project. The supplied `standard-2` instance and ten-minute sleep timeout (`CONTAINER_SLEEP_AFTER` in `src/cloudflare/worker.ts`) are starting values to measure with your site's dependencies.
+- Opening the authenticated Studio page starts preview restoration while the editor assets download; once Astro answers, the container reads the project catalog and compiles the home page before the editor asks for either. Drafts and uploaded assets restore in batches of four. The canvas shows a loading state and retry control while waiting, then appears when its editing bridge is ready without waiting for every image. Sleeping containers still incur a cold start.
+- Studio startup shows an animated progress bar, the container's real stage (starting, repository, drafts, dependencies, preview server, first page) with a step count, and elapsed time after twenty seconds. The stage comes from `/studio/api/startup`, which the Worker answers without waiting for the container. Retry appears after ninety seconds. Workspace requests retry up to three times with a twenty-second limit per attempt; a visible Retry control recovers from stalled or failed startup without reloading the whole site.
+
+## Choosing a sign-in type
+
+Studio signs people in with **GitHub** unless you choose another type. Setup asks once, and you can change it later.
+
+| Choice               | `AUTH_PROVIDER` | Non-secret vars (`cloudflare/wrangler.jsonc`)                                                       | Secret (`wrangler secret put`)                       |
+| -------------------- | --------------- | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| GitHub (default)     | absent          | none                                                                                                | none                                                 |
+| Cloudflare Access    | `access`        | `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `AUTH_BOOTSTRAP_ADMIN`                                          | none                                                 |
+| Google               | `google`        | `GOOGLE_CLIENT_ID`, optional `AUTH_ALLOWED_DOMAINS` / `AUTH_ALLOWED_EMAILS`, `AUTH_BOOTSTRAP_ADMIN` | `GOOGLE_CLIENT_SECRET`                               |
+| SSO (OpenID Connect) | `oidc`          | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, optional `OIDC_NAME`, allow-lists, `AUTH_BOOTSTRAP_ADMIN`          | `OIDC_CLIENT_SECRET` (none for a public PKCE client) |
+| Passkeys             | `passkey`       | `AUTH_BOOTSTRAP_ADMIN`                                                                              | `AUTH_SETUP_CODE` (16 to 200 characters)             |
+
+- **Where to choose.** `npm create stacki@latest` asks "How should people sign in to Studio?"; scripts pass `--auth github|access|google|oidc|passkey` with the value flags (`npm create stacki@latest -- --help`). In Desktop, **Settings → Stacki Studio → Add to project** asks the same question, and **Change** next to the current sign-in type edits it later. All of them write the same variables with a surgical edit of `cloudflare/wrangler.jsonc`: comments, other variables and an existing `AUTH_PROVIDER` you set yourself are left alone unless you agree to replace it.
+- **Allow-lists and unknown providers.** `AUTH_ALLOWED_EMAILS` / `AUTH_ALLOWED_DOMAINS` add default-role editors; `EDITOR_ACCESS=roles` switches them off. An `AUTH_PROVIDER` that is not one of the five stops the build, and Desktop shows it as a custom provider.
+- **Secrets are never asked for.** Setup and Desktop only print the `wrangler secret put` command (run it from the `studio` folder, as in the next section). Client secrets never enter a prompt, a file or a payload.
+- **Redirect URI.** Register `https://<your-site>/studio/auth/google/callback` (Google) or `https://<your-site>/studio/auth/oidc/callback` (SSO) with the identity service. Create a Google OAuth client of type Web application, or an OIDC application at your identity provider.
+- **First administrator.** `AUTH_BOOTSTRAP_ADMIN` is a qualified identity such as `google:me@example.com`, `oidc:me@corp.com`, `access:me@corp.com` or `passkey:owner`. It is required for every type except GitHub, so someone can administer. For passkeys, choose a long random code for `AUTH_SETUP_CODE` yourself (`npx wrangler secret put AUTH_SETUP_CODE --config cloudflare/wrangler.jsonc`; Stacki never generates or stores it), deploy, then open `<origin>/studio/auth/passkey/bootstrap` once to create the first passkey. Everyone else is invited from Studio's Roles view.
+- **Cloudflare Access.** Create a Zero Trust Access application covering the site's hostname and the path `/studio*` (or enable Access on the `workers.dev` route) with a policy that allows your team, then use its team domain (`myteam.cloudflareaccess.com`; a custom domain needs an explicit confirmation) and its application AUD tag. People must be **both** allowed in the Access policy **and** listed in `.stacki/roles.json`; invite them from the Roles panel.
+- **GitHub App credentials stay required in every mode**, because publishing commits through the GitHub App.
+- **After switching** people need new credentials or invites, and existing sessions stop working on the next deploy. `astro-studio check-project` validates the result.
+
+Runtime behaviour of each type is documented in [authentication providers](auth-providers.md).
 
 ## GitHub App and secrets
 

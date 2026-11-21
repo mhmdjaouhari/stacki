@@ -799,29 +799,45 @@ transport (`project:metadata` / `project:writeMetadata`, `/studio/api/metadata`)
   rename that does, and until then a moved path shows as missing.
 - No file means everyone is admin, exactly as before. Studio gives a signed-in GitHub user the role
   naming them, else `defaultRole` (admin unless set). A local Studio, with no sign-in, is admin.
-  Desktop resolves the GitHub account it publishes with (the project's `githubAccount` when signed
-  in on this machine, else `gh`'s active account, via `roles:identity`); nobody signed in, or a
-  person named in no role, is admin there, because the local user owns the files anyway.
+  **Desktop never resolves a restricted role**: whoever is signed in, and whatever the file says, the
+  local person acts as admin (`desktopRoleOf` in `src/app/roles/useProjectRoles.ts`).
 
-Enforcement: the renderer hides what `can()` refuses (rail buttons and their shortcuts, right
-tabs, Settings tabs, the publish button, the terminal and code window, page create, rename and
-delete, component creation). Main refuses the matching IPC writes before their handlers run
-(`electron/handlers/channelAccess.ts`, through the registrar's gate in `ipcRegistrar.ts`); a broken
-file is admin on Desktop so it can be fixed. The Studio server refuses write routes the sender's
-role lacks with 403 (`studio/src/features/roles/serverAccess.ts`), trusting the login only from the
-worker's authenticated `x-studio-user`; a broken file fails closed to the client role there.
-Document edits over the collaboration socket stay UI-gated, as Client mode was.
+Enforcement: **Desktop previews roles, Studio enforces them.** On Desktop the person works on their own
+files on disk and can edit `.stacki/roles.json` or the site directly, so a role there would only lock the
+owner out (it did, in 1.4.9: a named non-admin got a read-only Roles tab). So Desktop has no IPC role gate,
+Settings → Roles is always editable, and nothing in main refuses a write for a role. The renderer still
+hides what `can()` refuses, but only for "View as" (below). The Studio server refuses write routes the
+sender's role lacks with 403 (`studio/src/features/roles/serverAccess.ts`), trusting the login only from the
+worker's authenticated `x-studio-user`; a broken file fails closed to the client role there, and Studio's
+Roles view is read-only for a non-admin. Document edits over the collaboration socket stay UI-gated, as
+Client mode was. The CLI and MCP server act as a role only when asked (`--role`, `--login`), a cooperative
+tier for agents (docs/stacki-cli.md).
 
 "View as" (Settings → Roles on Desktop, the account menu in Studio) lets an admin preview another
 role's UI. It changes only the renderer's active role (`src/lib/currentRole.ts`: `currentRole()` and
-`onRoleChange()`), never the file or what main and the server allow. Studio keeps the choice for the tab in sessionStorage (`studio-role`).
+`onRoleChange()`), never the file or what the server allows; Settings → Roles stays editable while previewing. Studio keeps the choice for the tab in sessionStorage (`studio-role`).
 
 ## Settings panel and secrets
 
 The Settings rail button (`projectSettings`, access feature `panel:projectSettings`, admin only until a
-role is granted it; shortcut ⌥S) sits directly above the AI button and opens a panel with a typed tab
-registry (`src/features/projectSettings/settingsTabs.ts`). It is the project's settings, apart from the
-app's own Settings screen (`src/app/settings`). Its Secrets tab edits one of the project's dev env files
+role is granted it; shortcut ⌥S) sits directly above the AI button and opens a panel whose root is a short
+list of links (`SETTINGS_VIEW_IDS` in `src/lib/settingsSections.ts`): Secrets, MCP and Instructions. A link
+replaces the panel with that view under a back chevron and the view's title; back, or Escape outside a field,
+returns to the root, and the panel always opens on the root unless something asked for a view
+(`requestSettingsSection`: ⌥I, an app naming the `instructions` panel, a session that left the retired
+Instructions panel open). Which links show follows the role (`settingsViewsOf` in `src/lib/roleAccess.ts`):
+`panel:projectSettings` gives Secrets and MCP, `panel:instructions` gives Instructions, so a role with only
+the second sees Settings with one link. The frame (`ProjectSettingsShell.tsx`) is shared with hosted Studio,
+which lists Secrets and MCP with honest unavailable states and no Instructions. Back or Escape from the
+Instructions view also closes the instruction file opened from its list (its edits are saved as the reading
+view unmounts, as with its own close button).
+
+Rail chords live in one table, `src/app/railShortcuts.ts`, which the keys, the tooltips and the Settings root
+rows all read (a test holds it free of duplicates): letters alone P Z ⇧A K J C G E, and ⌥C CMS, ⌥V Variables,
+⌥H Git, ⌥A Audits, ⌥S Settings, ⌥I Instructions, ⌥L AI chat, ⌥E Secrets, ⌥M MCP. ⌥P is the interactive
+preview. ⌥I, ⌥E and ⌥M open Settings at their view, and toggle the panel closed when that view is showing;
+⌥L toggles the AI chat. Each follows the role (no access, no key) and is ignored while typing in a field. It is the project's settings,
+apart from the app's own Settings screen (`src/app/settings`). Its Secrets view edits one of the project's dev env files
 at a time (`SECRETS_FILE_NAMES`: `.env`, `.env.local`, `.env.development`, `.env.development.local`, the
 dev server's load order), picked in a dropdown that opens on `.env`. `.env.production` is not listed.
 
@@ -913,6 +929,17 @@ The installer stages dependencies, type checks and a build before activation,
 uses the same lock as CLI updates, and refuses an existing Studio directory.
 Cloud authorization and deployment remain an explicit agent-assisted handoff.
 
+The install payload may carry a bounded `auth` choice and `studio:setAuth` changes it later
+(`github`, `access`, `google`, `oidc` or `passkey`). `shared/ipc/studioAuth.ts` is the one parser:
+unknown keys are refused, so a client secret has no field to ride in; every value is checked with the
+same rules `npm create stacki` uses (https issuer, bounded lists, email and domain shapes). Absent
+`auth` means GitHub. Main writes only the sign-in variables into `studio/cloudflare/wrangler.jsonc`
+(`shared/ipc/studioAuthConfigFile.ts`, a surgical edit that keeps comments and every other member):
+into the staged copy on install, into the installed file on `studio:setAuth`, which needs the
+`settings:studio` feature. `studio:status` reports the file's current type as `signIn`
+(`custom` when `AUTH_PROVIDER` is something Stacki did not write). Secrets are never written
+anywhere; the dialog only shows the `wrangler secret put` commands to copy.
+
 Each installation carries a bounded `requestId`. The `studio:progress` event echoes
 that ID and the requested project path alongside the current stage and a bounded
 tail of command output. Preload exposes `onStudioProgress`; the renderer parses
@@ -971,9 +998,11 @@ Opening a project without saved guide preferences uses defaults in memory. It do
 
 `.stacki/breakpoints.json` contains `{ version: 4, desktop: { value, unit }, breakpoints: [...] }`
 (`shared/properties/projectBreakpoints.ts`): Desktop's frame width and an ordered list of `{ id, name?, value, unit }`,
-`unit` `rem` or `px`. Desktop is 90rem (1440px) unless set. It is **never a media query**: its only uses are the width of the
-Desktop frame in the side-by-side (all breakpoints) view and the line that decides on which side of Desktop a breakpoint is. The
-single canvas's Desktop button is still the full available width. A breakpoint has no stored direction: it is DERIVED from its
+`unit` `rem` or `px`. Desktop is 90rem (1440px) unless set. It is **never a media query**: its uses are the width of the
+Desktop frame in the side-by-side (all breakpoints) view, the narrowest width the single canvas's Desktop button draws the page
+at, and the line that decides on which side of Desktop a breakpoint is. The Desktop button fills a pane at least that wide (below
+the narrowest `up` canvas) and otherwise draws that width scaled to fit (`desktopCanvasWidth` in `shared/properties/breakpointIcon.ts`),
+so no breakpoint query applies under it: Base in a desktop-first component, the widest `width >= X` in a mobile-first one. A breakpoint has no stored direction: it is DERIVED from its
 number against Desktop's (`directionOf`). Wider than Desktop it is `up`, the query `width >= X` (mobile first), and its canvas is
 exactly X (100rem is 1600px); narrower it is `down`, `width < X`, canvas X less 1px (64rem is 1023px); equal to Desktop is refused.
 The defaults, with no file, are the Lumos 64rem, 48rem and 30rem breakpoints (ids `laptop`, `tablet`, `phone`, names read in the
@@ -1083,11 +1112,30 @@ parser and by the Settings page, which never saves it. A tag follows the templat
 already holds the wrapper chain (same at-rule names and parameters, whitespace-insensitive): new rules
 go inside the innermost wrapper after the rules there; a one-line wrapper (`@layer components {}`) is
 opened onto its own lines when its first rule goes in; any other tag is written exactly as before.
-Stacki never wraps or moves rules a person wrote. Settings > Style tags edits it as one code block holding
-the whole tag (`src/app/settings/StyleTagSettings.tsx`): the attributes and the content are editable,
-`<style`, the opening `>` and `</style>` are locked (`styleTagEditor.ts`), and attributes that do not
-parse mark the block invalid and are not saved. The Style panel's "Add custom styles in" list links to it
-(Style tag defaults…). The CLI reaches it as `newStyleTag.attributes` and `newStyleTag.content`
+Stacki never wraps or moves rules a person wrote. Settings > New style locations edits it, once per scope
+(below), as one code block holding the whole tag (`src/app/settings/StyleTagSettings.tsx`): the attributes
+and the content are editable, `<style`, the opening `>` and `</style>` are locked (`styleTagEditor.ts`), and
+attributes that do not parse mark the block invalid and are not saved. The Style panel's "Add custom styles
+in" list links to it (New style locations…).
+
+**New style locations** (`shared/properties/newStyleLocations.ts`, the `newStyleLocations` section of
+`.stacki/styles.json`). Two scopes, `page` (a style created while a page is open) and `component` (while a
+component is open, and the tag a component made by Create component starts with). Each is
+`{ use: "tag" | "file", file?, tag }`: `tag` is a `<style>` tag in the open file, started from the scope's own
+`tag` (the `newStyleTag` shape above); `file` is an existing stylesheet of the project, a project-relative
+path with a `.css`/`.scss`/`.sass`/`.less` extension, no `..`, at most 512 characters and 32 steps. The scope's
+`tag` is kept beside a file, because it is what a switch back starts from and what is used while the file is
+missing: a chosen file that is not among the project's stylesheets is never written to; the panel writes
+the tag and the Settings tab shows a warning chip. A project that holds only the older `newStyleTag` reads it
+as both scopes, so nothing changes until a person changes a setting; the first save writes the new section and
+mirrors the page's tag into `newStyleTag` for an older Stacki. A new rule goes into the chosen file by these
+rules (`fileRuleWrappers`): where a `/* stacki:rules */` marker in the file sits; else inside the file's LAST
+top-level `@layer` block, after what it holds; else at the top level. A file that ends in `@media` or
+`@supports` gets the rule at the top level, because a base rule written inside would become conditional. Only
+the file the scope chose is placed this way; every other stylesheet is written as ever. The scope is the open
+file's kind (`openStyleScope`); "Add custom styles in" defaults to the chosen file, and Create component's
+moved styles use the `component` scope's tag. The CLI reaches the section as `newStyleLocations.page.use`,
+`newStyleLocations.page.file`, `newStyleLocations.component.tag.content` and so on. The CLI reaches it as `newStyleTag.attributes` and `newStyleTag.content`
 (`stacki config set styles newStyleTag.attributes 'is:global lang="scss"'`).
 
 **The first tag is created once** (`model/firstTagLane.ts`, driven by `embed/useEditorResolution.ts`).
@@ -1129,6 +1177,45 @@ re-parses with exactly the removed selectors gone and no byte changed outside it
 writes through the document actors, and returns each file's before and after text.
 `style:restoreSelectors` writes one side back, refusing a file that no longer holds the other.
 `astro-studio check-project` prints the same report.
+
+`component:classUsage` takes `{ projectPath, pagePath, classes }` and answers which files other than
+the page mention each class (`shared/properties/classUsage.ts`, `electron/properties/classMentions.ts`):
+one entry per class, at most `filesPerClassMax` project-relative paths each, `[]` when none does. It
+reads the project as the unused-selector check does: an `.astro` file by its text with its style blocks
+blanked, other texts as they are, stylesheets not at all, since a rule for a class is not a use of it.
+Only files under `src/` count: a README or a framework's notes use class names as plain words.
+Create component asks it before offering to move CSS: a class no file mentions, and no other element of
+the page carries, is offered checked; a utility (`u-`) is never offered, and a stylesheet locked in
+`.stacki/styles.json` keeps its rules, so a project marks its own utilities whatever their convention
+(`src/editor/componentStyles.ts`).
+
+Creating the component then moves the checked classes' rules, read again from disk at that moment: the
+new file gets one `<style>` shaped by `newStyleTag`, written after the markup in the same `component:create`
+nodes, and the rules leave the page's `<style>` tags (in the extraction's gesture; a tag left empty is
+removed) and each unlocked stylesheet (`style:writeFile`). What is carried and what is removed are judged
+by the paste rule, `carriedStyles` and `withoutCarried` (`src/editor/pasteStyles.ts`), so no rule is lost
+or written twice; a selector list keeps its other members, an emptied wrapping at-rule goes, keyframes
+stay. Copy first, delete last: the component is written and read back, the page is saved using it (its save
+state reaches `clean`), and only then do the stylesheets lose the rules, so a crash at any point can leave a
+rule twice, never nowhere. Each stylesheet write carries `expected`, and main's actor refuses it unless the
+file still holds that text. It is one undo step, all or nothing: `StepFiles.check` asks every stylesheet first
+and a sheet edited since refuses the whole step before anything is written; undo puts the rules back in the
+sheets before the page is reverted, then deletes the component, and redo mirrors it. A page `<style>` that
+changed between the plan and the write cancels the creation. With nothing checked, no CSS is touched.
+
+A move is journalled in main (`styleMove:record`, `styleMove:clear`, `styleMove:pending`, `styleMove:resolve`;
+`shared/properties/styleMoveJournal.ts`, `electron/content/styleMoveJournals.ts`): one journal per project in the
+app's `logs/` folder, as `<project>-<8 hex of its path>-style-move.json`, never in the project, written durably (temporary file, `fsync`, rename, folder
+`fsync`). It holds the plan, not the progress: each file with its exact text before and after. It is recorded once
+the component is written and read back, before the page or a stylesheet is; it learns the page's saved text, and
+goes once the stylesheets are clean. Where a move stands is read from the disk against it: a file at its before text
+is left, at its after text done, at neither changed by someone. When a project opens, a journal found untouched or
+done just goes; an interrupted one asks to finish or undo (both exact, written in the copy-first order and the
+reverse, each write refused unless the file holds what was read); one with a changed file writes nothing and names
+it. Undoing is refused for a page whose saved text the journal never learnt, since it cannot be told from later edits;
+finishing is refused (and not offered: `canFinish`) for a page not saved yet, since the stylesheets would lose rules
+the page does not take from the component yet. While a move runs, the busy cover holds the window (`src/ui/busyLock.ts`):
+it takes the pointer and every key, and the menu's edit commands do nothing; it shows only after 300ms.
 
 `.stacki/folders.json` contains `{ version: 1, folders: { components?, layouts?, assets?, styles?, variables? } }`
 (`shared/properties/projectFolders.ts`): for each panel, the project-relative folders it reads.
@@ -1191,6 +1278,17 @@ the file through `project:writeMetadata`; `project:pickFolder` opens the system 
 project and answers `picked` (project-relative, links resolved) or `outside`. A saved change, or
 an outside edit of the file, sends `fs:changed`, `assets:changed` and `css:changed`.
 
+An asset listing's file entry (`WireAssetEntry`, from `assets:list`, Studio's `/studio/api/assets` and the demo's
+store) carries `size` and, when the host can tell, `modifiedMs`: the file's `stat.mtimeMs` in whole milliseconds,
+read by the same stat as the size. It is optional (a demo upload restored from browser storage has none) and, when
+present, a non-negative safe integer; `parseAssetEntry` (`src/ipc/assetBridge.ts` and Studio's adapter) rejects
+anything else. The Assets panel's Newest first and Oldest first sorts read it, never a birth time, which many file
+systems do not keep; a file without one sorts after every file with one (`src/features/assets/assetOrder.ts`). The
+panel's view (Grid, List, List - Small) and sort are a person's way of looking, not part of the site: they are kept
+per project in the app's local storage (`stacki.assetsPanel.views`, the 50 most recently changed projects), never in
+a `.stacki/` file. The List view's pixel sizes come from `assets:dimensions` (Studio: an image load), read only for
+rows on screen, four at a time, and cached per path, size and `modifiedMs`.
+
 `project:metadata` and `project:writeMetadata` accept only registered metadata kinds.
 Desktop confines them to the open project and writes through the document actors against
 the supplied base. Studio exposes the same records through `/studio/api/metadata`, its
@@ -1236,9 +1334,31 @@ metadata references too. The installed Studio CLI's
 `check-project` command validates component references and guide settings for CI/refactors.
 
 
+## Update popup
+
+Auto-update never opens a native dialog. `electron/app/autoUpdate.ts` turns electron-updater's events into
+`UpdateEvent`s (`shared/ipc/updateState.ts`) and sends them on `update:state`; the renderer's popup
+(`src/features/update/`) draws them. A state is `idle`, `downloading` (bytes transferred, total or unknown,
+whole percent), `ready`, `notice` (the File menu's "latest", "development build" or "already checking"
+answers, shown once and never stored) or `error` (a check or a download that failed, with the first line of the
+cause). `reveal` marks news that must open a popup the person hid; progress ticks are not news.
+
+- Progress is untrusted when it arrives from the updater (`NaN` for an unknown length is real). `advanceProgress`
+  keeps bytes and percent monotonic and within 0 to 100, reads a total that is not a positive count as unknown
+  and keeps the last known total; main sends an event only when the popup would look different.
+- `update:read` returns the current state for a window that mounts mid-download; `update:act` carries `install`
+  (restart into a downloaded update; ignored otherwise) or `retry` (check again). Hide, Later and Close are the
+  renderer's alone: the download carries on. Preload exposes `readUpdateState`, `actOnUpdate` and `onUpdateState`;
+  the renderer parses every reply and event (`parseUpdateState`, `parseUpdateEvent`) before use.
+- A window that is not open when a notice is sent does not see it; the next mount reads `update:read`.
+- The popup is a pure view of a state (`UpdatePopup`), so tests and harnesses can show any state; there is no
+  production switch for previewing it. Dev builds skip update checks, as before.
+
 ## Instructions panel
 
-`shared/properties/instructions.ts` is the contract for the Instructions rail panel
+`shared/properties/instructions.ts` is the contract for the Instructions view of the Settings panel, once a
+rail panel of its own (the rail has no Instructions button; ⌥I opens Settings at it; the folded Skills, Rules and
+Docs sections are remembered per project in `src/lib/settingsSections.ts`)
 (`panel:instructions`; writes need `instructions:edit`, the hidden-paths list
 `settings:instructions` or `instructions:edit`).
 
@@ -1308,8 +1428,8 @@ the rows keep their initials.
 
 `github:searchUsers` (Studio: `GET /studio/api/github/users?q=`) takes a project path and the
 typed start of a GitHub username (`parseGitHubLoginQuery` in `shared/properties/projectRoles.ts`:
-1 to 39 characters, the login rules, a trailing hyphen allowed). Main gates it to `settings:roles`
-(`channelAccess.ts`); the Studio route refuses anyone without it with 403. The reply, parsed by
+1 to 39 characters, the login rules, a trailing hyphen allowed). Desktop does not gate it (it only
+previews roles); the Studio route refuses anyone without it with 403. The reply, parsed by
 `shared/ipc/githubUserSearch.ts`, is `{ users, github }`: at most 8 users, one per login
 (case-insensitive), each `{ login, name?, avatarURL?, source }` with `source` one of
 `collaborator`, `author` or `search` and pictures on the commit-avatar hosts only; `github` is
@@ -1635,6 +1755,50 @@ Escape and blur never rename anything. Errors appear below the field, including 
 conflicts from outside edits. Studio project scans include bounded `pageFolders` entries so
 empty folders reserve destinations during live validation as well as during the final write.
 
+### Page settings
+
+The gear on a page row opens the Page settings dialog (`src/features/pages/PageSettingsDialog.tsx`, shared by Desktop
+and Studio; Desktop's host is `src/app/shell/PageSettingsDesktop.tsx`). Its contract is
+`shared/properties/pageSettings.ts`: `isHomePage` (only a root `index.astro`, `index.md` or `index.mdx`), `homeSwapPlan`
+(which page may become the homepage, and the two moves), `checkUrlName` (the rename field's live check: the page
+rename rules plus `index` reserved beside the homepage) and the wire parsers of the channels below.
+
+- `page:planSettings` plans a step without writing and answers its summary: files changed, links rewritten (or, for a
+  deletion, links that would break), the moves, and lines listed for review (file and 1-based line, bounded).
+- `page:applySettings` plans again from disk and writes the step all or nothing (`electron/project/pageRelocationWrite.ts`),
+  answering one undo token; `page:revertSettings` undoes and redoes it. A step is texts edited in place plus files that
+  move, appear or go. Every byte is witnessed first; texts are written through the document actors, then each arriving
+  file's final bytes are staged in `.stacki/io`, every leaving file is moved there, and every staged file is moved to
+  its destination, so the dev server never sees a page whose imports do not match its folder, a swap never collides and
+  a case-only rename works on a case-insensitive disk. A failure puts back every byte; undo is the inverse step.
+- Making a page the homepage swaps two files, each keeping its extension (`about.md` becomes `index.md`, `index.astro`
+  becomes `about.astro`; a page in a folder sends the homepage into that folder). Links to `/` and to the page's route
+  swap in one pass (`electron/project/pageSwapLinks.ts`), so none is swapped back: attributes, Markdown destinations,
+  sitemap locations, configured-site absolute URLs and string literals, with `base` and `trailingSlash: 'always'`
+  respected. A bare `'/'` string is the homepage only after a link key (`href:`, `url:`, `"to":` …): elsewhere it is a
+  path separator, and lines comparing it with `Astro.url` are listed for review. astro.config files are never rewritten
+  (a redirect's source is a route of another kind): their redirect lines are listed, as are feed and sitemap files.
+  Relative imports in both files follow the move (the page rename's import rewriter). `.stacki/pages.json` keeps its
+  rows: the new homepage takes the old homepage's place. Refused, nothing written: a dynamic page (a `[param]` file or
+  one that declares `getStaticPaths`), a root 404 or 500 page, a page in an i18n locale folder, a project with two
+  homepage files or none, a route another file also answers, and any changed text that would not parse.
+- Duplicate copies beside the page as `<name>-copy` (then `-copy-2` …), so relative imports still resolve; deleting
+  lists every link that would break by file and line and refuses the homepage.
+- `page:planRemoveMany` and `page:removeMany` are the Pages panel's Select mode (`shared/properties/pageBulkRemove.ts`,
+  `electron/handlers/pageBulkRemovePlan.ts`): several pages and folders deleted as ONE step. The request names pages and
+  folders relative to `src/pages`, at most 500 pages (a folder's own pages count) and 100 folders (its subfolders count),
+  no duplicates, never empty. The plan is the single deletion's (the homepage is refused, every page must be UTF-8 text,
+  broken links are listed) read once for all pages; a folder that holds anything but pages (Finder's `.DS_Store`
+  aside) is refused whole, because Undo restores only what the plan read. `page:removeMany` plans again from disk and
+  writes through the same writer (all pages or none), answering one undo token that `page:revertSettings` takes back
+  byte for byte, folders included, as one Cmd+Z step. Role gate: `page:delete`.
+- `page:readTemplate` reads a CMS template page back into the Create page template dialog's settings
+  (`electron/content/pageTemplateRead.ts`): only by writing its pieces again and finding them byte for byte, so a
+  template changed by hand reads as `custom` and is shown as code, never rewritten. `page:retargetTemplate` replaces
+  exactly the paths function and the entry type, as an undoable step.
+- The Layout props section draws the layout instance's props with the Properties panel's own editors
+  (`InstancePropFields`) and the same handlers, so an edit there is the panel's edit, one undo step.
+
 ### CMS connections
 
 A project's hosted CMS connections (`shared/properties/cmsConnections.ts`) name which CMS its
@@ -1924,6 +2088,13 @@ turn and records a `user` event with `mode: 'steer'`; with no turn running the m
 prompt (`startedNewTurn`); an agent that did not advertise `_meta.steering.supported` answers
 `unsupported`, an adapter that refuses answers its failure (`agent-failed`), and in both cases nothing
 was sent, so the renderer queues the message. A plain `ai:prompt` while a turn runs stays `busy`.
+Keep or apply: an agent's edit is on disk the moment it is made; "Keep" only settles the ledger entry
+(`pending` to `kept`, dropping the saved text), and "Undo" writes the saved text back. The app preference
+`aiReviewChanges` (the AI panel's "..." menu and Settings > Editor > AI, "Ask me to keep AI changes";
+`settings:get` and `settings:set`, default off, kept per person in `settings.json`, never in the project)
+only changes what the changes card offers, applied at once in every open card: off, a pending file reads
+"Applied" with Undo (the entry stays pending so Undo keeps working); on, it waits for Keep or Undo as before.
+The ledger, the `ai:review` channel and the stored reviews file are the same either way.
 Change snapshots (a hidden git tree, never a commit in the project history): the app preference `aiTrackChanges` (Settings > Editor > AI, "Snapshot before & after each AI change"; `settings:get`
 and `settings:set`, default on, kept in `settings.json`) decides whether the change ledger snapshots the
 project (`git add --all` against a temporary index, `git write-tree`) before and after a turn. The agent host
@@ -2263,7 +2434,7 @@ one install, update and GitHub flow, shared by Desktop's main process and the St
 recorded as available and `apps:applyUpdate` installs only bytes whose SHA-256 equals the checked
 ones. A private repository is read with the publish flow's GitHub account token, sent only to
 `api.github.com`. Installing, updating, removing and reading the account's repositories are
-admin-only in main (`electron/handlers/channelAccess.ts`) and on the Studio server.
+admin-only on the Studio server.
 
 The folder is what is installed (`shared/properties/appFolders.ts`, `electron/project/appScan.ts`):
 every `.stacki/apps/<folder>/` whose files read as a bundle (`appBundle.ts` `bundleFromFiles`, the
@@ -2397,13 +2568,13 @@ See docs/startup.md.
 
 The Components panel's "…" menu (`src/features/palette/PalettePanel.tsx`) adds Edit settings, Duplicate and
 Delete through `PaletteManagement` (`paletteManagement.ts`). The channels are `component:duplicate`,
-`component:remove` and `component:restoreRemoved`; each takes a `ComponentOpTarget` (`shared/properties/componentOps.ts`:
+`component:planRemove`, `component:remove` and `component:restoreRemoved`; each takes a `ComponentOpTarget` (`shared/properties/componentOps.ts`:
 `component` or `folder`, a project-relative path) and answers a `Result` whose refusals are typed
 (`ComponentOpError`: outside the component folders, missing, in use, foreign files, too large, write failed).
 Main resolves the path itself: it must sit under a folder from `.stacki/folders.json` `components`, may not climb
 or be a link, and a folder may hold only `.astro` files within `COMPONENT_OP_LIMITS`.
 
 - Duplicate copies the bytes to `FooCopy`, `FooCopy2`, ... (dashed names keep their style), case-insensitively free, through the document actors. Nothing is rewritten and no recipe is added.
-- Delete refuses anything a file other than itself uses, removes the component's `.stacki/components.json` recipe and every nested `component` reference, and drops its `.stacki/roles.json` `componentRules`, then moves it to the operating system's Trash. Main keeps the removed texts and the settings as they were and as the deletion left them under a token: Undo restores the files and restores each setting only while it still reads as the deletion left it.
-- Folder rows in the panel are real folders, so a folder row offers Duplicate (confirmed from 6 components) and Delete (only while no component under it is used anywhere).
+- Delete is planned first (`component:planRemove` answers a `ComponentRemovalPreview`, `shared/properties/componentRemoval.ts`, parsed at the boundary) and confirmed with what it takes out; `component:remove` carries `uses`: `'remove'` (the panel) takes every instance and import out with the file (see docs/components.md, "Deleting a component"), `'refuse'` (a duplicate's undo) refuses a used component. Either way it removes the component's `.stacki/components.json` recipe and every nested `component` reference, and drops its `.stacki/roles.json` `componentRules`, then moves it to the operating system's Trash. Main keeps the removed texts and the settings as they were and as the deletion left them under a token: Undo restores the files and restores each setting only while it still reads as the deletion left it.
+- Folder rows in the panel are real folders, so a folder row offers Duplicate (confirmed from 6 components) and Delete (planned and confirmed the same way, over every component under it).
 - Studio's panel passes no `management`, so the rows are left out: its server has neither a copy/trash operation nor an undo store for them yet.

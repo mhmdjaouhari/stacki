@@ -28,6 +28,9 @@ export const messages = {
   'error.component.tooLarge': 'Esta carpeta es demasiado grande para copiarla o eliminarla en un solo paso.',
   'error.component.unknownUndo': 'Esa eliminación ya no se puede deshacer.',
   'error.component.writeFailed': 'No se pudo escribir {file}: {reason}',
+  'error.componentRemoval.changedSince': '{file} cambió desde entonces. No se cambió nada; inténtalo de nuevo.',
+  'error.componentRemoval.needsReview': { one: 'Cambia primero {count} lugar: {place}.', other: 'Cambia primero {count} lugares, empezando por {place}.' },
+  'error.componentRemoval.wouldBreak': '{file} no se podría leer tras el cambio, así que no se eliminó nada.',
   'error.componentRename.defaultsTaken': 'La nueva ubicación ya tiene valores predeterminados de componente en .stacki/components.json. Quítalos primero.',
   'error.componentRename.destinationAppeared': 'Apareció algo en la nueva ubicación, así que no se renombró nada.',
   'error.componentRename.exists': '{file} ya existe.',
@@ -113,6 +116,8 @@ export const messages = {
   'error.publish.sourceFileLimit': 'La inspección de Git supera el límite de 100 000 archivos.',
   'error.publish.sourceSizeLimit': 'La inspección de Git supera el límite de origen de 8 GiB.',
   'error.selectors.stylesInvalid': '.stacki/styles.json no es válido: {reason}',
+  'error.studio.authNotInstalled': 'Studio no está instalado en este proyecto.',
+  'error.studio.authWrite': 'No se pudieron escribir los ajustes de inicio de sesión en studio/cloudflare/wrangler.jsonc.',
   'error.studio.devBundleMissing': 'Compila el paquete de desarrollo de Studio con npm run studio:release y vuelve a intentarlo.',
   'error.studio.devVersionMismatch': 'La versión de desarrollo de Studio no coincide con Stacki. Ejecuta npm run studio:release.',
   'error.studio.downloadFailed':

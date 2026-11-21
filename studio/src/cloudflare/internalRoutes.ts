@@ -6,9 +6,12 @@ import { storageInventory, storageBaseline, removeStoredAsset } from './storageR
 import { GitHubRepository } from '../features/github/github';
 import { sourcePath, filePath, record, string } from '../shared/validation';
 import type { Environment } from './environment';
+import { activeAuthRuntime } from './activeAuthRuntime';
+import { discardBody } from './requestBody';
 
 export async function internal(request: Request, environment: Environment): Promise<Response> {
   if (!environment.CONTAINER_TOKEN || request.headers.get('x-studio-token') !== environment.CONTAINER_TOKEN) {
+    await discardBody(request);
     return new Response('Forbidden', { status: 403 });
   }
   const url = new URL(request.url);
@@ -16,7 +19,7 @@ export async function internal(request: Request, environment: Environment): Prom
   return handler ? handler(request, environment, url) : new Response('Not found', { status: 404 });
 }
 const routes: Readonly<Record<string, (request: Request, environment: Environment, url: URL) => Promise<Response>>> = {
-  '/studio/internal/authorize': authorizeConnection,
+  '/studio/internal/authorize': (request, environment) => authorizeConnection(request, activeAuthRuntime(environment)),
   '/studio/internal/storage': storageInventory,
   '/studio/internal/storage-baseline': storageBaseline,
   '/studio/internal/storage-remove': removeStoredAsset,
@@ -32,7 +35,17 @@ const routes: Readonly<Record<string, (request: Request, environment: Environmen
   '/studio/internal/state': internalState,
   '/studio/internal/files': internalFiles,
   '/studio/internal/bootstrap': internalBootstrap,
+  '/studio/internal/startup': internalStartup,
 };
+
+// The container's report of a start stage. The Durable Object keeps it (startupLog.ts) and
+// answers without waking the container, so the report cannot start one by arriving late.
+async function internalStartup(request: Request, environment: Environment): Promise<Response> {
+  if (request.method !== 'POST') {
+    return new Response('Method not allowed', { status: 405 });
+  }
+  return environment.PREVIEW.getByName('project').fetch(request);
+}
 
 async function internalBase(request: Request, environment: Environment, url: URL): Promise<Response> {
   if (url.pathname === '/studio/internal/base' && request.method === 'POST') {
@@ -159,19 +172,19 @@ async function internalBootstrap(request: Request, environment: Environment): Pr
   if (request.method !== 'POST') {
     return new Response('Method not allowed', { status: 405 });
   }
+  // Two independent R2 reads, each once: the branch below and the checkpoint sent back are the same read.
+  const [workspace, existing] = await Promise.all([readCloudGitWorkspace(environment), environment.DRAFTS.get(draftKey(request, 'metadata/base-sha'))]);
   const repository = new GitHubRepository({
     appId: environment.GITHUB_APP_ID,
     installationId: environment.GITHUB_INSTALLATION_ID,
     privateKey: environment.GITHUB_PRIVATE_KEY,
     repository: environment.GITHUB_REPOSITORY,
-    branch: (await readCloudGitWorkspace(environment))?.branch ?? environment.GITHUB_BRANCH,
+    branch: workspace?.branch ?? environment.GITHUB_BRANCH,
   });
   const connection = await repository.publishConnection();
   if (!connection.ok) {
     return Response.json({ error: connection.error.message }, { status: 400 });
   }
-  const existing = await environment.DRAFTS.get(draftKey(request, 'metadata/base-sha'));
-  const workspace = await readCloudGitWorkspace(environment);
   const sha =
     workspace?.remote.find((entry) => entry.name === workspace.branch)?.head ??
     workspace?.remote[0]?.head ??

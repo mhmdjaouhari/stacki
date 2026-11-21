@@ -48,13 +48,20 @@ export interface PropTextContext extends PropSiteContext {
   readonly bound?: ((expression: string) => Promise<BoundPropText | undefined>) | undefined;
 }
 
-// Instances considered per page.
-const INSTANCES_MAX = 64;
+// Instances considered per page, and edits kept from them. A real page nests its components deeply
+// (the Lumos example page has hundreds before its first Card), and instances are read in tree order,
+// so a small instance bound hid every component below the first few levels: the cap is on the edits
+// the catalog can hold (CANVAS_TARGET_LIMIT), not on how many instances come first.
+const INSTANCES_MAX = 4_000;
+const EDITS_MAX = 1_000;
 
 export async function canvasPropEdits(document: CanvasTextDocument, context: PropTextContext): Promise<CanvasTextEdit[]> {
   const sites = propSiteReader(context);
   const edits: CanvasTextEdit[] = [];
   for (const instance of pageInstances(context.nodes).slice(0, INSTANCES_MAX)) {
+    if (edits.length >= EDITS_MAX) {
+      break;
+    }
     const component = componentReference({
       name: instance.name,
       project: context.projectPath,
@@ -80,17 +87,36 @@ export async function canvasPropEdits(document: CanvasTextDocument, context: Pro
       edits.push(...(site.kind === 'text' ? [textEdit(shown, site)] : htmlEdits(shown, site)));
     }
   }
-  assert(edits.length <= INSTANCES_MAX * SITES_MAX * 8, 'Prop text stays within its bounds');
+  assert(edits.length <= EDITS_MAX + SITES_MAX * 8, 'Prop text stays within its bounds');
   return edits;
 }
 
-// A prop the page sets to a binding that leads to one string, for a text site.
+// A prop the page sets to a binding: the string it leads to (typing writes there), or why it leads to none (the double click names the file to edit).
 async function followedBinding(instance: InstanceNode, site: PropTextSite, context: PropTextContext): Promise<BoundPropText | undefined> {
   const attr = 'props' in instance ? instance.props?.[site.prop] : undefined;
-  if (attr?.type !== 'expr' || site.kind !== 'text' || context.bound === undefined) {
+  if (attr?.type !== 'expr' || context.bound === undefined) {
     return undefined;
   }
-  return context.bound(attr.value);
+  const followed = await context.bound(attr.value);
+  if (followed === undefined || site.kind !== 'html') {
+    return followed;
+  }
+  // HTML printed from data: a string with no markup of its own is one text run, written back as the words typed
+  // (escaped, as the page prints it as HTML). Markup in the data is the source's to edit, so it is named, never written.
+  const { bound } = followed;
+  if (bound.kind === 'source' && !/[<&]/.test(followed.value)) {
+    return { ...followed, apply: (typed) => followed.apply(escapedHTML(typed)) };
+  }
+  return {
+    value: '',
+    bound: bound.kind === 'source' ? { kind: 'blocked', expression: bound.expression, file: bound.file, reason: 'computed' } : bound,
+    apply: () => Promise.reject(new Error('HTML from data is edited in its source')),
+  };
+}
+
+// Words as the HTML a page prints them as: no tag or entity is typed by accident.
+function escapedHTML(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 // `{prop}` printed from `prop={aiCallout1.body}`: the words belong to the source the binding names, so typing writes there and not to the attribute.
@@ -102,20 +128,23 @@ function boundPropEdit(shown: {
   readonly label: string;
 }): CanvasTextEdit {
   const { instance, site, followed, scope } = shown;
-  assert(site.kind === 'text', 'A followed prop is printed as text');
+  // HTML from data that can be written is its one text run, found by position as an HTML prop's runs are.
+  const run = site.kind === 'html' && followed.bound.kind === 'source';
+  const path = run ? `${site.parent}#0` : site.path;
   return {
     target: {
       kind: site.parentKind,
-      key: `prop:${instance.id}:${site.prop}:${site.path}`,
-      path: site.path,
+      key: `prop:${instance.id}:${site.prop}:${path}`,
+      path,
       parent: site.parent,
       value: followed.value,
       label: shown.label,
       tag: site.tag,
-      siblings: site.siblings,
+      siblings: site.kind === 'text' ? site.siblings : [],
       nested: false,
       scope,
       from: 'prop',
+      ...(run ? { segment: 0 } : {}),
     },
     bound: followed.bound,
     apply: (typed) => followed.apply(typed),
@@ -178,11 +207,16 @@ function htmlEdits(shown: ShownProp, site: PropTextSite & { readonly kind: 'html
     if (value.trim() === '') {
       return [];
     }
-    const typedHTML = (typed: string) => nodesToHtml(inlineWithValue(children, trail, typed));
+    // A component that draws the element puts its own template whitespace around the slot (the line breaks of
+    // `<Fragment set:html={content} />` on a line of its own): those are not the prop's words, so the prop keeps the
+    // whitespace it had and only the words change.
+    const own = site.parentKind === 'component' ? { lead: /^\s*/.exec(value)?.[0] ?? '', tail: /\s*$/.exec(value)?.[0] ?? '' } : undefined;
+    const settled = (typed: string) => (own === undefined ? typed : `${own.lead}${typed.trim()}${own.tail}`);
+    const typedHTML = (typed: string) => nodesToHtml(inlineWithValue(children, trail, settled(typed)));
     const path = `${site.parent}#${segment}`;
     const edit: CanvasTextEdit = {
       target: {
-        kind: 'element',
+        kind: site.parentKind,
         key: `prop:${instance.id}:${site.prop}:${path}`,
         path,
         parent: site.parent,

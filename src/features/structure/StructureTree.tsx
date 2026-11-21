@@ -17,6 +17,7 @@ import { labelsNode } from '../../../shared/page/leadingNote';
 import { assertPseudoLayerHost } from '../../../shared/page/pseudoElements';
 import { describeNode, truncate, type NodeDescription } from '../../ui/navigatorLabel';
 import type { Translator } from '../../../shared/properties/i18n/messageRef';
+import { highlightSegments } from '../../lib/searchText';
 
 export interface StructureTreeContext {
   readonly clientMode?: boolean;
@@ -33,8 +34,14 @@ export interface StructureTreeContext {
   readonly onSelectPseudo?: (id: string, pseudo: PseudoKind) => void;
   readonly liveClassesById?: ReadonlyMap<string, readonly string[]>;
   readonly currentLayoutName: string;
+  /** The search's folded words: rows draw them marked in their label. Absent when nothing is searched. */
+  readonly highlightWords?: readonly string[];
+  /** Rows that matched by their content, each with the matched words and a little context, by node id. */
+  readonly searchSnippets?: ReadonlyMap<string, string>;
   readonly dropTarget: DropTarget | undefined;
   readonly setDropTarget: React.Dispatch<React.SetStateAction<DropTarget | undefined>>;
+  /** The node a canvas drag is moving: its row is muted while the drag lasts (src/editor/canvasDragSession.ts). */
+  readonly movingId?: string | undefined;
   readonly isCollapsed: (node: NavigatorNode) => boolean;
   readonly isDndPayload: (event: React.DragEvent<HTMLElement>) => boolean;
   readonly performDrop: (event: React.DragEvent<HTMLElement>, target: DropLocation) => void;
@@ -286,8 +293,11 @@ function treeContextFromRow(props: TreeNodeProps): StructureTreeContext {
     ...(props.onSelectPseudo === undefined ? {} : { onSelectPseudo: props.onSelectPseudo }),
     ...(props.liveClassesById === undefined ? {} : { liveClassesById: props.liveClassesById }),
     currentLayoutName: props.currentLayoutName,
+    ...(props.highlightWords === undefined ? {} : { highlightWords: props.highlightWords }),
+    ...(props.searchSnippets === undefined ? {} : { searchSnippets: props.searchSnippets }),
     dropTarget: props.dropTarget,
     setDropTarget: props.setDropTarget,
+    movingId: props.movingId,
     isCollapsed: props.isCollapsed,
     isDndPayload: props.isDndPayload,
     performDrop: props.performDrop,
@@ -315,6 +325,7 @@ interface NodeView {
   readonly layout: boolean;
   readonly selected: boolean;
   readonly dropInto: boolean;
+  readonly moving: boolean;
   readonly description: NodeDescription;
   readonly hint: string | undefined;
 }
@@ -343,6 +354,7 @@ function nodeView(props: TreeNodeProps, shape: Pick<NodeView, 'children' | 'host
     layout,
     selected,
     dropInto: props.dropTarget?.kind === 'into' && props.dropTarget.intoId === node.id,
+    moving: props.movingId === node.id,
     description,
     hint,
   };
@@ -382,6 +394,8 @@ function TreeRow(props: TreeRowProps) {
       <RowLabel
         node={node}
         label={description.label}
+        highlightWords={props.highlightWords}
+        snippet={props.searchSnippets?.get(node.id)}
         note={props.note}
         {...(description.title === undefined ? {} : { title: description.title })}
         {...(bindingPath === undefined ? {} : { bindingPath })}
@@ -494,9 +508,13 @@ function RowLabel({
   note,
   bindingPath,
   title,
+  highlightWords,
+  snippet,
 }: {
   readonly node: NavigatorNode;
   readonly label: string;
+  readonly highlightWords: readonly string[] | undefined;
+  readonly snippet: string | undefined;
   readonly title?: string;
   readonly note: NavigatorNode | undefined;
   readonly bindingPath?: string;
@@ -504,20 +522,58 @@ function RowLabel({
   const noteValue = note?.kind === 'comment' ? note.value : undefined;
   return (
     <span className="label" title={title} style={node.kind === 'text' ? { fontWeight: 400, fontStyle: 'italic' } : {}}>
-      {bindingPath === undefined ? label : <DataChip path={bindingPath} />}
+      {bindingPath === undefined ? <MarkedLabel label={label} words={highlightWords} /> : <DataChip path={bindingPath} />}
+      {snippet !== undefined && (
+        <span className="node-note" title={snippet}>
+          {' / '}
+          <MarkedLabel label={snippet} words={highlightWords} />
+        </span>
+      )}
       {noteValue !== undefined && (
         <span className="node-note" title={noteValue.trim()}>
           {' / '}
-          {truncate(noteText(noteValue).replace(/\s+/g, ' '), 44)}
+          <MarkedLabel label={truncate(noteText(noteValue).replace(/\s+/g, ' '), 44)} words={highlightWords} />
         </span>
       )}
     </span>
   );
 }
 
+// The row's label with the search's words marked; without a search it is the plain text, as before.
+function MarkedLabel({ label, words }: { readonly label: string; readonly words: readonly string[] | undefined }) {
+  if (words === undefined) {
+    return <>{label}</>;
+  }
+  return (
+    <>
+      {highlightSegments(label, words).map((segment, position) =>
+        segment.hit ? (
+          <mark key={position} className="search-hit">
+            {segment.text}
+          </mark>
+        ) : (
+          <React.Fragment key={position}>{segment.text}</React.Fragment>
+        ),
+      )}
+    </>
+  );
+}
+
 function rowClassName(view: NodeView & { readonly node: NavigatorNode }): string {
   const family = navigatorFamily(view.node, { componentRow: view.component });
-  return ['structure-node', family === undefined ? '' : `is-${family}`, view.layout ? 'layout-node' : '', view.selected ? 'selected' : ''].join(' ');
+  return [
+    'structure-node',
+    family === undefined ? '' : `is-${family}`,
+    view.layout ? 'layout-node' : '',
+    isSlotRow(view.node) ? 'is-slot' : '',
+    view.selected ? 'selected' : '',
+    view.moving ? 'is-moving' : '',
+  ].join(' ');
+}
+
+// A `<slot>` shows the host page's content, which this file cannot pick: hovering its row reads muted (styles.css).
+function isSlotRow(node: NavigatorNode): boolean {
+  return node.kind === 'element' && node.name === 'slot';
 }
 
 const fragmentTitle = 'Inline group in this file. Expand it to edit its children; there is no separate file to open.';

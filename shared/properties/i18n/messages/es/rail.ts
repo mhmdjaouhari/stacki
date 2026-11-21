@@ -14,13 +14,23 @@ export const messages = {
   'rail.components': 'Componentes',
   'rail.editorPanels': 'Paneles del editor',
   'rail.history': 'Git', // same
-  'rail.instructions': 'Instrucciones',
   'rail.more': 'Más',
+  'rail.moveToBottom': 'Mover al grupo inferior',
+  'rail.moveToTop': 'Mover al grupo superior',
+  'rail.movedBottom': '{label}: grupo inferior, posición {position} de {count}',
+  'rail.movedTop': '{label}: grupo superior, posición {position} de {count}',
   'rail.navigator': 'Navegador',
+  'rail.orderMenu': 'Orden de la barra',
   'rail.pages': 'Páginas',
   'rail.properties': 'Propiedades',
+  'rail.reset': 'Restablecer el orden de la barra',
+  'rail.resetDone': 'Orden de la barra restablecido',
   'rail.selectors': 'Selectores de estilo',
   'rail.settings': 'Ajustes',
+  'rail.settingsOrder.description': 'Arrastra los iconos de la barra lateral para reordenarlos. Restablece el orden predeterminado.',
+  'rail.settingsOrder.done': 'Orden de la barra lateral restablecido',
+  'rail.settingsOrder.label': 'Orden de los iconos de la barra lateral',
+  'rail.settingsOrder.reset': 'Restablecer a predeterminado',
   'rail.variables': 'Variables', // same
   'rail.withShortcut': '{label} ({shortcut})', // same
 } as const satisfies CatalogOf<MessageKey>;

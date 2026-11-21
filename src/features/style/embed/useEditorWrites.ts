@@ -68,32 +68,28 @@ export function useSetProp(
     liveOriginRef.current.delete(prop);
     if (pseudoPickPending(activeSelector)) {
       setStatus('Reading this pseudo-element’s rules. Try that again in a moment.'); // i18n-ignore: write-only status, never rendered.
-      return;
+      return undefined;
     }
     if (!activeSelector) {
       const route = autoSelectForEdit();
       if (route && 'native' in route) {
-        nativeSetOrFallback(route.native, write);
-        return;
+        return nativeSetOrFallback(route.native, write);
       }
       if (route && 'embedSelector' in route) {
-        createSelectedRule(write, route.embedSelector);
-        return;
+        return createSelectedRule(write, route.embedSelector);
       }
       setStatus('Nothing to style here — add a class in Webflow first.'); // i18n-ignore: write-only status, never rendered.
-      return;
+      return undefined;
     }
     if (propLayer(prop) === 'native') {
       if (selectedNativeIndex !== undefined) {
-        nativeSetOrFallback(selectedNativeIndex, write);
-        return;
+        return nativeSetOrFallback(selectedNativeIndex, write);
       }
       if (creatableClass) {
-        nativeCreateAndSet(creatableClass, write);
-        return;
+        return nativeCreateAndSet(creatableClass, write);
       }
     }
-    writeEmbedProp(write);
+    return writeEmbedProp(write);
   };
   return { setProp };
 }
@@ -118,10 +114,10 @@ export function useClearProp(
   const { selectedNativeIndex } = resolvedHook;
   const { nativeClearAt } = nativeOps;
   const { ruleFor, rulesSetting } = writeNewRuleHook;
-  const { propLayer } = addQuery;
+  const { propLayer, supersedeFirstTagWrite } = addQuery;
 
   // Resolves once every write has finished and the model has been rebuilt from it, so the
-  // panel knows when its optimistic cleared look (useOptimisticClear.ts) can hand over.
+  // panel knows when its optimistic cleared look (useOptimisticEdits.ts) can hand over.
   const clearProp = (prop: string | string[]): Promise<void> => {
     const props = Array.isArray(prop) ? prop : [prop];
     // Clearing is a write too; the page then computes the property's own cascade, not the preview.
@@ -142,6 +138,10 @@ export function useClearProp(
         entry.props.push(embedProp);
         byRule.set(rule.ruleId, entry);
       }
+    }
+    // A clear is newer than a value still waiting for the page's first tag (firstTagLane.ts).
+    for (const embedProp of embedProps) {
+      supersedeFirstTagWrite(embedProp);
     }
     byRule.forEach(({ rule, props: ruleProps }) => settled.push(onClearProp(rule, ruleProps)));
     return Promise.all(settled).then(() => undefined);
@@ -455,7 +455,9 @@ export function useSelectionCard(
     activePicked: selectedSelectorText !== undefined,
     // No scan at all (the panel's first moments) has nothing on its way to hold for.
     selectionSettled: scan === undefined || scan.settled,
-    // Set by a change of element until its first settled answer (ScanState.awaitingFirstAnswer).
+    // Set by a change of element until its first settled answer (ScanState.awaitingFirstAnswer). Until then
+    // the sections hold what they last showed (StyleCard HeldBody) rather than draw a skeleton or the
+    // source-only fields that the canvas's answer would replace.
     selectionAwaiting: scan?.awaitingFirstAnswer === true,
     selectors: selectorChips,
     suggestions: selectorSuggestions,

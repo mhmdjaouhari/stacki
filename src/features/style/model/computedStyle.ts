@@ -25,7 +25,10 @@ const AUTHORED_PREFIX = 'authored:';
 const SOURCE_LABEL_PREFIX = 'source-label:';
 const SOURCE_PATH_PREFIX = 'source-path:';
 const CASCADE_PREFIX = 'cascade:';
-const PREFIXES = [AUTHORED_PREFIX, SOURCE_LABEL_PREFIX, SOURCE_PATH_PREFIX, CASCADE_PREFIX];
+// The winning declaration as written, with no computed fallback: '' when no stylesheet the page can
+// read sets the property (a browser default, an inaccessible sheet). Seeds the large value editor.
+const DECLARED_PREFIX = 'declared:';
+const PREFIXES = [AUTHORED_PREFIX, SOURCE_LABEL_PREFIX, SOURCE_PATH_PREFIX, CASCADE_PREFIX, DECLARED_PREFIX];
 // Answers are kept per element, under a key naming the node as well as its rendered path
 // (`nodeId NUL path`): the tag check and the text-node context belong to the node asked
 // about, which is not always the one selected. The panel asks about the NEXT element while
@@ -58,6 +61,9 @@ const cache = createQueryCache(async (elementKey, keys) => {
       }
       if (key.startsWith(SOURCE_PATH_PREFIX)) {
         return [key, source?.path];
+      }
+      if (key.startsWith(DECLARED_PREFIX)) {
+        return [key, answer?.authoredProps[property]?.trim()];
       }
       const computed = answer?.computedProps[property];
       const value = key.startsWith(AUTHORED_PREFIX) ? answer?.authoredProps[property] || computed : computed;
@@ -111,69 +117,6 @@ export function computedStylesSettled(nodeId: string): boolean {
   const elementKey = elementKeyOf(nodeId, path);
   const reading = currentCache();
   return [...learnedKeys].every((key) => reading.read(elementKey, key).kind === 'settled');
-}
-
-// The element a switch showed before its computed values arrived (StylePanel useSelectionShown),
-// and until when its sections may wait for them. One element at a time: the panel
-// shows one.
-const COMPUTED_AWAIT_MS_MAX = 1500;
-let awaited: { readonly nodeId: string; readonly untilMs: number } | undefined;
-const awaitedListeners = new Set<() => void>();
-
-// Any popup the panel draws says what it is (usePopupOpen.ts uses the same roles).
-const POPUP_SELECTOR = '[role="menu"],[role="dialog"],[role="listbox"]';
-
-function popupOnScreen(): boolean {
-  return typeof document !== 'undefined' && document.querySelector(POPUP_SELECTOR) !== null;
-}
-
-/** A switch showed `nodeId` without its values in hand: its sections wait for them, bounded. */
-export function awaitComputedStyles(nodeId: string): void {
-  assert(nodeId.length > 0, 'awaitComputedStyles: a node id is never empty');
-  if (popupOnScreen()) {
-    return;
-  }
-  awaited = { nodeId, untilMs: performance.now() + COMPUTED_AWAIT_MS_MAX };
-  for (const listener of awaitedListeners) {
-    listener();
-  }
-}
-
-/**
- * Whether the selected element's sections should wait in their placeholders for its computed
- * values. Only after a switch to an element whose values were not in hand (awaitComputedStyles): a field drawn
- * then is the "Default" or the empty input that the answer replaces. Bounded by
- * COMPUTED_AWAIT_MS_MAX, after which the fields show what there is; once the values have
- * settled, later waits hold what was shown instead (useStableStyleValue).
- */
-export function useComputedStylesAwaiting(): boolean {
-  const [, bump] = useState(0);
-  useEffect(() => {
-    const sync = () => bump((count) => count + 1);
-    const offCache = cache.subscribe(sync);
-    awaitedListeners.add(sync);
-    const timer = window.setInterval(sync, COMPUTED_AWAIT_MS_MAX);
-    return () => {
-      offCache();
-      awaitedListeners.delete(sync);
-      window.clearInterval(timer);
-    };
-  }, []);
-  const nodeId = getHost().selectedId;
-  if (awaited === undefined || awaited.nodeId !== nodeId) {
-    return false;
-  }
-  // A menu or picker the person opened lives in those fields: placeholders would unmount it.
-  // Showing the fields as they are is the lesser wrong, so the wait ends.
-  if (popupOnScreen()) {
-    awaited = undefined;
-    return false;
-  }
-  if (performance.now() >= awaited.untilMs || computedStylesSettled(awaited.nodeId)) {
-    awaited = undefined;
-    return false;
-  }
-  return true;
 }
 
 /**
@@ -270,9 +213,37 @@ function answeredNow(prop: string): Answer {
   learnKey(prop);
   const known = currentCache().read(path, prop);
   if (known.kind === 'pending') {
-    return { value: '', pending: true, path };
+    // The page is being asked again (an edit dropped its answers): what it said last about this
+    // element shows meanwhile, and the new answer refines it. A cleared field showed the empty
+    // placeholder for the whole round trip, then the value; now it shows the ghost it had before.
+    return { value: lastAnswers.get(lastAnswerKey(path, prop)) ?? '', pending: true, path };
   }
+  rememberAnswer(path, prop, known.answer ?? '');
   return { value: known.answer ?? '', pending: false, path };
+}
+
+// The last answer the page gave per element and key, kept across the cache's invalidations (an
+// edit, a re-render): the stand-in while the same question is asked again. Never sent anywhere and
+// never written; bounded, and emptied when full.
+const LAST_ANSWERS_MAX = 2048;
+const lastAnswers = new Map<string, string>();
+
+// Scoped to the project and file as well: the same node path in another page is another element.
+function lastAnswerKey(path: string, prop: string): string {
+  const host = getHost();
+  return [host.projectPath ?? '', host.openFilePath ?? '', path, prop].join(ELEMENT_KEY_SEPARATOR);
+}
+
+function rememberAnswer(path: string, prop: string, value: string): void {
+  const key = lastAnswerKey(path, prop);
+  if (lastAnswers.get(key) === value) {
+    return;
+  }
+  if (lastAnswers.size >= LAST_ANSWERS_MAX) {
+    lastAnswers.clear();
+  }
+  lastAnswers.set(key, value);
+  assert(lastAnswers.size <= LAST_ANSWERS_MAX, 'rememberAnswer: the remembered answers are bounded');
 }
 
 // `pending` is the part worth having. '' means two different things — "the page
@@ -324,6 +295,16 @@ export function useComputedValue(prop: string): string {
  * Computed values remain the fallback for browser defaults and inaccessible CSS. */
 export function useStyleHint(prop: string): string {
   return useComputedAnswer(prop ? `${AUTHORED_PREFIX}${prop}` : '').value;
+}
+
+/**
+ * The declaration that wins `prop` for the selected element, as written (`var(--text)`, never the
+ * `rgb(…)` it computes to), from whichever rule, inline style or ancestor it comes: '' when only a
+ * browser default sets it. Pass '' to skip asking. Read, never written: the value a field shows for a
+ * property its selector does not set.
+ */
+export function useDeclaredValue(prop: string): string {
+  return useComputedAnswer(prop ? `${DECLARED_PREFIX}${prop}` : '').value;
 }
 
 /** Source metadata shares the value cache, so selection and history changes

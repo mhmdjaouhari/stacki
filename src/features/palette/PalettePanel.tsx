@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ScanComponent } from '../../../shared/properties/projectScan';
 import type { TrailingSlash } from '../../editor/pageState';
 import type { ComponentUsageFile } from './paletteModel';
-import type { ComponentCreationSource, UsageAnchor, UsagePopup } from './PaletteDialogs';
+import type { ComponentCreateOptions, ComponentCreationSource, UsageAnchor, UsagePopup } from './PaletteDialogs';
 import { cleanError } from '../../lib/cleanError';
 import { allowDragEffect, clearDrag, setDrag } from '../../editor/dragState';
 import { rankInsertItems } from '../../lib/insertRank';
@@ -10,13 +10,13 @@ import { ComponentPreviewPopup } from './ComponentPreviewPopup';
 import { useAddableComponents } from './componentVisibility';
 import type { PaletteRoleRules } from './componentRolesMenu';
 import type { ManagedItem, PaletteManagement, RenameHost } from './paletteManagement';
-import { usedPlaces } from '../../../shared/properties/componentOps';
 import { PaletteRowMenu } from './PaletteRowMenu';
 import type { MenuEntry } from '../../ui/Menu';
 import { rolesSubmenu } from './componentRolesMenu';
 import { componentRuleFile } from '../../../shared/properties/componentAccess';
 import { groupPaletteComponents, parseComponentUsage, prettyComponentName } from './paletteModel';
 import { CopyIcon, ElementComponentIcon, GearIcon, LayoutIcon, MoveFolderIcon, PencilIcon, PlusIcon, TargetIcon, TrashIcon, UsersIcon } from '../../ui/Icons';
+import { PanelSearch } from '../../ui/PanelSearch';
 import { RenameComponentDialog } from './RenameComponentDialog';
 import type { RenameCandidate } from './renameAvailability';
 import { DEFAULT_PROJECT_FOLDERS } from '../../../shared/properties/projectFolders';
@@ -27,6 +27,7 @@ import { can } from '../../../shared/properties/projectRoles';
 import { useCurrentRole } from '../../lib/useCurrentRole';
 import { currentRole } from '../../lib/currentRole';
 import { useTranslate, useTranslateDescribed, useTranslateRich } from '../../lib/i18n/useTranslate';
+import { PanelHeader } from '../../ui/PanelHeader';
 
 interface PalettePanelProps {
   readonly components: readonly ScanComponent[];
@@ -40,7 +41,7 @@ interface PalettePanelProps {
   readonly onInsert: (name: string) => void;
   readonly onDragBegin?: () => void;
   /** `folder` is below the first component folder, `''` for that folder itself (CreateComponentModal). */
-  readonly onCreateComponent: (name: string, options: { readonly asProp: readonly string[]; readonly folder: string }) => void;
+  readonly onCreateComponent: (name: string, options: ComponentCreateOptions) => void;
   readonly onUsage?: (component: ScanComponent) => Promise<unknown>;
   readonly onOpenUsage?: (file: ComponentUsageFile) => void;
   readonly pageInstances?: (name: string) => readonly { readonly id: string }[];
@@ -195,22 +196,24 @@ function PaletteHeader({
   const allowed = can(useCurrentRole(), 'component:create');
   return (
     <>
-      <div className="panel-header">
-        <h2>{translate('palette.panel.title')}</h2>
-        <span hidden={!allowed} className="tip-anchor" onMouseEnter={tooltip.show} onMouseLeave={tooltip.hide}>
-          <button
-            className="ghost"
-            aria-label={translate('palette.panel.new')}
-            disabled={!canCreate}
-            onClick={() => {
-              tooltip.hide();
-              setCreating(true);
-            }}
-          >
-            <PlusIcon size={14} />
-          </button>
-        </span>
-      </div>
+      <PanelHeader
+        title={translate('palette.panel.title')}
+        actions={
+          <span hidden={!allowed} className="tip-anchor" onMouseEnter={tooltip.show} onMouseLeave={tooltip.hide}>
+            <button
+              className="ghost"
+              aria-label={translate('palette.panel.new')}
+              disabled={!canCreate}
+              onClick={() => {
+                tooltip.hide();
+                setCreating(true);
+              }}
+            >
+              <PlusIcon size={14} />
+            </button>
+          </span>
+        }
+      />
       {tooltip.value && (
         <div className="rail-tooltip below" style={tooltip.value}>
           {canCreate
@@ -224,11 +227,7 @@ function PaletteHeader({
 
 function PaletteSearch({ query, setQuery }: { readonly query: string; readonly setQuery: React.Dispatch<React.SetStateAction<string>> }) {
   const translate = useTranslate();
-  return (
-    <div style={{ padding: '0 12px 8px' }}>
-      <input value={query} placeholder={translate('palette.panel.search')} spellCheck={false} onChange={(event) => setQuery(event.currentTarget.value)} />
-    </div>
-  );
+  return <PanelSearch value={query} placeholder={translate('palette.panel.search')} onChange={setQuery} />;
 }
 
 interface PaletteListProps {
@@ -391,23 +390,14 @@ function componentChanges(
   const duplicate: readonly MenuEntry[] = can(role, 'component:create')
     ? [{ kind: 'item', id: 'duplicate', label: translate('palette.menu.duplicate'), icon: <CopyIcon size={14} />, onSelect: () => management.duplicate(item) }]
     : [];
-  const remove: readonly MenuEntry[] = can(role, 'component:edit')
-    ? [deleteRow({ instances: component.instances, translate }, () => management.remove(item))]
-    : [];
+  const remove: readonly MenuEntry[] = can(role, 'component:edit') ? [deleteRow(translate, () => management.remove(item))] : [];
   return renamable.length + duplicate.length + remove.length === 0 ? [] : [{ kind: 'divider', id: 'changes' }, ...renamable, ...duplicate, ...remove];
 }
 
-// Delete, disabled while anything uses what it would remove: the reason is the row's own info mark.
-function deleteRow(
-  { instances, translate }: { readonly instances: number | undefined; readonly translate: ReturnType<typeof useTranslate> },
-  onSelect: () => void,
-): MenuEntry {
-  const used = usedPlaces(instances);
-  const base = { kind: 'item', id: 'delete', label: translate('palette.menu.delete'), icon: <TrashIcon size={14} />, danger: true, onSelect } as const;
-  if (instances === undefined) {
-    return { ...base, disabled: true, info: translate('palette.panel.checking') };
-  }
-  return used === undefined ? base : { ...base, disabled: true, info: translate('palette.menu.usedIn', { count: used }) };
+// Delete: always offered. What it would take out (instances, imports, settings) is worked out and confirmed when chosen,
+// and a use it cannot rewrite is listed there (src/app/shell/componentRemovalDialog.tsx), so the row needs no count.
+function deleteRow(translate: ReturnType<typeof useTranslate>, onSelect: () => void): MenuEntry {
+  return { kind: 'item', id: 'delete', label: translate('palette.menu.delete'), icon: <TrashIcon size={14} />, danger: true, onSelect };
 }
 
 // The same for a folder header: Roles over the folder, then Duplicate and Delete of the folder and every component under it.
@@ -445,14 +435,10 @@ function folderChanges(
     return [];
   }
   const item: ManagedItem = { kind: 'folder', path: folder.path, name: folder.folder, files: folder.under.length };
-  const unknown = folder.under.some((component) => component.instances === undefined);
-  const total = folder.under.reduce((sum, component) => sum + (component.instances ?? 0), 0);
   const duplicate: readonly MenuEntry[] = can(role, 'component:create')
     ? [{ kind: 'item', id: 'duplicate', label: translate('palette.menu.duplicate'), icon: <CopyIcon size={14} />, onSelect: () => management.duplicate(item) }]
     : [];
-  const remove: readonly MenuEntry[] = can(role, 'component:edit')
-    ? [deleteRow({ instances: unknown ? undefined : total, translate }, () => management.remove(item))]
-    : [];
+  const remove: readonly MenuEntry[] = can(role, 'component:edit') ? [deleteRow(translate, () => management.remove(item))] : [];
   return duplicate.length + remove.length === 0 ? [] : [{ kind: 'divider', id: 'changes' }, ...duplicate, ...remove];
 }
 
@@ -461,7 +447,7 @@ function startComponentDrag(event: React.DragEvent<HTMLDivElement>, component: S
   event.dataTransfer.setData('avb/component', component.name);
   event.dataTransfer.setData('avb/component-path', component.path);
   allowDragEffect(event.dataTransfer, 'copy');
-  setDrag({ kind: 'component', name: component.name });
+  setDrag({ kind: 'component', name: component.name, path: component.path });
   if (props.onDragBegin) {
     setTimeout(props.onDragBegin, 0);
   }

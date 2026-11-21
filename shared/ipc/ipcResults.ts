@@ -1,6 +1,8 @@
 import type { MessageRef } from '../core/i18n/messageReference';
 import type { BreakpointSyncApplied, BreakpointSyncScan, BreakpointUsage } from '../properties/breakpointSyncPlan';
 import type { MicrophoneReport } from '../properties/microphone';
+import type { ClassUsageReply } from '../properties/classUsage';
+import type { PendingStyleMove, StyleMoveResolution } from '../properties/styleMoveJournal';
 import type { AiResults } from './aiChat';
 import type { AppFileAnswer } from '../properties/appFiles';
 import type { AppAccessToken, AppAuthStatus } from '../properties/appAuth';
@@ -34,6 +36,10 @@ import type { PublishDiscovery } from '../properties/publishDiscovery';
 import type { DesktopPublishState, PublishAvailability } from '../properties/publishState';
 import type { ComponentOpError } from '../properties/componentOps';
 import type { ComponentRenameSummary } from '../properties/componentRename';
+import type { PageSettingsApplied, PageSettingsSummary } from '../properties/pageSettings';
+import type { PageBulkRemoveApplied, PageBulkRemoveSummary } from '../properties/pageBulkRemove';
+import type { WireTemplateReading } from '../properties/pageTemplateReading';
+import type { ComponentRemovalPreview } from '../properties/componentRemoval';
 import type { MetadataFile } from '../properties/projectMetadata';
 import type { InstructionListing, InstructionWriteResult } from '../properties/instructions';
 import type { LengthUnit } from '../properties/lengthUnit';
@@ -42,8 +48,9 @@ import type { ConversionResult } from './assetConversion';
 import type { CommitDiffResult } from './gitCommitDiff';
 import type { CommitAvatarResult } from './commitAvatars';
 import type { GitHubUserSearchResult } from './githubUserSearch';
-import type { StudioStatus, StudioInstallResult } from './studioSetup';
+import type { StudioStatus, StudioInstallResult, StudioAuthResult } from './studioSetup';
 import type { StudioInstallProgress } from './studioProgress';
+import type { UpdateEvent, UpdateState } from './updateState';
 import type { AppSecretScan } from '../properties/appSecrets';
 import type { SecretsListing, SecretsResult, SecretValue } from '../properties/secrets';
 import type { McpCodexState, McpListing, McpResult, McpText } from '../properties/mcp';
@@ -54,6 +61,8 @@ import type { AppRepositoryStatus, AppShareOutcome, AppVisibilityOutcome, Market
 
 export interface StudioEventResults {
   readonly 'studio:progress': StudioInstallProgress;
+  /** Main to renderer: the update popup's state, parsed by parseUpdateState before use. */
+  readonly 'update:state': UpdateEvent;
 }
 import type { ComponentProperties } from '../properties/propertyEditing';
 import type { PropertyRemovalPreview } from '../properties/propertyRemoval';
@@ -163,6 +172,7 @@ export interface IpcResults extends AiResults {
   readonly 'github:searchUsers': GitHubUserSearchResult;
   readonly 'studio:status': StudioStatus;
   readonly 'studio:install': StudioInstallResult;
+  readonly 'studio:setAuth': StudioAuthResult;
   readonly 'component:properties': Result<ComponentProperties>;
   readonly 'component:editProperties': Result<ComponentProperties & { readonly undo: string }>;
   readonly 'component:revertProperties': Result<{ readonly undo: string }>;
@@ -265,11 +275,17 @@ export interface IpcResults extends AiResults {
     { readonly kind: 'component' | 'folder'; readonly path: string; readonly name: string; readonly files: number },
     ComponentOpError
   >;
+  readonly 'component:planRemove': Result<ComponentRemovalPreview, ComponentOpError>;
   readonly 'component:remove': Result<{ readonly name: string; readonly files: number; readonly undo: string }, ComponentOpError>;
   readonly 'component:restoreRemoved': Result<{ readonly files: number; readonly metadata: 'restored' | 'kept' | 'untouched' }, ComponentOpError>;
   readonly 'component:discard': {
     readonly outcome: 'deleted' | 'edited' | 'missing';
   };
+  readonly 'component:classUsage': ClassUsageReply;
+  readonly 'styleMove:record': { readonly ok: true };
+  readonly 'styleMove:clear': { readonly ok: true };
+  readonly 'styleMove:pending': { readonly pending: PendingStyleMove | undefined };
+  readonly 'styleMove:resolve': StyleMoveResolution;
   readonly 'component:usage': {
     readonly files: ReadonlyArray<WireUsageFile>;
     readonly total: number;
@@ -735,6 +751,13 @@ export interface IpcResults extends AiResults {
     readonly relative: string;
     readonly srcRelative: undefined | string;
   };
+  readonly 'page:planSettings': Result<PageSettingsSummary>;
+  readonly 'page:applySettings': Result<PageSettingsApplied>;
+  readonly 'page:revertSettings': Result<{ readonly files: number }>;
+  readonly 'page:planRemoveMany': Result<PageBulkRemoveSummary>;
+  readonly 'page:removeMany': Result<PageBulkRemoveApplied>;
+  readonly 'page:readTemplate': WireTemplateReading;
+  readonly 'page:retargetTemplate': Result<PageSettingsApplied>;
   readonly 'page:move': {
     readonly newPath: string;
   };
@@ -900,6 +923,10 @@ export interface IpcResults extends AiResults {
   readonly 'recents:remove': {
     readonly ok: true;
   };
+  readonly 'update:act': {
+    readonly ok: true;
+  };
+  readonly 'update:read': UpdateState;
   readonly 'selection:copy':
     | {
         readonly ok: false;

@@ -15,6 +15,15 @@ export const messages = {
   'palette.create.taken': '{file} ya existe.',
   'palette.create.hint': '{label} se convierte en {tag}, guardado como {file}',
   'palette.create.name': 'Nombre',
+  'palette.create.styles.alsoUsed': 'También se usa en otro sitio', // review
+  'palette.create.styles.checkAria': 'Mover los estilos de .{name}', // review
+  'palette.create.styles.failed': 'No se pudieron leer los estilos, así que no se moverá ninguno.', // review
+  'palette.create.styles.foot': 'Los estilos marcados pasan a una nueva etiqueta style del componente. No edites estos archivos en otra app hasta que termine.', // review
+  'palette.create.styles.inFiles': 'También se usa en {files}.', // review
+  'palette.create.styles.loading': 'Buscando los estilos de este marcado…', // review
+  'palette.create.styles.onPage': 'Otro elemento de esta página la usa.', // review
+  'palette.create.styles.page': 'Esta página', // review
+  'palette.create.styles.title': 'Mover estilos', // review
   'palette.create.submit': 'Crear',
   'palette.create.title': 'Crear componente',
   'palette.create.value.alsoUsed': 'También se usa aquí',
@@ -45,12 +54,6 @@ export const messages = {
   'palette.instances.title': 'Instancias de {name}',
   'palette.instances.unused': 'Aún no se usa en ningún sitio.',
   'palette.instances.usedIn': 'Se usa en',
-  'palette.manage.deleteBodyComponent':
-    '{name} no se usa en ninguna página. Pasa a la papelera y se quitan sus entradas de los ajustes del proyecto. Deshacer lo recupera.',
-  'palette.manage.deleteBodyFolder': {
-    one: 'Esta carpeta y su {count} componente pasan a la papelera, y se quitan sus entradas de los ajustes del proyecto. Deshacer los recupera.',
-    other: 'Esta carpeta y sus {count} componentes pasan a la papelera, y se quitan sus entradas de los ajustes del proyecto. Deshacer los recupera.',
-  },
   'palette.manage.deleteConfirm': 'Eliminar',
   'palette.manage.deleteDone': 'Se eliminó {name}',
   'palette.manage.deleteTitle': '¿Eliminar {name}?',
@@ -62,10 +65,31 @@ export const messages = {
   'palette.manage.labelDuplicate': 'Duplicar {name}',
   'palette.manage.undoMetadataKept':
     'Se restauraron los archivos. Los ajustes del proyecto cambiaron desde entonces, así que sus entradas se dejaron como están.',
+  'palette.remove.blocked': 'Estos lugares lo usan de una forma que Stacki no puede reescribir. Cámbialos primero; no se eliminó nada.',
+  'palette.remove.blockedTitle': 'Aún no se puede eliminar {name}',
+  'palette.remove.files': { one: '{name} pasa a la papelera.', other: '{name} y sus {count} componentes pasan a la papelera.' },
+  'palette.remove.imports': { one: 'Se quita {count} importación:', other: 'Se quitan {count} importaciones:' },
+  'palette.remove.instances': {
+    one: 'Se quita {count} instancia, con todo lo que contiene:',
+    other: 'Se quitan {count} instancias, con todo lo que contienen:',
+  },
+  'palette.remove.more': { one: 'y {count} archivo más', other: 'y {count} archivos más' },
+  'palette.remove.place': '{path}: {count}', // same
+  'palette.remove.reason.content': 'una instancia en Markdown',
+  'palette.remove.reason.dynamicImport': 'una importación dinámica',
+  'palette.remove.reason.expression': 'una instancia dentro de una expresión',
+  'palette.remove.reason.glob': 'un glob que lo incluye',
+  'palette.remove.reason.layout': 'un layout de Markdown',
+  'palette.remove.reason.reExport': 'una reexportación',
+  'palette.remove.reason.unreadable': 'un archivo que no se puede leer',
+  'palette.remove.reason.value': 'usado como valor',
+  'palette.remove.reviewLine': '{path}:{line}, {reason}', // same
+  'palette.remove.settings': 'Se quitan sus entradas en {files}.',
+  'palette.remove.undo': 'Un solo Deshacer lo recupera todo.',
+  'palette.remove.unused': 'Nada lo usa.',
   'palette.menu.delete': 'Eliminar',
   'palette.menu.duplicate': 'Duplicar',
   'palette.menu.editSettings': 'Editar ajustes',
-  'palette.menu.usedIn': { one: 'Se usa en {count} lugar', other: 'Se usa en {count} lugares' },
   'palette.name.empty': 'Ponle un nombre al componente.',
   'palette.name.lettersOnly': 'Usa solo letras y números.',
   'palette.name.noLetters': 'Usa letras o números para el nombre.',

@@ -3,6 +3,8 @@ import type { CatalogOf } from '../../../../core/i18n/catalog';
 import type { MessageKey } from '../en/studio';
 
 export const messages = {
+  'studio.access.notInFront':
+    'Cloudflare Access n’a pas authentifié cette requête. Vérifiez que l’application Access couvre ce nom d’hôte et le chemin /studio, puis réessayez.',
   'studio.account.cursorChat': 'Chat du curseur',
   'studio.account.cursorChatShortcut': 'Chat du curseur (/)',
   'studio.account.cursorChatUnavailable': 'Disponible dans l’aperçu d’édition de page',
@@ -16,12 +18,36 @@ export const messages = {
   'studio.account.signOutWait': 'Attendez la fin de l’enregistrement de vos modifications',
   'studio.account.version': 'Stacki Studio {version}', // same
   'studio.boot.checkingSession': 'Vérification de votre session…',
+  'studio.attention.draftFailed.action': 'Réessayer l’enregistrement',
+  'studio.attention.draftFailed.text': 'Le serveur n’a pas pu conserver votre brouillon. Vos modifications restent dans ce navigateur.',
+  'studio.attention.draftFailed.title': 'Brouillon non enregistré',
+  'studio.attention.draftReplaced.action': 'Copier mon brouillon',
+  'studio.attention.draftReplaced.text':
+    'Le brouillon du serveur a été remplacé et ce navigateur détient encore le précédent. L’enregistrement est suspendu pour qu’aucun n’écrase l’autre.',
+  'studio.attention.draftReplaced.title': 'Brouillon remplacé',
+  'studio.attention.editFailed.action': 'Réessayer l’enregistrement',
+  'studio.attention.editFailed.text': 'Le serveur n’a pas pu appliquer votre dernière modification : {detail}',
+  'studio.attention.editFailed.title': 'Échec de la modification',
+  'studio.attention.fileRemoved.text': 'Ce fichier a été supprimé sur GitHub. Ouvrez une autre page.',
+  'studio.attention.fileRemoved.title': 'Fichier supprimé',
+  'studio.attention.menu': 'Ce qui demande votre attention',
+  'studio.attention.saveUnconfirmed.action': 'Réessayer l’enregistrement',
+  'studio.attention.saveUnconfirmed.text': 'Le serveur n’a pas confirmé votre dernier enregistrement. Vos modifications restent dans ce navigateur.',
+  'studio.attention.saveUnconfirmed.title': 'Enregistrement non confirmé',
   'studio.boot.loading': 'Chargement de vos pages et composants…',
   'studio.boot.opening': 'Ouverture de votre studio…',
   'studio.boot.openingLabel': 'Ouverture de Studio',
   'studio.boot.reconnecting': 'Reconnexion à votre espace de travail… (tentative {attempt} sur 3)',
   'studio.boot.retry': 'Réessayer d’ouvrir Studio',
   'studio.boot.slow': 'Cela prend plus de temps que d’habitude. {seconds} s écoulées.',
+  'studio.boot.stage.compile': 'Compilation de votre première page…',
+  'studio.boot.stage.container': 'Démarrage de votre espace de travail…',
+  'studio.boot.stage.dependencies': 'Préparation des dépendances de votre site…',
+  'studio.boot.stage.drafts': 'Restauration de vos brouillons…',
+  'studio.boot.stage.ready': 'Chargement de vos pages et composants…',
+  'studio.boot.stage.repository': 'Restauration de votre dépôt…',
+  'studio.boot.stage.server': 'Démarrage du serveur d’aperçu…',
+  'studio.boot.stage.step': 'Étape {step} sur {total}',
   'studio.collab.draftFailed': 'L’enregistrement du brouillon a échoué. Gardez le studio ouvert et reconnectez-vous pour réessayer.',
   'studio.collab.draftReplaced':
     'Le brouillon du serveur a été remplacé. Ce navigateur conserve l’ancien brouillon ; exportez son code source avant d’effacer les données stockées de ce site.',
@@ -49,7 +75,17 @@ export const messages = {
   'studio.inspector.close': 'Fermer les réglages',
   'studio.inspector.label': 'Inspecteur d’élément',
   'studio.login.button': 'Se connecter avec GitHub',
+  'studio.login.buttonPasskey': 'Se connecter avec une passkey',
+  'studio.login.buttonProvider': 'Continuer avec {provider}',
   'studio.login.failedHeading': 'Connexion impossible',
+  'studio.login.neutral.access': 'Votre compte n’est pas autorisé à modifier ce site. Demandez l’accès au propriétaire du site, puis reconnectez-vous.',
+  'studio.login.neutral.cancelled': 'La connexion a été annulée. Réessayez ci-dessous.',
+  'studio.login.neutral.configuration': 'La connexion nécessite l’attention du propriétaire du site. Demandez-lui de vérifier la configuration de connexion.',
+  'studio.login.neutral.email': 'Votre adresse e-mail n’a pas pu être vérifiée. Vérifiez-la auprès de votre fournisseur de connexion, puis réessayez.',
+  'studio.login.neutral.expired': 'Ce lien de connexion a expiré ou a déjà été utilisé. Lancez une nouvelle connexion ci-dessous.',
+  'studio.login.neutral.rateLimit': 'La connexion est temporairement limitée. Patientez avant de réessayer.',
+  'studio.login.neutral.unavailable':
+    'La connexion est temporairement indisponible. Réessayez ci-dessous. Si le problème persiste, contactez le propriétaire du site.',
   'studio.login.problem.access': 'Votre compte GitHub a besoin d’un accès en écriture à ce dépôt. Acceptez son invitation, puis reconnectez-vous.',
   'studio.login.problem.cancelled': 'L’autorisation GitHub a été annulée. Réessayez et autorisez Stacki Studio.',
   'studio.login.problem.configuration':
@@ -68,6 +104,24 @@ export const messages = {
   'studio.login.waitOne': 'Attendez au moins 1 seconde, puis lancez une nouvelle connexion ci-dessous.',
   'studio.login.welcomeHeading': 'Bienvenue dans votre studio',
   'studio.panel.close': 'Fermer le panneau',
+  'studio.passkey.enrol.button': 'Créer la passkey',
+  'studio.passkey.enrol.continue': 'Continuer vers la connexion',
+  'studio.passkey.enrol.done': 'Passkey enregistrée. Vous pouvez vous connecter.',
+  'studio.passkey.enrol.failed': 'La passkey n’a pas pu être créée. Réessayez ou demandez une nouvelle invitation.',
+  'studio.passkey.enrol.heading': 'Créez votre passkey',
+  'studio.passkey.enrol.invalid': 'Cette invitation a expiré ou a déjà été utilisée. Demandez-en une nouvelle au propriétaire du site.',
+  'studio.passkey.enrol.prompt':
+    'Une passkey remplace un mot de passe. Votre appareil vous demandera de confirmer avec votre empreinte, votre visage ou le verrouillage de l’écran.',
+  'studio.passkey.signIn.button': 'Utiliser ma passkey',
+  'studio.passkey.signIn.failed': 'La passkey n’a pas été acceptée. Réessayez ou demandez une nouvelle invitation au propriétaire du site.',
+  'studio.passkey.signIn.prompt':
+    'Utilisez votre passkey pour vous connecter. Votre appareil vous demandera de confirmer avec votre empreinte, votre visage ou le verrouillage de l’écran.',
+  'studio.passkey.signIn.unsupported':
+    'Ce navigateur ne prend pas en charge les passkeys. Ouvrez Studio dans une version récente de Chrome, Safari, Edge ou Firefox.',
+  'studio.passkey.setup.code': 'Code de configuration',
+  'studio.passkey.setup.heading': 'Configuration du premier administrateur',
+  'studio.passkey.setup.prompt':
+    'Créez la première passkey du propriétaire de ce site. Saisissez le code de configuration défini avec wrangler secret put AUTH_SETUP_CODE.',
   'studio.paused.body': 'Votre brouillon enregistré est en sécurité.',
   'studio.paused.resume': 'Reprendre la modification',
   'studio.paused.title': 'Studio a été mis en pause pour économiser les coûts d’hébergement.',

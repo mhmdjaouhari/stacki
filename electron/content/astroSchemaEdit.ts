@@ -28,6 +28,7 @@ import {
   defineCall,
   schemaProperty,
   schemaObject,
+  objectShape,
   propertyName,
   keyText,
   quoteOf,
@@ -37,8 +38,25 @@ import {
   type Located,
 } from './astroSchemaSyntax';
 
-import type { FieldSettings, FieldUpdate, NewFieldKind, SettingsChange, SettingsField, SettingsFieldKind } from '../../shared/properties/collectionSettings';
-import { newFieldSettings } from '../../shared/properties/collectionSettings';
+import type {
+  FieldSettings,
+  FieldUpdate,
+  ItemKind,
+  NewFieldKind,
+  SettingsChange,
+  SettingsField,
+  SettingsFieldKind,
+  SettingsMember,
+} from '../../shared/properties/collectionSettings';
+import {
+  COLLECTION_SETTINGS_LIMITS,
+  holdsMembers,
+  ITEM_KINDS,
+  memberSettings,
+  newFieldMembers,
+  newFieldSettings,
+  SETTINGS_FIELD_KINDS,
+} from '../../shared/properties/collectionSettings';
 
 /** What reading a collection found: its fields, and where its glob folder is named. */
 export interface SchemaRead {
@@ -112,7 +130,7 @@ function fieldEdits(
       };
     }
     case 'updateField':
-      return updateField(named(change.update.name), file, change.update);
+      return updateField(located, named(change.update.name), change.update);
     case 'addField':
       return addField(located, object, change, named(change.name));
     case 'removeField': {
@@ -152,7 +170,8 @@ function reorderFields(object: ts.ObjectLiteralExpression, file: ts.SourceFile, 
   return { ok: true, value: [propertyList(object, file, texts)] };
 }
 
-function updateField(property: ts.ObjectLiteralElementLike | undefined, file: ts.SourceFile, update: FieldUpdate): Result<readonly SpanEdit[], Described> {
+function updateField(located: Located, property: ts.ObjectLiteralElementLike | undefined, update: FieldUpdate): Result<readonly SpanEdit[], Described> {
+  const { file } = located;
   if (property === undefined) {
     return err(described('cmsBackend.schema.noField', { name: update.name }));
   }
@@ -161,16 +180,246 @@ function updateField(property: ts.ObjectLiteralElementLike | undefined, file: ts
   if (schema === undefined || chain === undefined) {
     return err(described('cmsBackend.schema.tooComplex', { name: update.name }));
   }
-  const text = writeChain(chain, update);
+  const current = readItemKind(chain, file);
+  const swapped = update.itemKind !== undefined && current !== undefined && update.itemKind !== current;
+  const members = swapped
+    ? swappedItems(located, chain, update)
+    : update.members === undefined
+      ? undefined
+      : rewrittenMembers(located, chain, { name: update.name, members: update.members });
+  if (members !== undefined && !members.ok) {
+    return members;
+  }
+  const text = writeChain(members === undefined ? chain : { ...chain, base: members.value.base }, update);
   assert(text.length > 0, 'A field is written with a schema');
+  const scope = members === undefined ? [] : members.value.scope;
   // A shorthand field becomes `name: constant…` once its chain holds more than the name.
   if (ts.isShorthandPropertyAssignment(property)) {
     const written = text === chain.base ? text : `${property.name.text}: ${text}`;
     const span = { start: property.getStart(file), end: property.getEnd() };
-    return { ok: true, value: [{ ...span, text: written }] };
+    return { ok: true, value: [{ ...span, text: written }, ...scope] };
   }
-  return { ok: true, value: [{ start: schema.getStart(file), end: schema.getEnd(), text }] };
+  return { ok: true, value: [{ start: schema.getStart(file), end: schema.getEnd(), text }, ...scope] };
 }
+
+// A list given another kind of item: its items are written again, a group's with its fields (a title when none are given).
+function swappedItems(located: Located, chain: Chain, update: FieldUpdate): Result<{ readonly base: string; readonly scope: readonly SpanEdit[] }, Described> {
+  const item = update.itemKind ?? 'text';
+  const members = item === 'group' ? (update.members ?? newFieldMembers('repeater')) : undefined;
+  const fresh = (members ?? []).filter((member) => member.kind !== 'other');
+  const texts = fresh.map((member) => newMemberText(member, 1));
+  if (texts.some((text) => text === undefined) || fresh.length !== (members ?? []).length) {
+    return err(described('cmsBackend.schema.tooComplex', { name: update.name }));
+  }
+  const shape = texts.length === 0 ? '{ title: z.string().optional() }' : `{ ${texts.join(', ')} }`;
+  const imaging = usesImage(fresh);
+  const scope = imaging ? imageScope(located) : { ok: true as const, value: [] };
+  if (!scope.ok) {
+    return scope;
+  }
+  assert(chain.kind === 'list' || chain.kind === 'repeater', 'Only a list has its items swapped');
+  return { ok: true, value: { base: `z.array(${itemSchema(item, shape)})`, scope: scope.value } };
+}
+
+// The `{ … }` a group's or repeater's fields are written in.
+function membersShape(chain: Chain): ts.ObjectLiteralExpression | undefined {
+  if (chain.kind === 'group') {
+    return objectShape(chain.baseNode);
+  }
+  if (chain.kind === 'repeater' && ts.isCallExpression(chain.baseNode)) {
+    return objectShape(chain.baseNode.arguments[0]);
+  }
+  return undefined;
+}
+
+// A group's or repeater's fields as the config states them: a field the form
+// cannot read (a key it cannot name, a spread) is not listed and is kept.
+function readMembers(chain: Chain, file: ts.SourceFile, depth = 0): readonly SettingsMember[] | undefined {
+  if (depth >= COLLECTION_SETTINGS_LIMITS.memberDepthMax) {
+    return undefined; // Deeper than the form nests: kept as written, listed as having no fields.
+  }
+  const shape = membersShape(chain);
+  return shape?.properties.flatMap((property) => memberOf(property, file, depth));
+}
+
+// What a list holds, as its form names it: `other` for items written some other way.
+function readItemKind(chain: Chain, file: ts.SourceFile): ItemKind | 'other' | undefined {
+  if (chain.kind === 'repeater') {
+    return 'group';
+  }
+  if (chain.kind !== 'list' || !ts.isCallExpression(chain.baseNode)) {
+    return undefined;
+  }
+  const item = chain.baseNode.arguments[0];
+  const read = item === undefined ? undefined : chainOf(item, file);
+  const plain: readonly SettingsFieldKind[] = ['text', 'number', 'link', 'email', 'switch', 'date'];
+  const found = ITEM_KINDS.find((candidate) => candidate === read?.kind && plain.includes(candidate));
+  return found ?? 'other';
+}
+
+function memberOf(property: ts.ObjectLiteralElementLike, file: ts.SourceFile, depth = 0): SettingsMember[] {
+  const name = propertyName(property);
+  if (name === undefined || !MEMBER_NAME.test(name)) {
+    return [];
+  }
+  const schema = schemaOf(property);
+  const chain = schema === undefined ? undefined : chainOf(schema, file);
+  if (chain === undefined) {
+    return [{ name, kind: 'other', required: false, from: name, editable: false }];
+  }
+  return [
+    {
+      name,
+      kind: chain.kind,
+      ...readChain(chain),
+      from: name,
+      editable: true,
+      members: holdsMembers(chain.kind) ? readMembers(chain, file, depth + 1) : undefined,
+      itemKind: readItemKind(chain, file),
+    },
+  ];
+}
+
+// Whether a fresh member, however deep, is an image, which the config's schema function must provide.
+function usesImage(members: readonly SettingsMember[], depth = 0): boolean {
+  if (depth > COLLECTION_SETTINGS_LIMITS.memberDepthMax) {
+    return false;
+  }
+  return members.some(
+    (member) => (member.from === undefined && (member.kind === 'image' || member.kind === 'multiImage')) || usesImage(member.members ?? [], depth + 1),
+  );
+}
+
+const MEMBER_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+
+/**
+ * A chain's base with its fields rewritten as `members` say: each kept one
+ * stays as written unless its name or whether it is required changed, each
+ * new one is written fresh, one left out of the list is removed. The
+ * `image` function a new image field needs comes with it, as `scope`.
+ */
+function rewrittenMembers(
+  located: Located,
+  chain: Chain,
+  rewrite: { readonly name: string; readonly members: readonly SettingsMember[] },
+  depth = 0,
+): Result<{ readonly base: string; readonly scope: readonly SpanEdit[] }, Described> {
+  assert(depth <= COLLECTION_SETTINGS_LIMITS.memberDepthMax, 'A group nests within its bound');
+  const { file } = located;
+  const { members } = rewrite;
+  const shape = membersShape(chain);
+  if (shape === undefined) {
+    return err(described('cmsBackend.schema.tooComplex', { name: rewrite.name }));
+  }
+  const existing = new Map(shape.properties.map((property) => [propertyName(property), property]));
+  const written = new Map<SettingsMember, string>();
+  for (const member of members) {
+    const text = memberText(member, member.from === undefined ? undefined : existing.get(member.from), { located, depth: depth + 1 });
+    if (!text.ok) {
+      return text;
+    }
+    written.set(member, text.value);
+  }
+  // Each field of the form stays where the config has it, with what the form cannot list
+  // (a spread, an odd key) between them, so a save that changes nothing changes no text;
+  // a form that reordered the fields, or put a new one among them, writes them in its order.
+  const listed = shape.properties.filter((property) => memberOf(property, file).length > 0).map((property) => propertyName(property));
+  const kept = members.filter((member) => member.from !== undefined);
+  const added = members.filter((member) => member.from === undefined);
+  const inPlace =
+    members.every((member, index) => member === [...kept, ...added][index]) &&
+    JSON.stringify(kept.map((member) => member.from)) === JSON.stringify(listed.filter((name) => kept.some((member) => member.from === name)));
+  const texts: string[] = [];
+  if (inPlace) {
+    for (const property of shape.properties) {
+      const member = kept.find((each) => each.from === propertyName(property));
+      if (memberOf(property, file).length === 0) {
+        texts.push(property.getText(file));
+      } else if (member !== undefined) {
+        texts.push(written.get(member) ?? '');
+      }
+    }
+    texts.push(...added.map((member) => written.get(member) ?? ''));
+  } else {
+    texts.push(...members.map((member) => written.get(member) ?? ''));
+    texts.push(...shape.properties.filter((property) => memberOf(property, file).length === 0).map((property) => property.getText(file)));
+  }
+  assert(
+    texts.every((text) => text.length > 0),
+    'Every field of a group is written',
+  );
+  const edit = propertyList(shape, file, texts);
+  const baseStart = chain.baseNode.getStart(file);
+  const base = chain.base.slice(0, edit.start - baseStart) + edit.text + chain.base.slice(edit.end - baseStart);
+  const scope = depth === 0 && usesImage(members) ? imageScope(located) : { ok: true as const, value: [] };
+  if (!scope.ok) {
+    return scope;
+  }
+  assert(base.length >= chain.base.length - (edit.end - edit.start), 'A rewritten shape keeps the rest of its base');
+  return { ok: true, value: { base, scope: scope.value } };
+}
+
+// One field of a group, as the config writes it: a new one fresh, a kept one with only what the form changed.
+function memberText(
+  member: SettingsMember,
+  property: ts.ObjectLiteralElementLike | undefined,
+  within: { readonly located: Located; readonly depth: number },
+): Result<string, Described> {
+  const { file } = within.located;
+  if (member.from === undefined) {
+    const fresh = newMemberText(member, within.depth);
+    return fresh === undefined ? err(described('cmsBackend.schema.tooComplex', { name: member.name })) : { ok: true, value: fresh };
+  }
+  if (property === undefined || property.name === undefined) {
+    return err(described('cmsBackend.schema.noField', { name: member.from }));
+  }
+  const schema = schemaOf(property);
+  const chain = schema === undefined ? undefined : chainOf(schema, file);
+  const renamed = member.name !== member.from;
+  const key = renamed ? keyText(member.name, { quoted: ts.isStringLiteral(property.name) }) : undefined;
+  let value = schema?.getText(file) ?? '';
+  if (chain !== undefined) {
+    const settings = readChain(chain);
+    // A member that carries no settings (an older caller) only has its requiredness applied.
+    const next =
+      member.checks === undefined
+        ? { ...settings, required: member.required, defaultValue: member.required ? undefined : settings.defaultValue }
+        : { ...memberSettings(member), options: member.options ?? settings.options };
+    let working = chain;
+    if (holdsMembers(chain.kind) && member.members !== undefined && readMembers(chain, file, within.depth) !== undefined) {
+      const inner = rewrittenMembers(within.located, chain, { name: member.name, members: member.members }, within.depth);
+      if (!inner.ok) {
+        return inner;
+      }
+      working = { ...chain, base: inner.value.base };
+    }
+    if (working !== chain || JSON.stringify(next) !== JSON.stringify(settings)) {
+      value = writeChain(working, next);
+    }
+  }
+  if (key === undefined) {
+    // A shorthand member names its schema's constant, which only a rename has to spell out.
+    return { ok: true, value: value === schema?.getText(file) ? property.getText(file) : `${property.name.getText(file)}: ${value}` };
+  }
+  return { ok: true, value: `${key}: ${value}` };
+}
+
+// A new field of a group, with its settings and (for a group, a repeater or a list) its fields or items.
+function newMemberText(member: SettingsMember, depth: number): string | undefined {
+  assert(depth <= COLLECTION_SETTINGS_LIMITS.memberDepthMax + 1, 'A group nests within its bound');
+  const kind = SETTINGS_FIELD_KIND_NEW.find((candidate) => candidate === member.kind);
+  if (kind === undefined || kind === 'reference' || kind === 'multiReference') {
+    return undefined;
+  }
+  const contents: Contents = {
+    members: holdsMembers(kind) ? member.members : undefined,
+    itemKind: kind === 'list' && member.itemKind !== 'other' ? member.itemKind : undefined,
+    depth,
+  };
+  return `${keyText(member.name, { quoted: false })}: ${settledFieldText(kind, '', memberSettings(member), contents)}`;
+}
+
+const SETTINGS_FIELD_KIND_NEW: readonly NewFieldKind[] = SETTINGS_FIELD_KINDS.filter((kind): kind is NewFieldKind => kind !== 'other');
 
 // A field's schema as written: `name: schema`, or `name` alone naming a constant.
 function schemaOf(property: ts.ObjectLiteralElementLike): ts.Expression | undefined {
@@ -190,6 +439,8 @@ function addField(
     readonly fieldKind: NewFieldKind;
     readonly target: string | undefined;
     readonly settings: FieldSettings;
+    readonly members?: readonly SettingsMember[] | undefined;
+    readonly itemKind?: ItemKind | undefined;
   },
   existing: ts.ObjectLiteralElementLike | undefined,
 ): Result<readonly SpanEdit[], Described> {
@@ -203,9 +454,9 @@ function addField(
     return err(described('cmsBackend.schema.notCollection', { name: target }));
   }
   const key = keyText(field.name, { quoted: false });
-  const added = `${key}: ${settledFieldText(field.fieldKind, target, field.settings)}`;
+  const added = `${key}: ${settledFieldText(field.fieldKind, target, field.settings, { members: holdsMembers(field.fieldKind) ? field.members : undefined, itemKind: field.itemKind })}`;
   const texts = [...object.properties.map((property) => property.getText(file)), added];
-  const imaging = field.fieldKind === 'image' || field.fieldKind === 'multiImage';
+  const imaging = field.fieldKind === 'image' || field.fieldKind === 'multiImage' || usesImage(field.members ?? []);
   const scope = imaging ? imageScope(located) : { ok: true as const, value: [] };
   if (!scope.ok) {
     return scope;
@@ -215,8 +466,8 @@ function addField(
 }
 
 /** A new field's schema with its settings written in, as an existing field's would be. */
-export function settledFieldText(kind: NewFieldKind, target: string, settings: FieldSettings): string {
-  const plain = newFieldText(kind, target);
+export function settledFieldText(kind: NewFieldKind, target: string, settings: FieldSettings, contents: Contents = {}): string {
+  const plain = newFieldText(kind, target, contents);
   const file = ts.createSourceFile('field.ts', `(${plain})`, ts.ScriptTarget.Latest, true);
   const statement = file.statements[0];
   assert(statement !== undefined, 'A new field’s schema parses');
@@ -230,8 +481,9 @@ export function settledFieldText(kind: NewFieldKind, target: string, settings: F
 }
 
 /** The schema a new field of `kind` is written as. */
-export function newFieldText(kind: NewFieldKind, target: string): string {
+export function newFieldText(kind: NewFieldKind, target: string, contents: Contents = {}): string {
   const pointed = `reference(${JSON.stringify(target)})`;
+  const shape = membersText(contents.members, contents.depth ?? 0);
   const schemas: Readonly<Record<NewFieldKind, string>> = {
     text: 'z.string()',
     richText: 'z.string()',
@@ -249,13 +501,49 @@ export function newFieldText(kind: NewFieldKind, target: string): string {
     file: 'z.string()',
     reference: pointed,
     multiReference: `z.array(${pointed})`,
-    list: 'z.array(z.string())',
-    group: 'z.object({ title: z.string().optional() })',
+    list: `z.array(${itemSchema(contents.itemKind ?? 'text', shape)})`,
+    repeater: `z.array(${itemSchema('group', shape)})`,
+    group: `z.object(${shape})`,
     keyValue: 'z.record(z.string(), z.string())',
     constant: "z.literal('value')",
     any: 'z.unknown()',
   };
   return `${schemas[kind]}.optional()`;
+}
+
+/** What a new group or list is written with beyond its kind: a group's fields, a list's item kind. */
+export interface Contents {
+  readonly members?: readonly SettingsMember[] | undefined;
+  readonly itemKind?: ItemKind | undefined;
+  /** How deep the group being written sits, for the bound on nesting. */
+  readonly depth?: number | undefined;
+}
+
+// One list item's schema: a plain value, or a group written with `shape`.
+function itemSchema(item: ItemKind, shape: string): string {
+  const schemas: Readonly<Record<ItemKind, string>> = {
+    text: 'z.string()',
+    number: 'z.number()',
+    link: 'z.string().url()',
+    email: 'z.string().email()',
+    switch: 'z.boolean()',
+    date: 'z.coerce.date()',
+    group: `z.object(${shape})`,
+  };
+  return schemas[item];
+}
+
+// A new group's fields as the `{ … }` it is written with; with none given, a title.
+function membersText(members: readonly SettingsMember[] | undefined, depth: number): string {
+  if (members === undefined) {
+    return '{ title: z.string().optional() }';
+  }
+  const texts = members.map((member) => newMemberText(member, depth + 1));
+  assert(
+    texts.every((text) => text !== undefined),
+    'A new group holds only fields a form can make',
+  );
+  return `{ ${texts.join(', ')} }`;
 }
 
 // `image()` comes from the schema's function: a schema written as an object becomes
@@ -542,6 +830,8 @@ function fieldOf(property: ts.ObjectLiteralElementLike, file: ts.SourceFile): Se
       ...readChain(chain),
       editable: true,
       target: referenceTarget(property),
+      members: holdsMembers(chain.kind) ? readMembers(chain, file) : undefined,
+      itemKind: readItemKind(chain, file),
     },
   ];
 }
@@ -588,6 +878,10 @@ function refinedKind(kind: SettingsFieldKind, base: ts.CallExpression, steps: re
     return kind;
   }
   const item = base.arguments[0];
+  // A list of groups is a repeater, however its items are chained.
+  if (objectShape(item) !== undefined) {
+    return 'repeater';
+  }
   const callee = item !== undefined && ts.isCallExpression(item) ? item.expression : undefined;
   if (callee !== undefined && ts.isIdentifier(callee)) {
     return callee.text === 'image' ? 'multiImage' : callee.text === 'reference' ? 'multiReference' : 'list';

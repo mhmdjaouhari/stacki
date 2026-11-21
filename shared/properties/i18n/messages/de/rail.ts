@@ -14,13 +14,23 @@ export const messages = {
   'rail.components': 'Komponenten',
   'rail.editorPanels': 'Editor-Bereiche',
   'rail.history': 'Git', // same
-  'rail.instructions': 'Anweisungen',
   'rail.more': 'Mehr',
+  'rail.moveToBottom': 'In die untere Gruppe verschieben',
+  'rail.moveToTop': 'In die obere Gruppe verschieben',
+  'rail.movedBottom': '{label}: untere Gruppe, Position {position} von {count}',
+  'rail.movedTop': '{label}: obere Gruppe, Position {position} von {count}',
   'rail.navigator': 'Navigator', // same
+  'rail.orderMenu': 'Reihenfolge der Leiste',
   'rail.pages': 'Seiten',
   'rail.properties': 'Eigenschaften',
+  'rail.reset': 'Reihenfolge der Leiste zurücksetzen',
+  'rail.resetDone': 'Reihenfolge der Leiste zurückgesetzt',
   'rail.selectors': 'Stil-Selektoren',
   'rail.settings': 'Einstellungen',
+  'rail.settingsOrder.description': 'Ziehe die Symbole in der Seitenleiste, um sie umzuordnen. Auf die Standardreihenfolge zurücksetzen.',
+  'rail.settingsOrder.done': 'Seitenleistenreihenfolge zurückgesetzt',
+  'rail.settingsOrder.label': 'Reihenfolge der Seitenleistensymbole',
+  'rail.settingsOrder.reset': 'Auf Standard zurücksetzen',
   'rail.variables': 'Variablen',
   'rail.withShortcut': '{label} ({shortcut})', // same
 } as const satisfies CatalogOf<MessageKey>;

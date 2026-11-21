@@ -15,7 +15,7 @@ export const messages = {
   'settings.breakpoints.defaultName.up1': 'Extragrande',
   'settings.breakpoints.defaultName.up2': 'Ultra', // same
   'settings.breakpoints.desktop': 'Desktop', // same
-  'settings.breakpoints.desktopNote': 'Largura do quadro na visualização lado a lado. Nunca usada como media query.',
+  'settings.breakpoints.desktopNote': 'Largura do Desktop no canvas e lado a lado, em escala para caber. Nunca usada como media query.',
   'settings.breakpoints.error.desktopFlips': '{name} ({limit}) ficaria do outro lado do Desktop.',
   'settings.breakpoints.error.file': 'Não foi possível usar o arquivo de breakpoints, então os padrões aparecem e o arquivo fica como está. {message}',
   'settings.breakpoints.error.name': 'Um nome tem de 1 a {maximum} caracteres, e cada um é diferente.',
@@ -149,6 +149,9 @@ export const messages = {
   'settings.editor.ai.askBeforeTrust.info':
     'Desativado: abrir o chat de IA em um projeto deixa Claude e Codex trabalharem nele, e isso é lembrado. Os agentes também executam os hooks e servidores .mcp.json do projeto.',
   'settings.editor.ai.askBeforeTrust.label': 'Perguntar antes de permitir agentes em um novo projeto',
+  'settings.editor.ai.reviewChanges.info':
+    'Desligado: as alterações de IA são aplicadas na hora e mostram “Aplicado”, com Desfazer. Ligado: cada arquivo espera Manter ou Desfazer.',
+  'settings.editor.ai.reviewChanges.label': 'Pedir para manter alterações de IA',
   'settings.editor.ai.trackChanges.info':
     'Salva um instantâneo oculto antes e depois de cada turno de IA para mostrar alterações. Não adiciona commits ao seu histórico. Desativado é mais rápido em projetos grandes.',
   'settings.editor.ai.trackChanges.label': 'Instantâneo antes e depois de cada alteração de IA',
@@ -170,7 +173,7 @@ export const messages = {
   'settings.empty.folders': 'Abra um projeto para escolher suas pastas.',
   'settings.empty.instructions': 'Abra um projeto para escolher o que o painel Instruções oculta.',
   'settings.empty.roles': 'Abra um projeto para definir seus papéis.',
-  'settings.empty.styles': 'Abra um projeto para definir com o que suas novas tags style começam.',
+  'settings.empty.styles': 'Abra um projeto para definir onde vão os seus novos estilos.',
   'settings.empty.studio': 'Abra um projeto para adicionar o Stacki Studio.',
   'settings.folders.cms.info': 'Coleções e arquivos de dados que o painel CMS lista.',
   'settings.folders.collections.info': 'Lidas da configuração de conteúdo do Astro.',
@@ -244,6 +247,20 @@ export const messages = {
   'settings.roles.components.shownBy': 'exibido pela pasta {folder}',
   'settings.roles.components.shownOwn': 'exibido apesar da pasta',
   'settings.roles.components.title': 'Componentes',
+  'settings.roles.detail.back': 'Voltar aos papéis',
+  'settings.roles.detail.label': '{section} · {name}', // same
+  'settings.roles.detail.noMatch': 'Nada corresponde a “{query}”',
+  'settings.roles.detail.search.members': 'Buscar membros',
+  'settings.roles.detail.search.pins': 'Buscar apps',
+  'settings.roles.detail.search.permissions': 'Buscar permissões',
+  'settings.roles.summary.ofTotal': '{count} de {total}',
+  'settings.roles.members.title': 'Membros',
+  'settings.roles.components.showAll': 'Mostrar tudo',
+  'settings.roles.components.hideAll': 'Ocultar tudo',
+  'settings.roles.summary.open': 'Abrir {section} de {name}',
+  'settings.roles.invite.passkeyNote': 'Convites com passkey são criados no Studio',
+  'settings.roles.invite.email.label': 'Adicionar um e-mail a {name}',
+  'settings.roles.invite.email.placeholder': 'Adicionar e-mail',
   'settings.roles.permissions.all': 'Tudo',
   'settings.roles.permissions.allLabel': 'Tudo em {group}',
   'settings.roles.permissions.count': '{granted} de {total} ativas',
@@ -262,7 +279,6 @@ export const messages = {
   'settings.roles.pins.rowIgnored': '{app}, {reason}', // same
   'settings.roles.pins.title': 'Apps da barra lateral',
   'settings.roles.pins.unpin': 'Desafixar {app}',
-  'settings.roles.readOnly': 'Só admins podem alterar papéis.',
   'settings.roles.screen.label': 'Papéis do projeto',
   'settings.roles.section.access': 'Acesso',
   'settings.roles.section.roles': 'Papéis',
@@ -271,6 +287,16 @@ export const messages = {
   'settings.roles.viewAs.label': 'Ver como',
   'settings.saved': 'Salvo',
   'settings.saving': 'Salvando…',
+  'settings.newStyles.component.info':
+    'Onde vão os novos estilos em um componente: um arquivo CSS do projeto ou uma tag style. As regras vão no último bloco @layer ou @media, ou em /* stacki:rules */.', // review
+  'settings.newStyles.component.title': 'Estilos criados em um componente', // review
+  'settings.newStyles.createTag': 'Criar uma tag style', // review
+  'settings.newStyles.location.label': 'Novos estilos vão em', // review
+  'settings.newStyles.missing': '{path} não foi encontrado. Os novos estilos usam uma tag style até você escolher outro arquivo.', // review
+  'settings.newStyles.missingHint': 'Não encontrado', // review
+  'settings.newStyles.page.info':
+    'Onde vão os novos estilos em uma página: um arquivo CSS do projeto ou uma tag style. As regras vão no último bloco @layer ou @media, ou em /* stacki:rules */.', // review
+  'settings.newStyles.page.title': 'Estilos criados em uma página', // review
   'settings.secrets.empty.noFileBody': 'Ainda não há arquivo {file}. Adicionar um segredo cria o arquivo.', // review
   'settings.secrets.error.tooLarge': 'O arquivo {file} é grande demais para ser editado aqui.',
   'settings.secrets.error.notText': 'UTF-8 inválido, então o Stacki não mexe no {file}.',
@@ -315,19 +341,24 @@ export const messages = {
   'settings.secrets.reveal.action': 'Revelar {name}',
   'settings.secrets.revealAll': 'Revelar todos',
   'settings.secrets.save': 'Salvar',
-  'settings.secrets.tab': 'Segredos',
   'settings.secrets.title': 'Segredos',
   'settings.secrets.tracked.warning': '{file} está commitado no Git', // review
   'settings.secrets.value': 'Valor',
   'settings.secrets.valueHidden': 'Valor oculto',
+  'settings.back': 'Voltar às configurações',
+  'settings.collapseAll': 'Recolher tudo',
+  'settings.expandAll': 'Expandir tudo',
+  'settings.options': 'Opções das configurações',
+  'settings.refresh': 'Atualizar',
+  'settings.instructions.search.noMatch': 'Nenhuma instrução corresponde',
+  'settings.instructions.search.placeholder': 'Buscar instruções',
+  'settings.section.mcp': 'MCP', // same
+  'settings.section.instructions': 'Instruções',
+  'settings.section.secrets': 'Segredos',
   'settings.sections': 'Seções das configurações',
   'settings.studio.info': 'Edição e colaboração no navegador para este projeto. A configuração instala o Studio localmente e guia a implantação na nuvem.',
   'settings.styleTags.error.save': 'Não foi possível salvar as configurações das tags style. {message}',
-  'settings.styleTags.hint': 'As regras vão no último bloco @layer ou @media, ou onde você escrever {token}.',
-  'settings.styleTags.info':
-    'Com o que uma tag style nova começa quando o painel de estilos cria uma: seus atributos e seu conteúdo. Salvo com o projeto em .stacki/styles.json.',
   'settings.styleTags.invalid': 'Inválido',
-  'settings.styleTags.title': 'Novas tags style',
   'settings.tab.audits': 'Auditorias',
   'settings.tab.breakpoints': 'Breakpoints', // same
   'settings.tab.cms': 'Conexões de CMS',
@@ -335,7 +366,7 @@ export const messages = {
   'settings.tab.folders': 'Pastas',
   'settings.tab.instructions': 'Instruções',
   'settings.tab.roles': 'Papéis',
-  'settings.tab.styles': 'Tags style',
+  'settings.tab.styles': 'Locais dos novos estilos',
   'settings.tab.studio': 'Stacki Studio', // same
   'settings.mcp.add.docs': 'Guia de configuração de {name}',
   'settings.mcp.add.name': 'Nome do servidor',
@@ -500,7 +531,6 @@ export const messages = {
   'settings.mcp.summary.command': 'Executa um comando · {command}',
   'settings.mcp.summary.remote': 'Servidor remoto · {host}',
   'settings.mcp.summary.remoteSse': 'Servidor remoto (SSE) · {host}',
-  'settings.mcp.tab': 'MCP', // same
   'settings.mcp.title': 'Servidores MCP',
   'settings.mcp.unavailable': 'Reinicie o Stacki para usar os servidores MCP.',
   'settings.mcp.value.hide': 'Ocultar {name}',
@@ -508,6 +538,12 @@ export const messages = {
   'settings.mcp.view.json': 'JSON', // same
   'settings.mcp.view.label': 'Visualização',
   'settings.mcp.view.ui': 'Servidores',
+  'settings.hosted.mcp.info':
+    'Os servidores MCP ficam no .mcp.json do projeto, que os agentes do seu computador leem. O Studio hospedado ainda não pode mostrá-los nem editá-los.',
+  'settings.hosted.mcp.line': 'Ainda indisponível no Studio hospedado. Use o Stacki Desktop.',
+  'settings.hosted.secrets.info':
+    'Os segredos ficam no arquivo .env do projeto, que nunca é commitado, então o Studio hospedado não pode lê-los nem alterá-los.',
+  'settings.hosted.secrets.line': 'Indisponível no Studio hospedado. Use o Stacki Desktop.',
   'settings.title': 'Configurações',
   'settings.folders.loading': 'Carregando pastas…',
   'settings.folders.aria': 'Pastas do projeto',

@@ -44,6 +44,7 @@ export const messages = {
   'ai.agent.switch.newChat': 'Passe à une nouvelle conversation',
   'ai.agent.switch.title': 'Changer d’agent (Claude ou Codex)',
   'ai.bridge.unexpectedReply': 'Réponse inattendue de Stacki : {detail}',
+  'ai.changes.applied': 'Appliqué',
   'ai.changes.deleted': 'Supprimé',
   'ai.changes.filesChanged': {
     one: '{count} fichier modifié',
@@ -68,6 +69,7 @@ export const messages = {
   'ai.changes.untracked.off': 'Les instantanés sont désactivés',
   'ai.changes.untracked.turnOn': 'Activer',
   'ai.changes.untracked.unavailable': 'Les modifications de ce tour n’ont pas pu être capturées',
+  'ai.code.copy': 'Copier le code',
   'ai.common.copied': 'Copié',
   'ai.common.copyDetails': 'Copier les détails',
   'ai.common.copyFailed': 'Copie impossible',
@@ -114,6 +116,7 @@ export const messages = {
     '{agent} modifiera des fichiers et exécutera des commandes sans demander d’abord. Les fichiers modifiés pourront être conservés ou annulés ensuite ; les commandes exécutées ne pourront pas être annulées.',
   'ai.composer.mode.confirm.cancel': 'Continuer à demander',
   'ai.composer.mode.confirm.title': 'Utiliser {mode} ?',
+  'ai.composer.mode.dangerTitle': 'Mode : {mode}. {agent} agit sans demander avant.',
   'ai.composer.mode.locked': 'Le mode change quand l’agent a terminé',
   'ai.composer.mode.plan': 'Plan', // same
   'ai.composer.mode.planHint': 'Crée un plan avant de faire des modifications',
@@ -238,6 +241,10 @@ export const messages = {
   'ai.image.prepare': 'Impossible de préparer cette image.',
   'ai.image.size': 'Chaque image doit faire moins de 20 Mo.',
   'ai.image.type': 'Choisissez une image PNG, JPEG, WebP ou GIF.',
+  'ai.markdown.openLink': 'Ouvrir {url}',
+  'ai.markdown.table': 'Tableau',
+  'ai.markdown.taskDone': 'Terminé',
+  'ai.markdown.taskOpen': 'À faire',
   'ai.mention.builtin.appBuilder.description': 'Instructions pour créer une app Stacki. Cliquez pour les copier.',
   'ai.mention.builtin.appBuilder.title': 'Instructions de création d’app',
   'ai.mention.group.builtin': 'Intégré',
@@ -245,6 +252,9 @@ export const messages = {
   'ai.mention.group.skill': 'Skills', // same
   'ai.mention.skillTitle': 'Skill {name} ({path})',
   'ai.mention.skillTitleShort': 'Skill {name}',
+  'ai.menu.reviewChanges': 'Me demander de conserver les modifications d’IA',
+  'ai.menu.reviewChanges.info':
+    'Désactivé : les modifications s’appliquent aussitôt et peuvent être annulées. Activé : vous choisissez Conserver ou Annuler pour chaque fichier.',
   'ai.message.actions': 'Actions du message',
   'ai.message.copy': 'Copier le message',
   'ai.message.edit': 'Modifier le message',
@@ -293,6 +303,8 @@ export const messages = {
   'ai.queue.remove': 'Retirer le message en attente',
   'ai.queue.resume': 'Reprendre',
   'ai.queue.sendNow': 'Envoyer maintenant',
+  'ai.quick.label': 'Réponses suggérées',
+  'ai.quick.send': 'Envoyer « {option} »',
   'ai.sessions.actionsFor': 'Actions pour {name}',
   'ai.sessions.actionsMenu': 'Actions de {name}',
   'ai.sessions.addSection': 'Ajoutez une section pour regrouper les conversations',

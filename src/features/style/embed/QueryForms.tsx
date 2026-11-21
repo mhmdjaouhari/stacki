@@ -37,7 +37,7 @@ import {
 } from '../model/resolved';
 import { selectorLayerOf } from '../model/selectors';
 import type { ElementSnapshot, ParsedRule } from '../model/styleTypes';
-import { type LiveSetProp } from './EditorBasics';
+import { type LiveSetProp, type SetProp } from './EditorBasics';
 import type { PreviewProp } from '../connectFieldHelpers';
 import { usePanelLayer } from './editorModel';
 import { type SourceOption, type SelectorSuggestion } from './LayoutRows';
@@ -737,9 +737,9 @@ export type StyleCardProps = {
   /** Whether the selected element's chips have finished landing (ScanState.settled). */
   selectionSettled: boolean;
   /**
-   * The selected element has not been read yet: nothing about its rules is known, so a field
-   * drawn now would be the plain default that the real answer then replaces. The sections
-   * draw placeholders in the fields' shape until it lands.
+   * The selected element has no settled answer yet: a field drawn now would be the plain default
+   * that the real answer then replaces. The sections keep showing what they showed, untouchable,
+   * until it lands (bounded by the canvas's own deadline).
    */
   selectionAwaiting: boolean;
   cssCodeOpen: boolean;
@@ -782,7 +782,8 @@ export type StyleCardProps = {
   resolving: boolean;
   busy: boolean;
   pending: boolean;
-  setProp: (prop: string, value: string, important: boolean) => void;
+  /** Settles once the save and the model rebuild behind it are done; undefined when nothing waits (EditorBasics.ts SetProp). */
+  setProp: SetProp;
   clearProp: (prop: string | string[]) => Promise<void>;
   liveSetProp: LiveSetProp;
   /** The picker's hover preview: shown on the canvas, never written (connectFieldHelpers' PreviewProp). */

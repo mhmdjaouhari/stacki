@@ -76,8 +76,9 @@
   color: var(--text-faint);
 }
 /* The check ends the row, so icons and images align down the left edge (a
-   rule across the app). Its column is kept empty on unchecked rows, so labels
-   never shift; after a hint it follows the hint rather than splitting the gap. */
+   rule across the app). An unchecked row draws no check column at all, so its hint
+   or label ends at the same right edge as a check does; labels do not shift, since
+   they take the rest of the row. After a hint the check follows the hint. */
 .dd-check {
   width: 16px;
   display: flex;
@@ -91,14 +92,19 @@
   margin-left: auto;
   padding-left: 10px;
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-faint);
   flex-shrink: 0;
+  white-space: nowrap;
 }
 .dd-option.highlight .dd-hint {
   color: rgba(255, 255, 255, 0.8);
 }
 .dd-hint ~ .dd-check {
   margin-left: 0;
+}
+.dd-check:empty {
+  display: none;
 }
 /* A row that removes something (an app menu's Remove): highlighted, its fill,
    text and icon all turn red together, as the editor's ⋯ menus' danger rows do
@@ -204,4 +210,48 @@
 /* Skeleton rows for options still arriving, at the width of a row's text. */
 .dd-loading {
   padding: 4px 8px;
+}
+
+/* The "New …" row sits after every option, set apart by space rather than a line; picked, it becomes a field in place. */
+.dd-create {
+  margin-top: 4px;
+  color: var(--text-dim);
+}
+.dd-create:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.dd-create-edit {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.dd-create-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 4px 0 8px;
+  border-radius: 5px;
+  background: var(--bg-input);
+}
+.dd-create-field input {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  outline: none;
+}
+.dd-create-error {
+  padding: 0 8px 2px;
+  font-size: 11px;
+  color: #ff8a8a;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }

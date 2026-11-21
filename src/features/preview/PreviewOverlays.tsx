@@ -8,6 +8,7 @@ import { pseudoPath, type PseudoLayer } from '../../../shared/page/pseudoPath';
 import type { Box } from './outlineBoxes';
 import type { PreviewMessage } from './previewMessages';
 import { NO_TEXT_MARKS, type TextMarks } from './previewMessages';
+import { ownerClasses } from './textOwnerState';
 import { copiesToDraw, hoverIsSelection, loopChildPaths, collapseKind, onePerPlace, outlineBoxPath, unionBox } from './outlineBoxes';
 import { clipBand, spacingBands, withLiveSpacing, type CollapsePartner } from './spacingBands';
 import {
@@ -37,6 +38,8 @@ export interface OverlayInfo {
   readonly childCount: number;
   readonly isLayout: boolean;
   readonly bound: boolean;
+  /** A `<slot>`: it renders the host page's content, which cannot be picked from the component that holds it. */
+  readonly hostContent?: boolean | undefined;
 }
 
 export interface SpacingHover {
@@ -172,7 +175,15 @@ function collapseKey(partner: CollapsePartner) {
 function NodeOutlines(props: PreviewOverlaysProps) {
   // An app's highlight (`canvas.highlight`), in its own slot: the real selection and hover are untouched beside it.
   const highlight = useSyncExternalStore(subscribeCanvasHighlight, canvasHighlight, canvasHighlight);
-  const outlines = outlineTargets(props, highlight);
+  const targets = outlineTargets(props, highlight);
+  // A hovered slot always reads muted, even when it is the selection: its muted hover draws beside the selected outline.
+  const slotHover =
+    highlight === undefined && props.hoverPath && props.hoverPseudo === undefined && !targets.some((target) => target.slot === 'hover')
+      ? props.overlayInfo?.(props.hoverPath)?.hostContent === true
+      : false;
+  const outlines: readonly OutlineTarget[] = slotHover
+    ? [{ path: props.hoverPath ?? '', slot: 'hover', type: 'hover', occ: props.hoverOcc, pseudo: undefined }, ...targets]
+    : targets;
   return outlines.flatMap((outline) => {
     if (outline.pseudo !== undefined) {
       return <PseudoOutline key={`${outline.slot}-pseudo`} outline={outline} rects={props.rects} scale={props.scale} />;
@@ -188,14 +199,22 @@ function NodeOutlines(props: PreviewOverlaysProps) {
     // A loop is every copy; anything else is the copy it names (copiesToDraw).
     const loop = info.nodeKind === 'map' ? loopBox(props.rects, outline.path, info.childCount) : undefined;
     const boxes = loop !== undefined ? [loop] : copiesToDraw(all, outline.occ);
+    // Hovering a slot says nothing inside it can be picked: a muted fill, not the accent. Picking the slot itself stays as it was.
+    const muted = info.hostContent && outline.type === 'hover';
     return boxes.map((box, index) => {
       const collapse = collapseKind(box);
       return (
         <div
           key={`${outline.slot}-${index}`}
-          className={`node-outline ${outline.type} ${info.kind}${info.bound ? ' bound' : ''}${collapse === 'none' ? '' : ` collapsed is-${collapse}`}${
-            outline.type === 'sel' ? textMarkState(props.textMarks, { pointedAt: props.hoverPath === outline.path }) : ''
-          }`}
+          className={`node-outline ${outline.type} ${info.kind}${info.bound ? ' bound' : ''}${muted ? ` host-content${props.selPath === outline.path ? ' is-selected' : ''}` : ''}${collapse === 'none' ? '' : ` collapsed is-${collapse}`}${ownerClasses(
+            props.textMarks,
+            {
+              ownable: info.kind === 'component' && !info.isLayout,
+              path: outline.path,
+              slot: outline.slot === 'highlight' ? 'highlight' : outline.type === 'sel' ? 'sel' : 'hover',
+              pointedAt: props.hoverPath === outline.path,
+            },
+          )}`}
           style={boxStyle(box, props.scale)}
         >
           <span className={`node-outline-tag ${box.y * props.scale < 20 ? 'inside' : ''}`}>
@@ -310,7 +329,7 @@ function PseudoOutline({ outline, rects, scale }: { readonly outline: OutlineTar
   ));
 }
 
-function outlineIcon(info: OverlayInfo): React.ReactNode {
+export function outlineIcon(info: OverlayInfo): React.ReactNode {
   const size = 11;
   if (info.isLayout) {
     return <LayoutIcon size={size} />;
@@ -320,7 +339,7 @@ function outlineIcon(info: OverlayInfo): React.ReactNode {
     if (info.kind === 'element') {
       return <CustomElementIcon size={size} />;
     }
-    return info.astroAsset ? astroAssetIcon(info.label, size) : <ElementComponentIcon size={size} />;
+    return info.astroAsset ? astroAssetIcon(info.label, size, undefined, 'inherit') : <ElementComponentIcon size={size} />;
   }
   switch (info.nodeKind) {
     case 'map':
@@ -392,18 +411,6 @@ function tagsCollide(instance: Box, mark: Box, scale: number): boolean {
     return verticalPx < TAG_HEIGHT_PX;
   }
   return false;
-}
-
-// How the selected instance shows the state of its text. While one is
-// picked it reads as that text's parent, tinted when the pointer is on the
-// instance beside the text rather than on it. Pointing at any other text of
-// it tints it too, as pointing at a component does.
-function textMarkState(marks: TextMarks | undefined, pointer: { readonly pointedAt: boolean }): string {
-  const picked = marks?.picked;
-  const hover = marks?.hover;
-  const onOtherText = hover !== undefined && !sameBox(hover, picked);
-  const besideText = picked !== undefined && pointer.pointedAt && hover === undefined;
-  return (picked ? ' parent' : '') + (onOtherText || besideText ? ' tinted' : '');
 }
 
 function sameBox(left: Box, right: Box | undefined): boolean {

@@ -43,17 +43,30 @@ import {
 } from '../properties/mediaHosting';
 import { parseSecretReadIndex, parseSecretsChange, parseSecretsFileName, parseSecretsIgnorableFile, parseSecretsRevision } from '../properties/secrets';
 import { parseMcpChange, parseMcpCodexChange, parseMcpRevision, parseMcpServerName, parseMcpTextInput } from '../properties/mcp';
-import { parseConnectionKeyCopy, parseDataSampleRequest, parseEnvPayloadName, parsePageTemplateDraft, parseSecretValue } from '../properties/pageTemplate';
+import {
+  parseConnectionKeyCopy,
+  parseDataSampleRequest,
+  parseDataSource,
+  parseEnvPayloadName,
+  parsePageTemplateDraft,
+  parseSecretValue,
+} from '../properties/pageTemplate';
+import { parsePageSettingsDirection, parsePageSettingsRequest } from '../properties/pageSettings';
+import { parsePageBulkRemoveRequest } from '../properties/pageBulkRemove';
+import { renamePath } from '../properties/pageRename';
 import { parseAstroRemoteEdit, parseAstroRemoteRead } from '../properties/astroContent';
+import { parseStudioAuth } from './studioAuth';
 import { parseRepositoryRequest } from '../ipc/publishRepository';
 import { parseCanvasCreate, defaultsCanvasFile } from '../properties/defaultsCanvas';
 import { parseDiscoveryRequest } from '../properties/publishDiscovery';
 import { parsePublishCommitMessage, parsePublishTarget } from '../properties/publishConfig';
 import { metadataKind, parseMetadataWrite } from '../properties/projectMetadata';
 import { parseInstructionFilePath, parseInstructionPath } from '../properties/instructions';
-import { parseComponentOpTarget } from '../properties/componentOps';
+import { parseComponentOpTarget, parseComponentUses } from '../properties/componentOps';
 import { parseComponentRenameRequest, parseRenameDirection } from '../properties/componentRename';
 import { parseComponentSubfolder } from '../properties/componentNaming';
+import { parseClassUsageNames } from '../properties/classUsage';
+import { parseStyleMoveJournal, parseStyleMoveTarget } from '../properties/styleMoveJournal';
 import { parseGitHubLoginQuery } from '../properties/projectRoles';
 import { parseSelectorFileChanges, parseSelectorFileDigests, parseSelectorIds } from '../properties/selectorUsage';
 import { parseCreatePackageManager } from '../properties/packageManager';
@@ -64,6 +77,7 @@ import { parseCommitAvatarRequest } from './commitAvatars';
 import { parsePreferenceName } from './preferences';
 import { parseStudioSource } from './studioSetup';
 import { parseStudioRequestId } from './studioProgress';
+import { parseUpdateAction } from './updateState';
 import { parsePropertyChange, propertyName, propertySource } from '../properties/propertyEditing';
 import { parseEdit, parseEditBatchRequest, parseEditRequest } from '../engine/editRequest';
 import { parsePreviewRender } from '../page/previewToken';
@@ -309,7 +323,10 @@ export const IPC_PAYLOADS = {
     ...project,
     source: parseStudioSource,
     requestId: parseStudioRequestId,
+    // Absent means GitHub, Studio's default sign-in.
+    auth: optional(parseStudioAuth),
   }),
+  'studio:setAuth': object({ ...project, auth: parseStudioAuth }),
   'assets:delete': object({ ...relative }),
   'assets:dimensions': object({ ...relative }),
   'assets:list': pathText,
@@ -347,7 +364,9 @@ export const IPC_PAYLOADS = {
   'component:rename': object({ ...project, request: parseComponentRenameRequest }),
   'component:revertRename': object({ token: text, direction: parseRenameDirection }),
   'component:duplicate': object({ ...project, target: parseComponentOpTarget }),
-  'component:remove': object({ ...project, target: parseComponentOpTarget }),
+  'component:planRemove': object({ ...project, target: parseComponentOpTarget }),
+  // `uses`: 'remove' takes every instance and import out with the file; 'refuse' (a duplicate's undo) refuses a used one.
+  'component:remove': object({ ...project, target: parseComponentOpTarget, uses: parseComponentUses }),
   'component:restoreRemoved': object({ token: text }),
   // `folders`: the folders the creation made (its reply), each removed once empty; main removes only folders inside a component folder.
   'component:discard': object({ ...project, path: pathText, checksum: digest, force: maybeFlag, folders: optional(list(pathText)) }),
@@ -364,6 +383,13 @@ export const IPC_PAYLOADS = {
   // What deleting a prop would do across the site, for its confirmation; the deletion itself is `component:editProperties`.
   'component:previewPropertyRemoval': object({ ...project, file: pathText, name: propertyName }),
   'component:usage': object({ ...named, exclude: optional(text) }),
+  // Create component's "Move styles": which files other than the page mention each class (shared/properties/classUsage.ts).
+  'component:classUsage': object({ ...project, pagePath: pathText, classes: parseClassUsageNames }),
+  // The "Move styles" journal: its plan recorded before the move writes, cleared once whole, and a stopped one resolved.
+  'styleMove:record': object({ ...project, journal: parseStyleMoveJournal }),
+  'styleMove:clear': object({ ...project, id: text }),
+  'styleMove:pending': object({ ...project }),
+  'styleMove:resolve': object({ ...project, id: text, target: parseStyleMoveTarget }),
   'content:collections': pathText,
   'content:config': object({ ...project, force: maybeFlag }),
   'content:entries': object({ ...named }),
@@ -664,6 +690,17 @@ export const IPC_PAYLOADS = {
     projectPath: maybePath,
   }),
   'page:move': object({ ...project, from: pathText, to: pathText }),
+  // The Page settings dialog (pageSettings.ts): the plan its confirm step shows, the step itself (rename, homepage swap,
+  // duplicate, delete: all files or none, one undo token), its undo and redo, and a template page's settings read back
+  // and changed. Pages are named relative to src/pages.
+  'page:planSettings': object({ ...project, request: parsePageSettingsRequest }),
+  'page:applySettings': object({ ...project, request: parsePageSettingsRequest }),
+  'page:revertSettings': object({ token: text, direction: parsePageSettingsDirection }),
+  // The Pages panel's Select mode (pageBulkRemove.ts): the plan its confirm shows and the deletion itself, several pages and folders as one step with one undo token.
+  'page:planRemoveMany': object({ ...project, request: parsePageBulkRemoveRequest }),
+  'page:removeMany': object({ ...project, request: parsePageBulkRemoveRequest }),
+  'page:readTemplate': object({ ...project, page: renamePath }),
+  'page:retargetTemplate': object({ ...project, page: renamePath, source: parseDataSource }),
   'page:parse': object({ pagePath: pathText, source: text }),
   // An edit request planned against `source` (the bytes at authoredChecksum)
   // and never written: reviewing an .astro page's unsaved gestures in code.
@@ -720,7 +757,8 @@ export const IPC_PAYLOADS = {
   'style:listAstroStyles': pathText,
   'style:listFiles': pathText,
   'style:readFile': pathText,
-  'style:writeFile': object({ filePath: pathText, css: text, announce: maybeFlag }),
+  // `expected`: write only while the file still holds exactly this text (Create component's "Move styles"), checked by its actor.
+  'style:writeFile': object({ filePath: pathText, css: text, announce: maybeFlag, expected: optional(text) }),
   'style:selectorUsage': object({ ...project, packages: optional(packageSearch) }),
   'style:removeSelectors': object({ ...project, ids: parseSelectorIds, files: parseSelectorFileDigests, reach: optional(removalReach) }),
   'style:restoreSelectors': object({ ...project, changes: parseSelectorFileChanges, to: restoreDirection }),
@@ -734,6 +772,8 @@ export const IPC_PAYLOADS = {
     rows: terminalDimension,
     autoLaunch: optional(text),
   }),
+  'update:act': parseUpdateAction,
+  'update:read': nothing,
   'watch:start': pathText,
 } as const;
 

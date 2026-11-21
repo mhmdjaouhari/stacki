@@ -8,6 +8,11 @@ import { assert } from '../../../vendor/stacki/shared/core/assert';
 import { canvasRouteFor, chooseTemplateEntry, useCanvasRoute } from '../pages/templateEntryStore';
 import { addressFollowsPreview } from '../project/pageAddress';
 import { parseCanvasNavigation } from '../../../vendor/stacki/shared/properties/canvasInteraction';
+import { PreviewModeStage } from '../../../vendor/stacki/src/features/preview/SizedFrame';
+import { usePreviewSizing, type PreviewDimensions } from '../../../vendor/stacki/src/features/preview/usePreviewSizing';
+import type { PreviewDevice } from '../../../vendor/stacki/src/features/preview/PreviewToolbar';
+import { useProjectBreakpoints } from '../../../vendor/stacki/src/ipc/useProjectBreakpoints';
+import { receivePreviewDeviceKey } from './previewKeys';
 import { previewBase, previewFrameRoute, previewLandedPage, previewNeedsRoute, previewUnderBase, type PreviewOpening } from './previewRoute';
 
 interface Options {
@@ -205,6 +210,10 @@ function usePreviewEvents(active: boolean, origin: string | undefined, frame: Re
       if (value.type === 'studio:interaction') {
         window.dispatchEvent(new Event('studio:interaction'));
       }
+      // A device key pressed in the site (previewKeys.ts): the canvas below picks the breakpoint.
+      if (value.type === 'studio:key') {
+        receivePreviewDeviceKey(value);
+      }
     };
     window.addEventListener('keydown', key, true);
     window.addEventListener('message', receive);
@@ -242,8 +251,23 @@ export function PreviewButton({ preview }: { readonly preview: InteractivePrevie
   );
 }
 
-export function PreviewWorkspace({ preview, children }: { readonly preview: InteractivePreviewState; readonly children: ReactNode }) {
-  const translate = useTranslate();
+/** The canvas size the preview mode shares with the canvas: a resize in either is kept by the other. */
+export interface PreviewWorkspaceSize {
+  readonly projectName: string;
+  readonly device: PreviewDevice;
+  readonly dimensions: PreviewDimensions;
+  readonly onDevice: (device: PreviewDevice) => void;
+}
+
+export function PreviewWorkspace({
+  preview,
+  size,
+  children,
+}: {
+  readonly preview: InteractivePreviewState;
+  readonly size: PreviewWorkspaceSize;
+  readonly children: ReactNode;
+}) {
   return (
     <div className="studio-workspace">
       <div
@@ -256,17 +280,26 @@ export function PreviewWorkspace({ preview, children }: { readonly preview: Inte
       >
         {children}
       </div>
-      {preview.active && (
-        <div className="preview-mode">
-          {preview.target ? (
-            <PreviewFrame preview={preview} target={preview.target} />
-          ) : (
-            <div role="status">
-              <span className="panel-loading-label">{translate('preview.studio.loading')}</span>
-            </div>
-          )}
+      {preview.active && <PreviewModeView preview={preview} size={size} />}
+    </div>
+  );
+}
+
+// The site with no editing at the canvas's own size, with the same width and height handles
+// as the canvas (Desktop's AppShell PreviewModeView). The canvas below keeps the device keys.
+function PreviewModeView({ preview, size }: { readonly preview: InteractivePreviewState; readonly size: PreviewWorkspaceSize }) {
+  const translate = useTranslate();
+  const { resolved: breakpoints, desktopFramePx } = useProjectBreakpoints(size.projectName);
+  const sizing = usePreviewSizing(size.device, size.dimensions, breakpoints, { deviceShortcuts: false, desktopFramePx }, size.onDevice);
+  return (
+    <PreviewModeStage sizing={sizing}>
+      {preview.target ? (
+        <PreviewFrame preview={preview} target={preview.target} />
+      ) : (
+        <div role="status">
+          <span className="panel-loading-label">{translate('preview.studio.loading')}</span>
         </div>
       )}
-    </div>
+    </PreviewModeStage>
   );
 }

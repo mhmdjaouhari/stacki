@@ -4,7 +4,7 @@ import { parseContextPoint, type ContextPoint } from './contextPosition';
 import { canvasClickBox, coordinateOf, type CanvasClickBox } from '../../ui/canvasClickSlot';
 import type { Box } from './outlineBoxes';
 import type { MarginCollapse, Spacing } from './spacingBands';
-import { boolean, count, dictionary, digest, list, optional, pathText, record } from '../../../shared/core/boundary';
+import { boolean, count, dictionary, digest, list, optional, pathText, record, text } from '../../../shared/core/boundary';
 import type { Digest } from '../../../shared/core/brand';
 import { LIMITS } from '../../../shared/core/limits';
 import { ITERATION_LIMITS, type PreviewIteration } from '../../../shared/page/previewIteration';
@@ -13,6 +13,7 @@ import type { PseudoLayer } from '../../../shared/page/pseudoPath';
 import { ENGLISH_TRANSLATE } from '../../../shared/properties/i18n/englishTranslator';
 import type { Translator } from '../../lib/i18n/localeContext';
 import { GUIDE_LIMITS, parseGuideVariableName, type GuideMetrics } from './guideModel';
+import { parseCanvasDragMessage, type CanvasDragMessage } from './canvasDragMessages';
 
 export type PreviewMessage =
   | {
@@ -60,6 +61,10 @@ export type PreviewMessage =
       readonly iterations: readonly PreviewIteration[] | undefined;
     } & LocatedEvent)
   | ({ readonly kind: 'open-node' } & LocatedEvent)
+  /** A double click on an image: the marker paths it carries (its own node and each instance that drew it) and its bottom-left corner. */
+  /** The canvas scrolled or resized under an open image popup, which sits at the image's old place. */
+  | { readonly kind: 'image-close' }
+  | ({ readonly kind: 'image-edit'; readonly paths: readonly string[]; readonly token: Digest | undefined } & ContextPoint)
   | ({ readonly kind: 'context-node'; readonly outside: boolean; readonly pseudo: PseudoLayer | undefined } & LocatedEvent & ContextPoint)
   | { readonly kind: 'canvas-ready' }
   /** What the column guide is drawn from (electron/preload/frameGuide.ts). */
@@ -70,6 +75,12 @@ export type PreviewMessage =
   | { readonly kind: 'render-problem'; readonly problem: FrameRenderProblem }
   /** The canvas reloaded instead of patching, and why (step 7). */
   | { readonly kind: 'preview-reload'; readonly reason: PreviewReloadReason }
+  /**
+   * The dev server's error overlay came up over the page, or went away (electron/preload/frameErrorOverlay.ts). An
+   * overlay is the dev server's HMR client reporting a module the page asked for that failed: the page answered 200,
+   * so no failed navigation says so. `message` is the overlay's own words, bounded, when it had any.
+   */
+  | { readonly kind: 'error-overlay'; readonly shown: boolean; readonly message: string | undefined }
   | { readonly kind: 'query-result'; readonly input: unknown }
   /** What is under a point, for an app dragging an overlay item (src/ui/canvasPointQuery.ts parses it). */
   | { readonly kind: 'point-result'; readonly input: unknown }
@@ -77,7 +88,9 @@ export type PreviewMessage =
       readonly kind: 'text-marks';
       readonly hover: TextMarkBox | undefined;
       readonly picked: TextMarkBox | undefined;
-    };
+    }
+  /** A drag on the canvas, or one crossing into it (electron/preload/frameDrag.ts; parsed by canvasDragMessages.ts). */
+  | { readonly kind: 'canvas-drag'; readonly drag: CanvasDragMessage };
 
 /**
  * Text a page hands to the selected component instance, as the canvas frame
@@ -93,8 +106,10 @@ export const NO_TEXT_MARKS: TextMarks = { hover: undefined, picked: undefined };
 
 export interface TextMarkBox extends Box {
   readonly label: string;
-  /** `component` when the element is a component's own root, `text` otherwise. */
-  readonly kind: 'component' | 'text';
+  /** `component` when the element is a component's own root, `text` otherwise, `refused` for prop text that is computed and cannot be written. */
+  readonly kind: 'component' | 'text' | 'refused';
+  /** The page path of the component instance the words belong to, when they are its slot or prop text. */
+  readonly scope?: string;
 }
 
 /** Why the canvas patcher reloaded (electron/previewClient/morphClient.ts): past one of its
@@ -245,6 +260,10 @@ function parseKnownMessage(value: Readonly<Record<string, unknown>>): PreviewMes
       };
     case 'avb:open-node':
       return { kind: 'open-node', ...parseLocatedMessage(value) };
+    case 'avb:image-close':
+      return { kind: 'image-close' };
+    case 'avb:image-edit':
+      return { kind: 'image-edit', paths: parseImagePaths(value['paths']), token: optional(digest)(value['token']), ...parseContextPoint(value) };
     case 'avb:canvas-ready':
       return { kind: 'canvas-ready' };
     case 'avb:guide':
@@ -255,6 +274,8 @@ function parseKnownMessage(value: Readonly<Record<string, unknown>>): PreviewMes
       return { kind: 'render-problem', problem: parseRenderProblem(value['problem']) };
     case 'avb:preview-reload':
       return { kind: 'preview-reload', reason: parseReloadReason(value['reason']) };
+    case 'avb:error-overlay':
+      return { kind: 'error-overlay', shown: boolean(value['shown']), message: optional(parseOverlayMessage)(value['message']) };
     case 'avb:query-result':
       return { kind: 'query-result', input: value };
     case 'avb:point-result':
@@ -265,6 +286,13 @@ function parseKnownMessage(value: Readonly<Record<string, unknown>>): PreviewMes
         hover: optional(parseTextMarkBox)(value['hover']),
         picked: optional(parseTextMarkBox)(value['picked']),
       };
+    case 'avb:drag-start':
+    case 'avb:drag-over':
+    case 'avb:drag-end':
+    case 'avb:drag-cancel': {
+      const drag = parseCanvasDragMessage(value);
+      return drag === undefined ? undefined : { kind: 'canvas-drag', drag };
+    }
     default:
       return undefined;
   }
@@ -347,12 +375,33 @@ function parseRenderProblem(input: unknown): FrameRenderProblem {
   return found;
 }
 
+/** Characters of the overlay's words the frame sends; the notice shows fewer, the dev log has all of them. */
+export const OVERLAY_MESSAGE_CHARS_MAX = 2_000;
+
+function parseOverlayMessage(input: unknown): string {
+  const message = text(input);
+  if (message.length > OVERLAY_MESSAGE_CHARS_MAX) {
+    throw new Error('Preview overlay: message exceeds limit');
+  }
+  return message;
+}
+
 function parseReloadReason(input: unknown): PreviewReloadReason {
   const found = PREVIEW_RELOAD_REASONS.find((reason) => reason === input);
   if (found === undefined) {
     throw new Error('Preview reload: unknown reason');
   }
   return found;
+}
+
+// The marker paths an image carries: each a path the frame wrote, a bounded number of them (electron/preload/frameImage.ts).
+const IMAGE_PATHS_MAX = 128;
+function parseImagePaths(input: unknown): readonly string[] {
+  const paths = list(pathText)(input);
+  if (paths.length > IMAGE_PATHS_MAX) {
+    throw new Error('Preview image: too many marker paths');
+  }
+  return paths;
 }
 
 function parseLocatedMessage(value: Readonly<Record<string, unknown>>): LocatedEvent {
@@ -432,10 +481,10 @@ function parseBox(input: unknown): Box {
 function parseTextMarkBox(input: unknown): TextMarkBox {
   const value = record(input);
   const kind = value['kind'];
-  if (kind !== 'component' && kind !== 'text') {
-    throw new Error('Text mark: expected component or text');
+  if (kind !== 'component' && kind !== 'text' && kind !== 'refused') {
+    throw new Error('Text mark: expected component, text or refused');
   }
-  return { ...parseBox(value), label: pathText(value['label']), kind };
+  return { ...parseBox(value), label: pathText(value['label']), kind, ...(value['scope'] === undefined ? {} : { scope: pathText(value['scope']) }) };
 }
 
 function parseSpacing(input: unknown): Spacing {

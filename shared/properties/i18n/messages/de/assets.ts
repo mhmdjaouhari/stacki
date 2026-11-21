@@ -170,6 +170,16 @@ export const messages = {
   'assets.input.what.secretAccessKey': 'Geheimer Zugriffsschlüssel',
   'assets.input.what.storagePassword': 'Speicherpasswort',
   'assets.input.what.storageZone': 'Speicherzone',
+  'assets.item.detail': '{dimensions} • {size}', // same
+  'assets.item.dimensions': '{width} x {height}', // same
+  'assets.item.kindDetail': '{kind} • {size}', // same
+  'assets.items.label': 'Asset-Dateien',
+  'assets.kind.audio': 'Audio', // same
+  'assets.kind.file': 'Datei',
+  'assets.kind.font': 'Schrift',
+  'assets.kind.image': 'Bild',
+  'assets.kind.text': 'Text', // same
+  'assets.kind.video': 'Video', // same
   'assets.link.copied': 'Link kopiert',
   'assets.link.copyFailed': 'Link konnte nicht kopiert werden: {error}',
   'assets.listing.label': 'Assets',
@@ -181,6 +191,8 @@ export const messages = {
   'assets.pick.video': 'Wähle ein Video',
   'assets.provider.s3': 'S3-kompatibel',
   'assets.request.failed': 'Die Medienanfrage ist fehlgeschlagen.',
+  'assets.search.noMatch': 'Keine Assets passen zur Suche',
+  'assets.search.placeholder': 'Assets suchen',
   'assets.selection.all': 'Alle Assets',
   'assets.selection.compress': 'Ausgewählte Bilder komprimieren',
   'assets.selection.compressAria': 'Ausgewählte Assets komprimieren',
@@ -200,6 +212,14 @@ export const messages = {
   'assets.selection.selectAll': 'Alle Assets auswählen',
   'assets.selection.selectAllTitle': 'Alle auswählen',
   'assets.selection.wait': 'Warte, bis der aktuelle Stapel fertig ist',
+  'assets.sort.label': 'Sortierung: {sort}',
+  'assets.sort.largest': 'Größte zuerst',
+  'assets.sort.menu': 'Assets sortieren',
+  'assets.sort.nameAscending': 'Alphabetisch (A-Z)',
+  'assets.sort.nameDescending': 'Alphabetisch (Z-A)',
+  'assets.sort.newest': 'Neueste zuerst',
+  'assets.sort.oldest': 'Älteste zuerst',
+  'assets.sort.smallest': 'Kleinste zuerst',
   'assets.source.addConnector': 'Connector hinzufügen',
   'assets.source.project': 'Projekt',
   'assets.source.removeBody':
@@ -220,4 +240,9 @@ export const messages = {
   'assets.undo.rename': 'in {name} umbenennen',
   'assets.upload.limit': 'Lade 1 bis {max} Dateien auf einmal hoch.',
   'assets.upload.nothing': 'Es wurde nichts hochgeladen.',
+  'assets.view.compact': 'Liste - Klein',
+  'assets.view.grid': 'Raster',
+  'assets.view.label': 'Ansicht: {view}',
+  'assets.view.list': 'Liste',
+  'assets.view.menu': 'Asset-Ansicht',
 } as const satisfies CatalogOf<MessageKey>;
